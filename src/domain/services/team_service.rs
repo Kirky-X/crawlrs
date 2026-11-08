@@ -59,60 +59,16 @@ impl TeamService {
             }
         };
 
-        if let Some(ref whitelist) = restrictions.ip_whitelist {
-            for cidr in whitelist {
-                if is_ip_in_cidr(&ip, cidr) {
-                    log::info!(
-                        "IP {} allowed by whitelist (CIDR: {}) for team {}",
-                        ip_address,
-                        cidr,
-                        team_id
-                    );
-                    return Ok(GeoRestrictionResult::Allowed);
-                }
-            }
+        if let Some(outcome) = whitelist_outcome(restrictions, &ip, ip_address, team_id) {
+            return Ok(outcome);
         }
 
         let country_code = self.get_country_code(team_id, ip_address, &ip).await?;
 
-        // blocked 优先于 allowed（CWE-285）：同时出现在两个名单的国家必须拒绝，
-        // 否则黑名单形同虚设
-        if let Some(ref blocked) = restrictions.blocked_countries {
-            if blocked
-                .iter()
-                .any(|code| code.to_uppercase() == country_code)
-            {
-                log::warn!(
-                    "IP {} from country {} blocked for team {} (blocked countries: {:?})",
-                    ip_address,
-                    country_code,
-                    team_id,
-                    blocked
-                );
-                return Ok(GeoRestrictionResult::Denied(format!(
-                    "Access from country {} is not allowed",
-                    country_code
-                )));
-            }
-        }
-
-        if let Some(ref allowed) = restrictions.allowed_countries {
-            if !allowed
-                .iter()
-                .any(|code| code.to_uppercase() == country_code)
-            {
-                log::warn!(
-                    "IP {} from country {} not in allowed list for team {} (allowed countries: {:?})",
-                    ip_address,
-                    country_code,
-                    team_id,
-                    allowed
-                );
-                return Ok(GeoRestrictionResult::Denied(format!(
-                    "Access from country {} is not allowed",
-                    country_code
-                )));
-            }
+        if let Some(outcome) =
+            country_list_outcome(restrictions, &country_code, ip_address, team_id)
+        {
+            return Ok(outcome);
         }
 
         log::info!(
@@ -217,6 +173,78 @@ impl TeamService {
             }
         }
     }
+}
+
+/// IP 白名单（CIDR）判定：命中时返回 `Allowed`（日志与返回语义原样保留）。
+fn whitelist_outcome(
+    restrictions: &TeamGeoRestrictions,
+    ip: &IpAddr,
+    ip_address: &str,
+    team_id: crate::domain::id::Id,
+) -> Option<GeoRestrictionResult> {
+    if let Some(ref whitelist) = restrictions.ip_whitelist {
+        for cidr in whitelist {
+            if is_ip_in_cidr(ip, cidr) {
+                log::info!(
+                    "IP {} allowed by whitelist (CIDR: {}) for team {}",
+                    ip_address,
+                    cidr,
+                    team_id
+                );
+                return Some(GeoRestrictionResult::Allowed);
+            }
+        }
+    }
+    None
+}
+
+/// 国家名单判定。blocked 优先于 allowed（CWE-285）：同时出现在两个名单的国家必须拒绝，
+/// 否则黑名单形同虚设。
+fn country_list_outcome(
+    restrictions: &TeamGeoRestrictions,
+    country_code: &str,
+    ip_address: &str,
+    team_id: crate::domain::id::Id,
+) -> Option<GeoRestrictionResult> {
+    if let Some(ref blocked) = restrictions.blocked_countries {
+        if blocked
+            .iter()
+            .any(|code| code.to_uppercase() == country_code)
+        {
+            log::warn!(
+                "IP {} from country {} blocked for team {} (blocked countries: {:?})",
+                ip_address,
+                country_code,
+                team_id,
+                blocked
+            );
+            return Some(GeoRestrictionResult::Denied(format!(
+                "Access from country {} is not allowed",
+                country_code
+            )));
+        }
+    }
+
+    if let Some(ref allowed) = restrictions.allowed_countries {
+        if !allowed
+            .iter()
+            .any(|code| code.to_uppercase() == country_code)
+        {
+            log::warn!(
+                "IP {} from country {} not in allowed list for team {} (allowed countries: {:?})",
+                ip_address,
+                country_code,
+                team_id,
+                allowed
+            );
+            return Some(GeoRestrictionResult::Denied(format!(
+                "Access from country {} is not allowed",
+                country_code
+            )));
+        }
+    }
+
+    None
 }
 
 /// Extract the host (domain) from a URL, domain:port, or bare domain string.

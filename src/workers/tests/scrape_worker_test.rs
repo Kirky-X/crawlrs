@@ -4,8 +4,9 @@
 use super::*;
 use crate::domain::models::{CrawlStatus, ScrapeResult, TaskType};
 use crate::engines::EngineError;
-use crate::utils::coalesce::RequestCoalescer;
+use crate::utils::coalesce::CoalesceSignal;
 use crate::workers::cache_utils::{filter_sensitive_headers, generate_scrape_cache_key};
+use crate::workers::coalesce_coordinator::{CoalesceKey, CoalesceResult, RequestCoalescer};
 use crate::workers::crawl::{FilterContext, UrlFilter, UrlPatternFilter};
 use crate::workers::errors::ScrapeWorkerError;
 use std::future::Future;
@@ -6608,6 +6609,211 @@ async fn test_process_scrape_task_success_handle_scrape_failure_calls_handle_fai
     let task = make_task(json!({"url": "https://example.com"}));
     let result = worker.process_scrape_task(task).await;
     assert!(result.is_ok(), "handle_failure path should return Ok(())");
+}
+
+// coalesce 广播标记：pipeline 落库结果 → mark_success；失败 → 默认 false
+
+/// 在引擎执行点订阅 coalesce 广播的路由器。
+///
+/// 生产等待方在 leader 抓取期间调用 `try_coalesce` 并订阅广播；本 mock 在
+/// `route()`（leader 已插入 in-flight 条目之后）做同样的订阅，使测试可以
+/// 确定性回收 leader guard Drop 时广播的 [`CoalesceSignal`]，无需并发时序。
+struct CoalesceSubscribingRouter {
+    response: crate::engines::engine_client::InternalScrapeResponse,
+    coalescer: Arc<RequestCoalescer>,
+    key: CoalesceKey,
+    receiver: Arc<Mutex<Option<tokio::sync::broadcast::Receiver<CoalesceSignal>>>>,
+}
+
+impl CoalesceSubscribingRouter {
+    fn new(
+        coalescer: Arc<RequestCoalescer>,
+        key: CoalesceKey,
+    ) -> (
+        Self,
+        Arc<Mutex<Option<tokio::sync::broadcast::Receiver<CoalesceSignal>>>>,
+    ) {
+        use crate::engines::engine_client::InternalScrapeResponse;
+        let receiver = Arc::new(Mutex::new(None));
+        let router = Self {
+            response: InternalScrapeResponse {
+                js_degraded: false,
+                captured_responses: Vec::new(),
+                status_code: 200,
+                content: "<html><body><h1>Hello</h1></body></html>".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 10,
+                final_url: None,
+            },
+            coalescer,
+            key,
+            receiver: receiver.clone(),
+        };
+        (router, receiver)
+    }
+
+    /// 订阅 leader 的完成广播（必须以 Wait 进入，否则测试前提被破坏）
+    fn subscribe(&self) {
+        match self
+            .coalescer
+            .try_start(&self.key, crate::domain::id::Id::generate())
+        {
+            CoalesceResult::Wait(rx, _) => {
+                *self.receiver.lock().unwrap() = Some(rx);
+            }
+            CoalesceResult::Proceed(_) => {
+                panic!("router must observe the worker's in-flight coalesce entry");
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl EngineRouterTrait for CoalesceSubscribingRouter {
+    async fn route(
+        &self,
+        _request: &crate::engines::engine_client::InternalScrapeRequest,
+    ) -> Result<crate::engines::engine_client::InternalScrapeResponse, EngineError> {
+        self.subscribe();
+        Ok(self.response.clone())
+    }
+    async fn aggregate(
+        &self,
+        _request: &crate::engines::engine_client::InternalScrapeRequest,
+    ) -> Result<crate::engines::engine_client::InternalScrapeResponse, EngineError> {
+        self.subscribe();
+        Ok(self.response.clone())
+    }
+    fn get_engine_stats(&self) -> std::collections::HashMap<String, EngineStats> {
+        std::collections::HashMap::new()
+    }
+    fn reset_engine_stats(&self, _engine_name: &str) {}
+    fn registered_engines(&self) -> Vec<String> {
+        vec!["mock-coalesce-subscriber".to_string()]
+    }
+}
+
+/// 构造使用共享 `RequestCoalescer` 的 worker（pipeline 广播测试专用）
+async fn build_worker_with_shared_coalescer(
+    task_repo: Arc<dyn TaskRepository>,
+    result_repo: Arc<dyn ScrapeResultRepository>,
+    coalescer: Arc<RequestCoalescer>,
+    engine_client: Arc<EngineClient>,
+) -> ScrapeWorker {
+    let settings = crate::bootstrap::config::load_settings()
+        .expect("Failed to load settings for coalesce tests");
+    let coalesce_coordinator =
+        make_coalesce_coordinator_with_coalescer(task_repo.clone(), result_repo.clone(), coalescer);
+
+    ScrapeWorker::new(ScrapeWorkerDeps {
+        repository: task_repo,
+        result_repository: result_repo,
+        crawl_repository: Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
+        webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+        credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+        engine_client,
+        create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
+            as Arc<dyn CreateScrapeUseCaseTrait>,
+        team_semaphore: Arc::new(TeamSemaphore::new(10)),
+        coalesce_coordinator,
+        robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+        settings: Arc::new(settings),
+        default_concurrency_limit: 10,
+        extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
+        cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+        #[cfg(feature = "metrics")]
+        memory_scheduler: make_test_memory_scheduler(),
+    })
+}
+
+/// 落库成功路径必须调用 `mark_success`：leader guard Drop 广播 `success: true`
+#[tokio::test]
+async fn test_process_scrape_task_persist_success_broadcasts_coalesce_success() {
+    let coalescer = Arc::new(RequestCoalescer::new());
+    let task = make_task(json!({"url": "https://example.com"}));
+    let key = CoalesceKey::new(
+        task.team_id,
+        "https://example.com",
+        &ScrapeOptions::default(),
+    );
+    let (router, receiver) = CoalesceSubscribingRouter::new(coalescer.clone(), key);
+    let engine_client = Arc::new(EngineClient::with_router(Arc::new(router)));
+
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let worker = build_worker_with_shared_coalescer(
+        task_repo.clone(),
+        Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+        coalescer,
+        engine_client,
+    )
+    .await;
+
+    let result = worker.process_scrape_task(task).await;
+    assert!(result.is_ok(), "success path should return Ok(())");
+    assert_eq!(
+        task_repo.mark_completed_count(),
+        1,
+        "task must be marked completed after result persistence"
+    );
+
+    let mut rx = receiver
+        .lock()
+        .unwrap()
+        .take()
+        .expect("router must subscribe while leader is in-flight");
+    assert_eq!(
+        rx.try_recv().expect("leader guard must broadcast on drop"),
+        CoalesceSignal::Completed { success: true },
+        "persisted result must broadcast success so waiters adopt it"
+    );
+}
+
+/// 落库失败路径保持 guard 默认 false：等待方不得查询/收养结果
+#[tokio::test]
+async fn test_process_scrape_task_persist_failure_broadcasts_default_failure() {
+    let coalescer = Arc::new(RequestCoalescer::new());
+    let task = make_task(json!({"url": "https://example.com"}));
+    let key = CoalesceKey::new(
+        task.team_id,
+        "https://example.com",
+        &ScrapeOptions::default(),
+    );
+    let (router, receiver) = CoalesceSubscribingRouter::new(coalescer.clone(), key);
+    let engine_client = Arc::new(EngineClient::with_router(Arc::new(router)));
+
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let worker = build_worker_with_shared_coalescer(
+        task_repo.clone(),
+        Arc::new(FailingScrapeResultRepo) as Arc<dyn ScrapeResultRepository>,
+        coalescer,
+        engine_client,
+    )
+    .await;
+
+    let result = worker.process_scrape_task(task).await;
+    assert!(result.is_ok(), "persistence failure is handled internally");
+    assert_eq!(
+        task_repo.mark_completed_count(),
+        0,
+        "failed persistence must not mark the task completed"
+    );
+
+    let mut rx = receiver
+        .lock()
+        .unwrap()
+        .take()
+        .expect("router must subscribe while leader is in-flight");
+    assert_eq!(
+        rx.try_recv().expect("leader guard must broadcast on drop"),
+        CoalesceSignal::Completed { success: false },
+        "failed persistence must keep the default failure signal"
+    );
 }
 
 // run infinite loop coverage

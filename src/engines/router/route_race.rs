@@ -38,9 +38,6 @@ impl EngineRouter {
         candidates: Vec<(f64, Arc<dyn ScraperEngine>)>,
         start_time: Instant,
     ) -> Result<InternalScrapeResponse, EngineError> {
-        use futures::future;
-        use tokio::time;
-
         let remaining = request
             .timeout
             .checked_sub(start_time.elapsed())
@@ -50,33 +47,30 @@ impl EngineRouter {
             return Err(EngineError::Timeout(request.timeout));
         }
 
-        // 限制竞速引擎数量
-        let race_candidates: Vec<_> = candidates.into_iter().take(3).collect();
+        let pending = build_race_pool(request, candidates, remaining);
+        self.race_until_win(request, pending, remaining, start_time)
+            .await
+    }
 
-        debug!(
-            "Race mode: launching {} engines concurrently for {}",
-            race_candidates.len(),
-            request.url
-        );
+    /// 竞速选择循环（自 [`EngineRouter::route_race_mode`] 提取）
+    ///
+    /// 并发执行已构建的竞速 future：循环 select_all，最快「成功」者胜出。
+    /// 失败的 future 从竞速集中移除并记录指标后继续等待其余候选，
+    /// 全部失败或整体超时才返回错误（与模块文档语义一致）。
+    async fn race_until_win(
+        &self,
+        request: &InternalScrapeRequest,
+        mut pending: Vec<RaceFuture>,
+        remaining: Duration,
+        start_time: Instant,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        use futures::future;
+        use tokio::time;
 
-        // 创建竞速任务 (使用 Box::pin 解决 Unpin 问题)
-        let mut race_futures: Vec<RaceFuture> = Vec::new();
-
-        for (_score, engine) in race_candidates {
-            race_futures.push(build_race_future(
-                &engine,
-                clone_race_request(request, remaining),
-            ));
-        }
-
-        // 并发执行：循环 select_all，最快「成功」者胜出。
-        // 失败的 future 从竞速集中移除并记录指标后继续等待其余候选，
-        // 全部失败或整体超时才返回错误（与模块文档语义一致）。
         let timeout_duration = remaining.max(Duration::from_millis(100));
         let deadline = time::Instant::now() + timeout_duration;
-        let total_candidates = race_futures.len();
+        let total_candidates = pending.len();
 
-        let mut pending = race_futures;
         let mut last_error: Option<EngineError> = None;
 
         loop {
@@ -311,6 +305,36 @@ fn clone_race_request(
         wait_for: request.wait_for.clone(),
         needs_mllm: request.needs_mllm,
     }
+}
+
+/// 构建竞速 future 集合（自 [`EngineRouter::route_race_mode`] 提取）：
+/// 限制竞速引擎数量并复制请求（timeout 替换为竞速剩余时间）。
+/// 使用 Box::pin 解决 Unpin 问题。
+fn build_race_pool(
+    request: &InternalScrapeRequest,
+    candidates: Vec<(f64, Arc<dyn ScraperEngine>)>,
+    remaining: Duration,
+) -> Vec<RaceFuture> {
+    // 限制竞速引擎数量
+    let race_candidates: Vec<_> = candidates.into_iter().take(3).collect();
+
+    debug!(
+        "Race mode: launching {} engines concurrently for {}",
+        race_candidates.len(),
+        request.url
+    );
+
+    // 创建竞速任务 (使用 Box::pin 解决 Unpin 问题)
+    let mut race_futures: Vec<RaceFuture> = Vec::new();
+
+    for (_score, engine) in race_candidates {
+        race_futures.push(build_race_future(
+            &engine,
+            clone_race_request(request, remaining),
+        ));
+    }
+
+    race_futures
 }
 
 /// 构建单个引擎的竞速 future（自 [`EngineRouter::route_race_mode`] 提取）。

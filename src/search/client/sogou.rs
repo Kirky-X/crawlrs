@@ -37,26 +37,15 @@ impl SogouSearchEngine {
 
         // 处理直接完整URL (仅允许 http/https)
         if url.starts_with("http://") || url.starts_with("https://") {
-            if let Ok(parsed) = url::Url::parse(url) {
-                // 只允许 http/https 协议
-                if parsed.scheme() == "http" || parsed.scheme() == "https" {
-                    return url.to_string();
-                }
-            }
-            return String::new();
+            return Self::validated_absolute_url(url);
         }
 
         // 处理搜狗中转链接: /link?url=...
         if url.starts_with("/link?url=") {
-            // 提取参数中的URL并解码
-            let encoded_url = url.trim_start_matches("/link?url=");
-            // URL解码
-            match urlencoding::decode(encoded_url) {
-                Ok(decoded) => {
-                    // 递归验证解码后的 URL
-                    return self.resolve_url(&decoded);
-                }
-                Err(_) => return String::new(),
+            // 提取参数中的URL并解码，递归验证解码后的 URL
+            return match Self::decode_sogou_redirect(url) {
+                Some(decoded) => self.resolve_url(decoded.as_ref()),
+                None => String::new(),
             };
         }
 
@@ -67,6 +56,24 @@ impl SogouSearchEngine {
 
         // 其他情况拒绝
         String::new()
+    }
+
+    /// 完整 URL 的协议校验：仅接受 http/https，其余返回空串
+    fn validated_absolute_url(url: &str) -> String {
+        if let Ok(parsed) = url::Url::parse(url) {
+            // 只允许 http/https 协议
+            if parsed.scheme() == "http" || parsed.scheme() == "https" {
+                return url.to_string();
+            }
+        }
+        String::new()
+    }
+
+    /// 去掉搜狗中转前缀并 URL 解码；解码失败返回 None
+    fn decode_sogou_redirect(url: &str) -> Option<std::borrow::Cow<'_, str>> {
+        let encoded_url = url.trim_start_matches("/link?url=");
+        // URL解码
+        urlencoding::decode(encoded_url).ok()
     }
 
     pub fn parse_search_results(

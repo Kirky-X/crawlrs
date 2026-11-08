@@ -88,6 +88,137 @@ impl TaskRepositoryImpl {
     }
 }
 
+/// Step 1：最高优先级 `queued` 任务的原子领取（`UPDATE ... RETURNING *`）。
+async fn acquire_queued_task(
+    conn: &dbnexus::sea_orm::DatabaseConnection,
+    worker_id: crate::domain::id::Id,
+    lock_seconds: i64,
+) -> Result<Option<Task>, RepositoryError> {
+    let stmt_queued = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"UPDATE tasks
+               SET status = 'active',
+                   started_at = NOW(),
+                   lock_token = $1,
+                   lock_expires_at = NOW() + ($2 * INTERVAL '1 second'),
+                   updated_at = NOW()
+               WHERE id = (
+                   SELECT id FROM tasks
+                   WHERE status = 'queued'
+                     AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+                   ORDER BY priority ASC, created_at ASC
+                   FOR UPDATE SKIP LOCKED
+                   LIMIT 1
+               )
+               RETURNING *"#,
+        [worker_id.into(), lock_seconds.into()],
+    );
+
+    let row: Option<dbnexus::sea_orm::QueryResult> = conn
+        .query_one_raw(stmt_queued)
+        .await
+        .map_err(|e| RepositoryError::Database(e.into()))?;
+
+    match row {
+        Some(row) => Ok(Some(task_from_row(row)?)),
+        None => Ok(None),
+    }
+}
+
+/// Step 2：过期锁 `active` 任务的恢复路径 + 毒丸 dead-letter 兜底。
+///
+/// 毒丸熔断：恢复即 attempt_count + 1，且仅恢复
+/// attempt_count < max_retries 的任务——每次僵尸恢复都消耗一次尝试额度，
+/// 防止反复崩溃的任务被无限重跑。
+async fn acquire_stale_task(
+    conn: &dbnexus::sea_orm::DatabaseConnection,
+    worker_id: crate::domain::id::Id,
+    lock_seconds: i64,
+) -> Result<Option<Task>, RepositoryError> {
+    let stmt_stale = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"UPDATE tasks
+               SET status = 'active',
+                   started_at = NOW(),
+                   lock_token = $1,
+                   lock_expires_at = NOW() + ($2 * INTERVAL '1 second'),
+                   updated_at = NOW(),
+                   attempt_count = attempt_count + 1
+               WHERE id = (
+                   SELECT id FROM tasks
+                   WHERE status = 'active' AND lock_expires_at < NOW()
+                     AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+                     AND attempt_count < max_retries
+                   ORDER BY priority ASC, created_at ASC
+                   FOR UPDATE SKIP LOCKED
+                   LIMIT 1
+               )
+               RETURNING *"#,
+        [worker_id.into(), lock_seconds.into()],
+    );
+
+    let row: Option<dbnexus::sea_orm::QueryResult> = conn
+        .query_one_raw(stmt_stale)
+        .await
+        .map_err(|e| RepositoryError::Database(e.into()))?;
+
+    match row {
+        Some(row) => Ok(Some(task_from_row(row)?)),
+        // 无可恢复任务：检查是否存在超出 max_retries 的毒丸任务并 dead-letter，
+        // 避免其永久滞留 active 状态
+        None => {
+            dead_letter_poison_task(conn).await?;
+            Ok(None)
+        }
+    }
+}
+
+/// 超出 max_retries 的毒丸任务 dead-letter（无行则静默）。
+async fn dead_letter_poison_task(
+    conn: &dbnexus::sea_orm::DatabaseConnection,
+) -> Result<(), RepositoryError> {
+    let stmt_dead_letter = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"UPDATE tasks
+                       SET status = 'failed',
+                           completed_at = NOW(),
+                           lock_token = NULL,
+                           lock_expires_at = NULL,
+                           updated_at = NOW()
+                       WHERE id = (
+                           SELECT id FROM tasks
+                           WHERE status = 'active' AND lock_expires_at < NOW()
+                             AND attempt_count >= max_retries
+                           ORDER BY priority ASC, created_at ASC
+                           FOR UPDATE SKIP LOCKED
+                           LIMIT 1
+                       )
+                       RETURNING id"#,
+        [],
+    );
+    let dead: Option<dbnexus::sea_orm::QueryResult> = conn
+        .query_one_raw(stmt_dead_letter)
+        .await
+        .map_err(|e| RepositoryError::Database(e.into()))?;
+    if let Some(dead_row) = dead {
+        if let Ok(dead_id) = dead_row.try_get_by_index::<uuid::Uuid>(0) {
+            log::warn!(
+                "Dead-lettered poison task {} (attempt_count >= max_retries, \
+                 lock expired; will not be retried again)",
+                dead_id
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `RETURNING *` 行 → 领域 `Task`。
+fn task_from_row(row: dbnexus::sea_orm::QueryResult) -> Result<Task, RepositoryError> {
+    let entity = task_entity::Model::from_query_result(&row, "")
+        .map_err(|e| RepositoryError::Database(e.into()))?;
+    Ok(TaskMapper::to_domain(entity))
+}
+
 #[async_trait]
 impl TaskRepository for TaskRepositoryImpl {
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
@@ -195,116 +326,15 @@ impl TaskRepository for TaskRepositoryImpl {
 
         // Step 1 — Normal path: highest-priority queued task.
         // Uses partial index idx_tasks_acquire_queued for Index Scan with LIMIT 1.
-        let stmt_queued = Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"UPDATE tasks
-               SET status = 'active',
-                   started_at = NOW(),
-                   lock_token = $1,
-                   lock_expires_at = NOW() + ($2 * INTERVAL '1 second'),
-                   updated_at = NOW()
-               WHERE id = (
-                   SELECT id FROM tasks
-                   WHERE status = 'queued'
-                     AND (scheduled_at IS NULL OR scheduled_at <= NOW())
-                   ORDER BY priority ASC, created_at ASC
-                   FOR UPDATE SKIP LOCKED
-                   LIMIT 1
-               )
-               RETURNING *"#,
-            [worker_id.into(), lock_seconds.into()],
-        );
-
-        let row: Option<dbnexus::sea_orm::QueryResult> = conn
-            .query_one_raw(stmt_queued)
-            .await
-            .map_err(|e| RepositoryError::Database(e.into()))?;
-
-        if let Some(row) = row {
-            let entity = task_entity::Model::from_query_result(&row, "")
-                .map_err(|e| RepositoryError::Database(e.into()))?;
-            return Ok(Some(TaskMapper::to_domain(entity)));
+        if let Some(task) = acquire_queued_task(conn, worker_id, lock_seconds).await? {
+            return Ok(Some(task));
         }
 
         // Step 2 — Recovery path: expired-lock active task.
         // Uses partial index idx_tasks_acquire_stale for Index Scan with LIMIT 1.
         // Reaches here only when step 1 returned no row, so queued tasks always
         // take priority over recovery (no starvation).
-        //
-        // 毒丸熔断：恢复即 attempt_count + 1，且仅恢复
-        // attempt_count < max_retries 的任务——每次僵尸恢复都消耗一次尝试额度，
-        // 防止反复崩溃的任务被无限重跑。
-        let stmt_stale = Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"UPDATE tasks
-               SET status = 'active',
-                   started_at = NOW(),
-                   lock_token = $1,
-                   lock_expires_at = NOW() + ($2 * INTERVAL '1 second'),
-                   updated_at = NOW(),
-                   attempt_count = attempt_count + 1
-               WHERE id = (
-                   SELECT id FROM tasks
-                   WHERE status = 'active' AND lock_expires_at < NOW()
-                     AND (scheduled_at IS NULL OR scheduled_at <= NOW())
-                     AND attempt_count < max_retries
-                   ORDER BY priority ASC, created_at ASC
-                   FOR UPDATE SKIP LOCKED
-                   LIMIT 1
-               )
-               RETURNING *"#,
-            [worker_id.into(), lock_seconds.into()],
-        );
-
-        let row: Option<dbnexus::sea_orm::QueryResult> = conn
-            .query_one_raw(stmt_stale)
-            .await
-            .map_err(|e| RepositoryError::Database(e.into()))?;
-
-        match row {
-            Some(row) => {
-                let entity = task_entity::Model::from_query_result(&row, "")
-                    .map_err(|e| RepositoryError::Database(e.into()))?;
-                return Ok(Some(TaskMapper::to_domain(entity)));
-            }
-            // 无可恢复任务：检查是否存在超出 max_retries 的毒丸任务并 dead-letter，
-            // 避免其永久滞留 active 状态
-            None => {
-                let stmt_dead_letter = Statement::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"UPDATE tasks
-                       SET status = 'failed',
-                           completed_at = NOW(),
-                           lock_token = NULL,
-                           lock_expires_at = NULL,
-                           updated_at = NOW()
-                       WHERE id = (
-                           SELECT id FROM tasks
-                           WHERE status = 'active' AND lock_expires_at < NOW()
-                             AND attempt_count >= max_retries
-                           ORDER BY priority ASC, created_at ASC
-                           FOR UPDATE SKIP LOCKED
-                           LIMIT 1
-                       )
-                       RETURNING id"#,
-                    [],
-                );
-                let dead: Option<dbnexus::sea_orm::QueryResult> = conn
-                    .query_one_raw(stmt_dead_letter)
-                    .await
-                    .map_err(|e| RepositoryError::Database(e.into()))?;
-                if let Some(dead_row) = dead {
-                    if let Ok(dead_id) = dead_row.try_get_by_index::<uuid::Uuid>(0) {
-                        log::warn!(
-                            "Dead-lettered poison task {} (attempt_count >= max_retries, \
-                             lock expired; will not be retried again)",
-                            dead_id
-                        );
-                    }
-                }
-                Ok(None)
-            }
-        }
+        acquire_stale_task(conn, worker_id, lock_seconds).await
     }
 
     async fn mark_completed(

@@ -5,9 +5,12 @@ use crate::common::error::{RepositoryResultExt, WorkerError};
 use crate::config::Settings;
 use crate::domain::models::task_domain::TaskStatus;
 use crate::domain::repositories::{
-    task_repository::TaskRepository, tasks_backlog_repository::TasksBacklogRepository,
+    task_repository::TaskRepository,
+    tasks_backlog_repository::{TasksBacklog, TasksBacklogRepository},
 };
-use crate::domain::services::rate_limiting_service::RateLimitingService;
+use crate::domain::services::rate_limiting_service::{
+    ConcurrencyResult, RateLimitingError, RateLimitingService,
+};
 use crate::i18n::{tr_log, tr_log_args};
 use crate::workers::worker::{ProcessResult, WorkerProcess};
 use async_trait::async_trait;
@@ -194,150 +197,93 @@ impl BacklogWorker {
     /// 处理单个积压任务
     async fn process_single_backlog(
         &self,
-        backlog: crate::domain::repositories::tasks_backlog_repository::TasksBacklog,
+        backlog: TasksBacklog,
     ) -> Result<BacklogOutcome, WorkerError> {
         if backlog.is_expired() {
-            info!(
-                "{}",
-                tr_log_args(
-                    "backlog-expired-marked",
-                    &[(
-                        "task_id",
-                        fluent_bundle::FluentValue::from(backlog.id.to_string())
-                    )],
-                )
-            );
-
-            let mut expired_backlog = backlog.clone();
-            expired_backlog
-                .mark_expired()
-                .map_err(WorkerError::DomainError)?;
-
-            self.tasks_backlog_repository
-                .update(&expired_backlog)
-                .await
-                .repo_err()?;
-
-            return Ok(BacklogOutcome::Expired);
+            return self.mark_backlog_expired(&backlog).await;
         }
 
         // 2. 检查是否超过重试次数
         if !backlog.can_retry() {
-            warn!(
-                "{}",
-                tr_log_args(
-                    "backlog-retry-exhausted-marked",
-                    &[(
-                        "task_id",
-                        fluent_bundle::FluentValue::from(backlog.id.to_string())
-                    )],
-                )
-            );
-
-            let mut failed_backlog = backlog.clone();
-            failed_backlog
-                .mark_failed()
-                .map_err(WorkerError::DomainError)?;
-
-            self.tasks_backlog_repository
-                .update(&failed_backlog)
-                .await
-                .repo_err()?;
-
-            return Ok(BacklogOutcome::RetryExhausted);
+            return self.mark_backlog_retry_exhausted(&backlog).await;
         }
 
         // 3. 检查团队的并发限制
-        match self
+        let concurrency = self
             .rate_limiting_service
             .check_team_concurrency(backlog.team_id, backlog.task_id)
+            .await;
+
+        self.apply_concurrency_result(&backlog, concurrency).await
+    }
+
+    /// 过期积压项：记录日志、标记 Expired 并持久化
+    async fn mark_backlog_expired(
+        &self,
+        backlog: &TasksBacklog,
+    ) -> Result<BacklogOutcome, WorkerError> {
+        info!(
+            "{}",
+            tr_log_args(
+                "backlog-expired-marked",
+                &[(
+                    "task_id",
+                    fluent_bundle::FluentValue::from(backlog.id.to_string())
+                )],
+            )
+        );
+
+        let mut expired_backlog = backlog.clone();
+        expired_backlog
+            .mark_expired()
+            .map_err(WorkerError::DomainError)?;
+
+        self.tasks_backlog_repository
+            .update(&expired_backlog)
             .await
-        {
-            Ok(crate::domain::services::rate_limiting_service::ConcurrencyResult::Allowed) => {
-                info!(
-                    "{}",
-                    tr_log_args(
-                        "backlog-concurrency-available",
-                        &[
-                            (
-                                "team_id",
-                                fluent_bundle::FluentValue::from(backlog.team_id.to_string())
-                            ),
-                            (
-                                "task_id",
-                                fluent_bundle::FluentValue::from(backlog.id.to_string())
-                            ),
-                        ],
-                    )
-                );
+            .repo_err()?;
 
-                // 4. 前置状态迁移：Pending → Processing（域状态机守卫，仅 Pending 可迁移）。
-                // 这是修复"成功路径 mark_completed 恒败"的关键——mark_completed 要求
-                // 积压项处于 Processing。迁移失败说明该项已非 Pending（被他方处理），
-                // 跳过该条并继续。
-                let mut processing_backlog = backlog.clone();
-                if let Err(e) = processing_backlog.mark_processing() {
-                    warn!(
-                        "{}",
-                        tr_log_args(
-                            "backlog-state-transition-skipped",
-                            &[
-                                (
-                                    "task_id",
-                                    fluent_bundle::FluentValue::from(backlog.id.to_string())
-                                ),
-                                (
-                                    "current",
-                                    fluent_bundle::FluentValue::from(backlog.status.to_string())
-                                ),
-                                ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                            ],
-                        )
-                    );
-                    return Ok(BacklogOutcome::Skipped);
-                }
+        Ok(BacklogOutcome::Expired)
+    }
 
-                // 5. 重新激活任务（reactivate_task 内 mark_completed 现从 Processing 迁移，不再恒败）
-                match self.reactivate_task(processing_backlog).await {
-                    Ok(_) => {
-                        info!(
-                            "{}",
-                            tr_log_args(
-                                "backlog-reactivated",
-                                &[(
-                                    "task_id",
-                                    fluent_bundle::FluentValue::from(backlog.id.to_string())
-                                )],
-                            )
-                        );
-                        Ok(BacklogOutcome::Reactivated)
-                    }
-                    Err(e) => {
-                        error!(
-                            "{}",
-                            tr_log_args(
-                                "backlog-reactivation-failed",
-                                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                            )
-                        );
+    /// 重试耗尽的积压项：记录日志、标记 Failed 并持久化
+    async fn mark_backlog_retry_exhausted(
+        &self,
+        backlog: &TasksBacklog,
+    ) -> Result<BacklogOutcome, WorkerError> {
+        warn!(
+            "{}",
+            tr_log_args(
+                "backlog-retry-exhausted-marked",
+                &[(
+                    "task_id",
+                    fluent_bundle::FluentValue::from(backlog.id.to_string())
+                )],
+            )
+        );
 
-                        // 失败重试：在原始 Pending 快照上累加重试次数并持久化，
-                        // 保持 Pending 以便下一周期重新拉取（不残留 Processing 状态）。
-                        let mut retry_backlog = backlog.clone();
-                        retry_backlog.increment_retry_count();
+        let mut failed_backlog = backlog.clone();
+        failed_backlog
+            .mark_failed()
+            .map_err(WorkerError::DomainError)?;
 
-                        self.tasks_backlog_repository
-                            .update(&retry_backlog)
-                            .await
-                            .repo_err()?;
+        self.tasks_backlog_repository
+            .update(&failed_backlog)
+            .await
+            .repo_err()?;
 
-                        Err(e)
-                    }
-                }
-            }
-            Ok(crate::domain::services::rate_limiting_service::ConcurrencyResult::Denied {
-                reason,
-            }) => {
+        Ok(BacklogOutcome::RetryExhausted)
+    }
+
+    /// 按并发检查结果分派；放行分支在 [`Self::reactivate_allowed_backlog`]
+    async fn apply_concurrency_result(
+        &self,
+        backlog: &TasksBacklog,
+        concurrency: Result<ConcurrencyResult, RateLimitingError>,
+    ) -> Result<BacklogOutcome, WorkerError> {
+        match concurrency {
+            Ok(ConcurrencyResult::Allowed) => self.reactivate_allowed_backlog(backlog).await,
+            Ok(ConcurrencyResult::Denied { reason }) => {
                 info!(
                     "{}",
                     tr_log_args(
@@ -357,9 +303,7 @@ impl BacklogWorker {
                 );
                 Ok(BacklogOutcome::Denied)
             }
-            Ok(crate::domain::services::rate_limiting_service::ConcurrencyResult::Queued {
-                ..
-            }) => {
+            Ok(ConcurrencyResult::Queued { .. }) => {
                 // 这种情况不应该发生，因为我们正在处理积压任务
                 warn!(
                     "{}",
@@ -382,6 +326,93 @@ impl BacklogWorker {
                     )
                 );
                 Err(WorkerError::ServiceError(e.to_string()))
+            }
+        }
+    }
+
+    /// 并发放行：Pending → Processing 迁移后重新激活；失败回写重试次数
+    async fn reactivate_allowed_backlog(
+        &self,
+        backlog: &TasksBacklog,
+    ) -> Result<BacklogOutcome, WorkerError> {
+        info!(
+            "{}",
+            tr_log_args(
+                "backlog-concurrency-available",
+                &[
+                    (
+                        "team_id",
+                        fluent_bundle::FluentValue::from(backlog.team_id.to_string())
+                    ),
+                    (
+                        "task_id",
+                        fluent_bundle::FluentValue::from(backlog.id.to_string())
+                    ),
+                ],
+            )
+        );
+
+        // 4. 前置状态迁移：Pending → Processing（域状态机守卫，仅 Pending 可迁移）。
+        // 这是修复"成功路径 mark_completed 恒败"的关键——mark_completed 要求
+        // 积压项处于 Processing。迁移失败说明该项已非 Pending（被他方处理），
+        // 跳过该条并继续。
+        let mut processing_backlog = backlog.clone();
+        if let Err(e) = processing_backlog.mark_processing() {
+            warn!(
+                "{}",
+                tr_log_args(
+                    "backlog-state-transition-skipped",
+                    &[
+                        (
+                            "task_id",
+                            fluent_bundle::FluentValue::from(backlog.id.to_string())
+                        ),
+                        (
+                            "current",
+                            fluent_bundle::FluentValue::from(backlog.status.to_string())
+                        ),
+                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                    ],
+                )
+            );
+            return Ok(BacklogOutcome::Skipped);
+        }
+
+        // 5. 重新激活任务（reactivate_task 内 mark_completed 现从 Processing 迁移，不再恒败）
+        match self.reactivate_task(processing_backlog).await {
+            Ok(_) => {
+                info!(
+                    "{}",
+                    tr_log_args(
+                        "backlog-reactivated",
+                        &[(
+                            "task_id",
+                            fluent_bundle::FluentValue::from(backlog.id.to_string())
+                        )],
+                    )
+                );
+                Ok(BacklogOutcome::Reactivated)
+            }
+            Err(e) => {
+                error!(
+                    "{}",
+                    tr_log_args(
+                        "backlog-reactivation-failed",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
+                );
+
+                // 失败重试：在原始 Pending 快照上累加重试次数并持久化，
+                // 保持 Pending 以便下一周期重新拉取（不残留 Processing 状态）。
+                let mut retry_backlog = backlog.clone();
+                retry_backlog.increment_retry_count();
+
+                self.tasks_backlog_repository
+                    .update(&retry_backlog)
+                    .await
+                    .repo_err()?;
+
+                Err(e)
             }
         }
     }

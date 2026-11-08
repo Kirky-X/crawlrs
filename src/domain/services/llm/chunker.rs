@@ -355,41 +355,54 @@ pub fn merge_results(results: &[Value]) -> Value {
         return json!({});
     }
     if results.iter().all(Value::is_array) {
-        let mut merged = Vec::new();
-        for r in results {
-            if let Value::Array(items) = r {
-                merged.extend(items.iter().cloned());
-            }
-        }
-        return Value::Array(merged);
+        return concat_result_arrays(results);
     }
     let mut merged = serde_json::Map::new();
     for r in results {
         if let Value::Object(map) = r {
-            for (k, v) in map {
-                match merged.get(k) {
-                    Some(Value::Array(existing)) if v.is_array() => {
-                        let mut concat = existing.clone();
-                        if let Value::Array(items) = v {
-                            concat.extend(items.iter().cloned());
-                        }
-                        merged.insert(k.clone(), Value::Array(concat));
-                    }
-                    Some(Value::Null) | None => {
-                        merged.insert(k.clone(), v.clone());
-                    }
-                    Some(Value::Array(existing)) if v.is_null() => {
-                        // 已聚合数组 vs null：保留聚合结果
-                        merged.insert(k.clone(), Value::Array(existing.clone()));
-                    }
-                    _ => {
-                        // 已有非 null 值：保留首个非 null
-                    }
-                }
-            }
+            merge_object_fields(&mut merged, map);
         }
     }
     Value::Object(merged)
+}
+
+/// 根数组结果按原顺序拼接为单个数组
+fn concat_result_arrays(results: &[Value]) -> Value {
+    let mut merged = Vec::new();
+    for r in results {
+        if let Value::Array(items) = r {
+            merged.extend(items.iter().cloned());
+        }
+    }
+    Value::Array(merged)
+}
+
+/// 将单个对象的字段并入聚合 map：数组字段拼接，其余取首个非 null
+fn merge_object_fields(
+    merged: &mut serde_json::Map<String, Value>,
+    map: &serde_json::Map<String, Value>,
+) {
+    for (k, v) in map {
+        match merged.get(k) {
+            Some(Value::Array(existing)) if v.is_array() => {
+                let mut concat = existing.clone();
+                if let Value::Array(items) = v {
+                    concat.extend(items.iter().cloned());
+                }
+                merged.insert(k.clone(), Value::Array(concat));
+            }
+            Some(Value::Null) | None => {
+                merged.insert(k.clone(), v.clone());
+            }
+            Some(Value::Array(existing)) if v.is_null() => {
+                // 已聚合数组 vs null：保留聚合结果
+                merged.insert(k.clone(), Value::Array(existing.clone()));
+            }
+            _ => {
+                // 已有非 null 值：保留首个非 null
+            }
+        }
+    }
 }
 
 /// 分块提取编排：术语预检 → 预算判定 → 切块并行提取 → merge 综合

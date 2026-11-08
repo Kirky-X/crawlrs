@@ -39,8 +39,8 @@ use crate::engines::engine_client::EngineClient;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::engine_trait::SearchEngine;
-use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::robots::RobotsChecker;
+use crate::workers::coalesce_coordinator::RequestCoalescer;
 
 /// All application services.
 #[derive(Clone)]

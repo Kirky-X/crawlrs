@@ -8,31 +8,37 @@
 //!
 //! # 职责
 //!
-//! 对同 URL 并发请求执行 single-flight 协调：
-//! - **Proceed 路径**：首个 worker（leader）获得执行权，正常抓取后通过 guard Drop
-//!   广播 `CoalesceSignal::Completed`
+//! 对同合并键并发请求执行 single-flight 协调：
+//! - **Proceed 路径**：首个 worker（leader）获得执行权，成功落库结果后通过 guard
+//!   广播 `CoalesceSignal::Completed { success: true }`；失败/取消路径广播
+//!   `Completed { success: false }`
 //! - **Wait 路径**：等待方监听广播信号（45s 超时）：
-//!   - `Completed` → 按 leader task_id 从 `result_repo` 读取结果，命中则 mark_completed，
-//!     未命中则延后 5s 重排（leader 仍在写入）
+//!   - `Completed { success: true }` → 按 leader task_id 从 `result_repo` 读取结果，
+//!     命中则 mark_completed，未命中则延后 5s 重排（leader 仍在写入）
+//!   - `Completed { success: false }` → leader 已失败/取消，不查询结果，直接重排
 //!   - `Purged`（僵死条目被清理）/ recv `Closed`（leader 异常）/ 超时 →
 //!     不 mark_failed leader 任务，走等待方自身重排（超上限后才 mark_failed 自身）
 //!
 //! # 信号语义
 //!
 //! 原代码 `rx.recv.await` 无超时且不区分信号来源，leader panic / 死锁会导致等待方
-//! 永久挂起或误判完成。现等待方区分 leader 正常完成与异常消失：正常完成才按
-//! leader task_id 查询结果；异常（Purged/Closed/超时）一律走自身重排，避免误杀
-//! leader 任务或无条件 purge 全表。
+//! 永久挂起或误判完成。现等待方区分 leader 成功、失败与异常消失：只有成功才按
+//! leader task_id 查询结果；失败与异常（Purged/Closed/超时）一律走自身重排，
+//! 避免误杀 leader 任务、无条件 purge 全表或做无效的结果查询。
 
+mod key;
 mod leader;
+// `RequestCoalescer`/`CoalesceKey` 由公开接口（`WorkerManagerDeps.request_coalescer`、
+// `ScrapeWorkerDeps.coalesce_coordinator` 的泛型实参）暴露，保持 pub；
+// `CoalesceGuard`/`CoalesceResult` 仅在 crate 内使用，收窄为 pub(crate)。
+pub(crate) use key::{CoalesceGuard, CoalesceResult};
+pub use key::{CoalesceKey, RequestCoalescer};
 use leader::{recv_leader_signal, LeaderSignal};
 
 use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
-use crate::utils::coalesce::{
-    CoalesceGuard, CoalesceKey, CoalesceResult, CoalesceSignal, RequestCoalescer,
-};
+use crate::utils::coalesce::CoalesceSignal;
 use crate::utils::url_redaction::redact_url_for_log;
 use anyhow::Result;
 use chrono::Utc;
@@ -45,7 +51,8 @@ use std::sync::Arc;
 /// 封装同合并键（租户 + 规范化 URL + 完整请求身份指纹）并发请求的
 /// single-flight 协调逻辑，从 ScrapeWorker 抽离。
 /// 合并键构造见 [`CoalesceKey`]：跨租户或 `ScrapeOptions` 内容相关字段
-/// 任一不同一律不合并（`cache_mode` 控制开关除外）。
+/// 任一不同一律不合并；`cache_mode` 本身不参与，但由其派生的
+/// `cache_read_allowed` 布尔投影参与（禁止读缓存的请求不与可读缓存请求合并）。
 ///
 /// # 字段
 ///
@@ -100,7 +107,7 @@ impl CoalesceCoordinator {
     /// - `Ok(None)`：已被其他 worker 处理（等待方从 result_repo 读到结果，或被延后重排），
     ///   调用方应直接返回 Ok()
     /// - `Err(e)`：协调失败（租户不一致 / 超时 / 仓储错误），调用方应失败处理
-    pub async fn try_coalesce(
+    pub(crate) async fn try_coalesce(
         &self,
         key: &CoalesceKey,
         task: &Task,
@@ -145,7 +152,8 @@ impl CoalesceCoordinator {
                 // 兜底清理 in-flight 条目并广播 Purged
                 //
                 // 信号语义
-                // - Completed → 按 leader task_id 查询落库结果
+                // - Completed { success: true } → 按 leader task_id 查询落库结果
+                // - Completed { success: false } → leader 失败/取消，不查结果，直接重排
                 // - Purged → leader 僵死被清理，不视为完成，走自身重排
                 // - recv Closed / Lagged → leader 异常，不 mark_failed，走自身重排
                 // - timeout → leader 仍可能在跑，不无条件 purge 全表，走自身重排
@@ -201,7 +209,19 @@ impl CoalesceCoordinator {
                         self.reschedule_or_fail(task, worker_id, "coalesce entry purged")
                             .await
                     }
-                    CoalesceSignal::Completed => {
+                    CoalesceSignal::Completed { success: false } => {
+                        // leader 失败/取消（结果未落库）：不查询结果，走自身重排。
+                        // 这是 M2 修复点：旧实现统一按 Completed 查询，失败路径
+                        // 必然白烧一次 `find_by_task_id`。
+                        warn!(
+                            "Coalesce leader task {} reported failure for waiter task {}; \
+                             rescheduling self without result lookup",
+                            leader_task_id, task.id
+                        );
+                        self.reschedule_or_fail(task, worker_id, "leader reported failure")
+                            .await
+                    }
+                    CoalesceSignal::Completed { success: true } => {
                         // leader 正常完成：按 leader task_id 查询落库结果
                         // （结果落在 leader 名下，非等待方自身 task_id）。
                         if self
@@ -226,7 +246,8 @@ impl CoalesceCoordinator {
 
     /// 等待方自身重排（不 mark_failed leader 的任务）；超过最大重排次数后 mark_failed 自身。
     ///
-    /// 触发场景：recv 超时 / Closed / Lagged、Purged 信号、Completed 但结果尚未落库。
+    /// 触发场景：recv 超时 / Closed / Lagged、Purged 信号、
+    /// `Completed { success: false }`（leader 失败）、Completed 成功但结果尚未落库。
     /// 统一走带锁守卫的 `update_task_guarded`（重排）或 `mark_failed`（超上限），
     /// 避免裸写 status/payload 覆盖并发状态迁移。
     async fn reschedule_or_fail(
@@ -286,7 +307,6 @@ mod tests {
     use crate::domain::models::{Task, TaskType};
     use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
     use crate::engines::types::ScrapeOptions;
-    use crate::utils::coalesce::RequestCoalescer;
     use async_trait::async_trait;
     use serde_json::json;
     use std::collections::HashSet;
@@ -541,6 +561,25 @@ mod tests {
         CoalesceKey::new(task.team_id, &task.url, &ScrapeOptions::default())
     }
 
+    /// 模拟 leader 成功完成：标记 success 后释放 slot（广播成功信号）
+    fn finish_leader_success(result: CoalesceResult) {
+        match result {
+            CoalesceResult::Proceed(mut guard) => {
+                guard.mark_success();
+                drop(guard);
+            }
+            CoalesceResult::Wait(..) => panic!("test leader must acquire coalesce slot"),
+        }
+    }
+
+    /// 模拟 leader 失败：不标记 success，直接释放 slot（广播失败信号）
+    fn finish_leader_failure(result: CoalesceResult) {
+        match result {
+            CoalesceResult::Proceed(guard) => drop(guard),
+            CoalesceResult::Wait(..) => panic!("test leader must acquire coalesce slot"),
+        }
+    }
+
     /// Proceed 路径：首个 worker 获得执行权，返回 Some(guard)
     #[tokio::test]
     async fn try_coalesce_proceed_returns_some_guard() {
@@ -589,8 +628,8 @@ mod tests {
 
         // 给一点时间让等待方进入 rx.recv()
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        // 释放 guard 触发广播
-        drop(first_guard);
+        // 释放 guard 触发广播。leader 成功但结果尚未落库 → 等待方查询后重排。
+        finish_leader_success(first_guard);
 
         let result = handle.await.expect("task panicked");
         assert!(result.is_ok(), "should not error");
@@ -619,6 +658,60 @@ mod tests {
         );
     }
 
+    /// M2：leader 失败信号 → 等待方不查询结果，直接重排
+    ///
+    /// `return_some=true`：若等待方误按成功路径查询会命中并 mark_completed——
+    /// 用以反证失败分支确实跳过了结果查询（减少一次无效查询）。
+    #[tokio::test]
+    async fn try_coalesce_failed_leader_reschedules_without_result_lookup() {
+        let worker_id = crate::domain::id::Id::generate();
+        let task_repo = Arc::new(CountingTaskRepo::new());
+        let result_repo = Arc::new(ConfigurableResultRepo::new(true));
+        let coalescer = Arc::new(RequestCoalescer::new());
+        let coord =
+            CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
+
+        let task = make_task();
+        let key = key_for(&task);
+
+        let leader_guard = coalescer.try_start(&key, crate::domain::id::Id::generate());
+        let task_clone = task.clone();
+        let coord_clone = coord.clone();
+        let key_clone = key.clone();
+        let handle = tokio::spawn(async move {
+            coord_clone
+                .try_coalesce(&key_clone, &task_clone, worker_id)
+                .await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // leader 失败：不标记 success → 广播 Completed { success: false }
+        finish_leader_failure(leader_guard);
+
+        let result = handle.await.expect("task panicked");
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().is_none(),
+            "failed leader should reschedule waiter (None)"
+        );
+
+        assert_eq!(
+            result_repo.find_calls.load(Ordering::SeqCst),
+            0,
+            "failed leader must NOT trigger result lookup"
+        );
+        assert_eq!(
+            task_repo.mark_completed_calls.load(Ordering::SeqCst),
+            0,
+            "failed leader must NOT mark waiter completed"
+        );
+        assert_eq!(
+            task_repo.update_calls.load(Ordering::SeqCst),
+            1,
+            "failed leader should reschedule waiter via guarded update"
+        );
+    }
+
     /// Wait 路径收到广播且 result_repo 命中：mark_completed 并返回 None
     #[tokio::test]
     async fn try_coalesce_wait_completes_when_result_found() {
@@ -644,7 +737,7 @@ mod tests {
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        drop(first_guard);
+        finish_leader_success(first_guard);
 
         let result = handle.await.expect("task panicked");
         assert!(result.is_ok(), "should not error");
@@ -732,7 +825,7 @@ mod tests {
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        drop(first_guard);
+        finish_leader_success(first_guard);
 
         let result = handle.await.expect("task panicked");
         assert!(result.is_ok());
@@ -811,7 +904,7 @@ mod tests {
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        drop(first_guard);
+        finish_leader_success(first_guard);
 
         let result = handle.await.expect("task panicked");
         assert!(result.is_err(), "find_by_task_id error should propagate");
@@ -976,8 +1069,8 @@ mod tests {
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        // leader 正常完成 → Drop CoalesceResult::Proceed(guard) → 广播 Completed
-        drop(leader_guard);
+        // leader 正常完成 → 标记 success 后释放 → 广播 Completed { success: true }
+        finish_leader_success(leader_guard);
 
         let result = handle.await.expect("task panicked");
         assert!(result.is_ok());

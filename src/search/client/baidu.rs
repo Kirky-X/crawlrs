@@ -140,6 +140,33 @@ impl BaiduSearchEngine {
         // 性能 PERF-05：使用全局 Lazy 单例，避免每次 new 都重复解析选择器
         Ok(HtmlParser::baidu().parse(html, SearchEngineType::Baidu))
     }
+
+    /// HTML 解析 + JSON 回退（自 [`BaiduSearchEngine::search`] 提取）
+    fn parse_results_with_json_fallback(
+        &self,
+        content: &str,
+        query: &str,
+    ) -> Result<Vec<ResponseItem>, SearchError> {
+        // Try parsing as HTML first, then JSON fallback
+        let items = self.parse_search_results(content, query)?;
+
+        // If HTML parsing returned empty, try JSON (tn=json mode)
+        let items = if items.is_empty() {
+            if let Ok(json_items) = self.parse_baidu_response(content) {
+                if !json_items.is_empty() {
+                    json_items
+                } else {
+                    items
+                }
+            } else {
+                items
+            }
+        } else {
+            items
+        };
+
+        Ok(items)
+    }
 }
 
 #[async_trait]
@@ -167,33 +194,11 @@ impl SearchEngine for BaiduSearchEngine {
         let page = Self::page_from_offset(request.offset);
         let (url, params) =
             self.build_baidu_url(&request.query, page, BaiduSearchCategory::General);
-
-        let full_url = if !params.is_empty() {
-            format!(
-                "{}?{}",
-                url,
-                serde_urlencoded::to_string(&params).unwrap_or_default()
-            )
-        } else {
-            url
-        };
+        let full_url = build_full_search_url(url, &params);
 
         // 构建请求头
         // 参考 searxng/searx/engines/baidu.py：Baidu JSON 模式需要标准浏览器 UA
-        let mut headers = HashMap::with_capacity(6);
-        headers.insert(
-            "Accept".to_string(),
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-                .to_string(),
-        );
-        headers.insert(
-            "Accept-Language".to_string(),
-            "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
-        );
-        headers.insert("DNT".to_string(), "1".to_string());
-        headers.insert("Connection".to_string(), "keep-alive".to_string());
-        headers.insert("Sec-GPC".to_string(), "1".to_string());
-        headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
+        let headers = build_search_headers();
 
         // 使用 EngineClient 进行请求
         let options = ScrapeOptions {
@@ -221,34 +226,8 @@ impl SearchEngine for BaiduSearchEngine {
         }
 
         let content = scrape_response.content;
-
-        // 反爬检测：Baidu captcha 重定向目标（参考 searxng wappass 检测）。
-        // HTTP 客户端跟随 302 后拿到的是验证页本体，正文只有“百度安全验证”
-        // 标题，不含 wappass 重定向 URL 字符串，故需并列检测。
-        if content.contains("wappass.baidu.com/static/captcha")
-            || content.contains("verify your access")
-            || content.contains("百度安全验证")
-        {
-            return Err(SearchError::Captcha("Baidu".to_string()));
-        }
-
-        // Try parsing as HTML first, then JSON fallback
-        let items = self.parse_search_results(&content, &request.query)?;
-
-        // If HTML parsing returned empty, try JSON (tn=json mode)
-        let items = if items.is_empty() {
-            if let Ok(json_items) = self.parse_baidu_response(&content) {
-                if !json_items.is_empty() {
-                    json_items
-                } else {
-                    items
-                }
-            } else {
-                items
-            }
-        } else {
-            items
-        };
+        detect_baidu_captcha(&content)?;
+        let items = self.parse_results_with_json_fallback(&content, &request.query)?;
 
         let total_count = items.len() as u64;
 
@@ -258,6 +237,53 @@ impl SearchEngine for BaiduSearchEngine {
             engine: SearchEngineType::Baidu,
         })
     }
+}
+
+/// 拼接完整搜索 URL（自 [`BaiduSearchEngine::search`] 提取）
+fn build_full_search_url(url: String, params: &HashMap<String, String>) -> String {
+    if !params.is_empty() {
+        format!(
+            "{}?{}",
+            url,
+            serde_urlencoded::to_string(params).unwrap_or_default()
+        )
+    } else {
+        url
+    }
+}
+
+/// 搜索请求头（自 [`BaiduSearchEngine::search`] 提取）
+fn build_search_headers() -> HashMap<String, String> {
+    // 构建请求头
+    // 参考 searxng/searx/engines/baidu.py：Baidu JSON 模式需要标准浏览器 UA
+    let mut headers = HashMap::with_capacity(6);
+    headers.insert(
+        "Accept".to_string(),
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string(),
+    );
+    headers.insert(
+        "Accept-Language".to_string(),
+        "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
+    );
+    headers.insert("DNT".to_string(), "1".to_string());
+    headers.insert("Connection".to_string(), "keep-alive".to_string());
+    headers.insert("Sec-GPC".to_string(), "1".to_string());
+    headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
+    headers
+}
+
+/// 百度反爬验证页检测（自 [`BaiduSearchEngine::search`] 提取）
+fn detect_baidu_captcha(content: &str) -> Result<(), SearchError> {
+    // 反爬检测：Baidu captcha 重定向目标（参考 searxng wappass 检测）。
+    // HTTP 客户端跟随 302 后拿到的是验证页本体，正文只有“百度安全验证”
+    // 标题，不含 wappass 重定向 URL 字符串，故需并列检测。
+    if content.contains("wappass.baidu.com/static/captcha")
+        || content.contains("verify your access")
+        || content.contains("百度安全验证")
+    {
+        return Err(SearchError::Captcha("Baidu".to_string()));
+    }
+    Ok(())
 }
 
 /// 仅测试构建可用的固定结果旁路：`BAIDU_TEST_RESULTS=true` 时返回确定性结果。

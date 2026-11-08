@@ -59,8 +59,8 @@ use crate::search::client::SearchClient;
 use crate::infrastructure::events::{BroadcastEventBus, EventBus};
 use crate::infrastructure::oxcache::CacheService;
 // 请求合并器（同 URL 并发只允许首个执行实际抓取）
-use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::robots::RobotsCheckerTrait;
+use crate::workers::coalesce_coordinator::RequestCoalescer;
 use dbnexus::DbPool;
 
 /// Runtime state extracted from a built `AsyncKit<Ready>` for use in Axum handlers.

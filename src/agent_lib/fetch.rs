@@ -94,15 +94,7 @@ pub struct FetchedContent {
 /// - `MaxBytesExceeded`: 响应体超限
 /// - `Timeout` / `Network` / `Extraction` / `Markdown`
 pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, AgentLibError> {
-    let parsed =
-        url::Url::parse(url).map_err(|e| AgentLibError::InvalidUrl(format!("{}: {}", url, e)))?;
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(AgentLibError::InvalidUrl(format!(
-            "unsupported scheme '{}' for {}",
-            parsed.scheme(),
-            url
-        )));
-    }
+    let parsed = parse_request_url(url)?;
 
     let validator = SsrfValidator::new();
     let mut current = parsed;
@@ -113,34 +105,12 @@ pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, Age
     let mut final_peer_addr: Option<String> = None;
 
     loop {
-        // 每跳出口裁决（请求前判定，deny 未发起连接）。
-        //
-        // 设计 egress=Some 时 guard 是逐跳唯一权威（agentstem 将
-        // EgressPolicy::validate_url 六道护栏包装为 guard，allow=validate_url==Ok），
-        // crawlrs 不再独立执行 SSRF 拦截，否则 allowlist 注入的内部 URL 会被
-        // crawlrs 二次拒绝（allowlist 经 EgressGuard 生效）。
-        if let Some(guard) = &opts.egress {
-            if !guard.allow(&current) {
-                return Err(AgentLibError::EgressDenied {
-                    url: current.to_string(),
-                });
-            }
-        }
-
-        // 构建本跳 client（egress/SSRF 分派见 [`build_hop_client`]）
-        let client = build_hop_client(&validator, opts, &current).await?;
-
-        // GET 请求
-        let resp = client
-            .get(current.clone())
-            .send()
-            .await
-            .map_err(|e| map_reqwest_error(current.as_str(), e))?;
+        let (resp, peer_addr) = send_hop(&validator, opts, &current).await?;
 
         // peer_addr 从 connection 元数据回填。
         // 逐跳覆盖：重定向后保留最终响应的 peer 地址（与 final_url 语义一致），
         // 而非首跳地址——首跳值会误导审计/日志中的对端记录。
-        final_peer_addr = resp.remote_addr().map(|a| a.to_string());
+        final_peer_addr = peer_addr;
 
         // 重定向处理
         if opts.follow_redirects && resp.status().is_redirection() {
@@ -149,20 +119,78 @@ pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, Age
             continue;
         }
 
-        // 非 2xx 状态码
-        if !resp.status().is_success() {
-            return Err(AgentLibError::HttpStatus {
-                status: resp.status().as_u16(),
+        return finish_response(resp, &current, final_peer_addr, opts.max_bytes).await;
+    }
+}
+
+/// 解析并校验目标 URL（仅支持 http/https）。
+fn parse_request_url(url: &str) -> Result<url::Url, AgentLibError> {
+    let parsed =
+        url::Url::parse(url).map_err(|e| AgentLibError::InvalidUrl(format!("{}: {}", url, e)))?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(AgentLibError::InvalidUrl(format!(
+            "unsupported scheme '{}' for {}",
+            parsed.scheme(),
+            url
+        )));
+    }
+    Ok(parsed)
+}
+
+/// 发起单跳请求：逐跳出口裁决 → 构建 client → GET → 回填 peer_addr。
+async fn send_hop(
+    validator: &SsrfValidator,
+    opts: &FetchOptions,
+    current: &url::Url,
+) -> Result<(reqwest::Response, Option<String>), AgentLibError> {
+    // 每跳出口裁决（请求前判定，deny 未发起连接）。
+    //
+    // 设计 egress=Some 时 guard 是逐跳唯一权威（agentstem 将
+    // EgressPolicy::validate_url 六道护栏包装为 guard，allow=validate_url==Ok），
+    // crawlrs 不再独立执行 SSRF 拦截，否则 allowlist 注入的内部 URL 会被
+    // crawlrs 二次拒绝（allowlist 经 EgressGuard 生效）。
+    if let Some(guard) = &opts.egress {
+        if !guard.allow(current) {
+            return Err(AgentLibError::EgressDenied {
                 url: current.to_string(),
             });
         }
-
-        // 读取响应体（max_bytes 限制 + 编码解码）
-        let html = read_body_limited(resp, opts.max_bytes).await?;
-
-        // 正文提取 + Markdown 管道
-        return convert_to_markdown(&html, &current, final_peer_addr).await;
     }
+
+    // 构建本跳 client（egress/SSRF 分派见 [`build_hop_client`]）
+    let client = build_hop_client(validator, opts, current).await?;
+
+    // GET 请求
+    let resp = client
+        .get(current.clone())
+        .send()
+        .await
+        .map_err(|e| map_reqwest_error(current.as_str(), e))?;
+
+    let peer_addr = resp.remote_addr().map(|a| a.to_string());
+    Ok((resp, peer_addr))
+}
+
+/// 读取最终响应体并转换为 Markdown（非 2xx 返回 `HttpStatus`）。
+async fn finish_response(
+    resp: reqwest::Response,
+    current: &url::Url,
+    peer_addr: Option<String>,
+    max_bytes: usize,
+) -> Result<FetchedContent, AgentLibError> {
+    // 非 2xx 状态码
+    if !resp.status().is_success() {
+        return Err(AgentLibError::HttpStatus {
+            status: resp.status().as_u16(),
+            url: current.to_string(),
+        });
+    }
+
+    // 读取响应体（max_bytes 限制 + 编码解码）
+    let html = read_body_limited(resp, max_bytes).await?;
+
+    // 正文提取 + Markdown 管道
+    convert_to_markdown(&html, current, peer_addr).await
 }
 
 /// 构建本跳 HTTP client（自 [`fetch`] 提取）。

@@ -208,7 +208,24 @@ fn validate_geo_restrictions_request(
     locale: &crate::i18n::Locale,
     i18n: &Arc<crate::i18n::I18nBundle>,
 ) -> Option<axum::response::Response> {
-    if let Some(ref countries) = request.allowed_countries {
+    if let Some(response) = validate_country_codes(request.allowed_countries.as_deref()) {
+        return Some(response);
+    }
+
+    if let Some(response) = validate_country_codes(request.blocked_countries.as_deref()) {
+        return Some(response);
+    }
+
+    if let Some(response) = validate_ip_whitelist(request.ip_whitelist.as_deref(), locale, i18n) {
+        return Some(response);
+    }
+
+    None
+}
+
+/// 国家码必须为 2 位 ISO 3166-1 alpha-2 格式。
+fn validate_country_codes(countries: Option<&[String]>) -> Option<axum::response::Response> {
+    if let Some(countries) = countries {
         for country in countries {
             if country.len() != 2 {
                 return Some(error_response_with_code(
@@ -219,20 +236,16 @@ fn validate_geo_restrictions_request(
             }
         }
     }
+    None
+}
 
-    if let Some(ref countries) = request.blocked_countries {
-        for country in countries {
-            if country.len() != 2 {
-                return Some(error_response_with_code(
-                    StatusCode::BAD_REQUEST,
-                    error_codes::VALIDATION_ERROR,
-                    "Country codes must be 2-letter ISO 3166-1 alpha-2 format",
-                ));
-            }
-        }
-    }
-
-    if let Some(ref whitelist) = request.ip_whitelist {
+/// IP/CIDR 白名单逐项校验。
+fn validate_ip_whitelist(
+    whitelist: Option<&[String]>,
+    locale: &crate::i18n::Locale,
+    i18n: &Arc<crate::i18n::I18nBundle>,
+) -> Option<axum::response::Response> {
+    if let Some(whitelist) = whitelist {
         for ip in whitelist {
             if !is_valid_ip_or_cidr(ip) {
                 // FTL key: api.ftl `team-invalid-ip-cidr`（locale 经 i18n 中间件注入）
@@ -249,7 +262,6 @@ fn validate_geo_restrictions_request(
             }
         }
     }
-
     None
 }
 

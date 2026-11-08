@@ -371,56 +371,86 @@ impl WaitFor {
         stable_duration: Duration,
         timeout: Duration,
     ) -> Result<(), EngineError> {
-        if stable_duration > DOM_STABLE_MAX_DURATION {
-            return Err(EngineError::BrowserError(format!(
-                "dom_stable duration {}ms exceeds max {}ms",
-                stable_duration.as_millis(),
-                DOM_STABLE_MAX_DURATION.as_millis()
-            )));
-        }
+        validate_dom_stable_duration(stable_duration)?;
         let check_expr = "() => document.body ? document.body.innerHTML.length : -1";
         let deadline = Instant::now() + timeout;
         let mut last_len: i64 = -1;
         let mut stable_since: Option<Instant> = None;
         loop {
             if Instant::now() >= deadline {
-                // 复查 H3：对齐 NetworkIdle 的尽力语义——超时降级为 Ok 而非
-                // 整个 scrape 失败（stable_duration 超过等待预算时循环数学上
-                // 不可能满足，此前会把 API 合法输入变成确定性失败）
-                log::warn!(
-                    "{}",
-                    crate::i18n::tr_log_args(
-                        "wait-dom-unstable-degraded",
-                        &[(
-                            "timeout",
-                            fluent_bundle::FluentValue::from(timeout.as_millis() as i64),
-                        )],
-                    )
-                );
+                log_dom_stable_timeout(timeout);
                 return Ok(());
             }
-            let len: i64 = page
-                .evaluate(check_expr)
-                .await
-                .map_err(|e| EngineError::BrowserError(format!("dom eval failed: {e}")))?
-                .into_value::<i64>()
-                .map_err(|e| EngineError::BrowserError(format!("dom eval decode failed: {e}")))?;
-            if len == last_len {
-                if stable_since.is_none() {
-                    stable_since = Some(Instant::now());
-                }
-                if let Some(since) = stable_since {
-                    if since.elapsed() >= stable_duration {
-                        return Ok(());
-                    }
-                }
-            } else {
-                last_len = len;
-                stable_since = None;
+            let len = read_body_inner_html_len(page, check_expr).await?;
+            if dom_length_stabilized(len, &mut last_len, &mut stable_since, stable_duration) {
+                return Ok(());
             }
             tokio::time::sleep(DOM_STABLE_POLL_INTERVAL).await;
         }
     }
+}
+
+/// stable_duration 上限校验（自 [`WaitFor::wait_dom_stable`] 提取）
+fn validate_dom_stable_duration(stable_duration: Duration) -> Result<(), EngineError> {
+    if stable_duration > DOM_STABLE_MAX_DURATION {
+        return Err(EngineError::BrowserError(format!(
+            "dom_stable duration {}ms exceeds max {}ms",
+            stable_duration.as_millis(),
+            DOM_STABLE_MAX_DURATION.as_millis()
+        )));
+    }
+    Ok(())
+}
+
+/// 超时降级日志（自 [`WaitFor::wait_dom_stable`] 提取）
+///
+/// 复查 H3：对齐 NetworkIdle 的尽力语义——超时降级为 Ok 而非
+/// 整个 scrape 失败（stable_duration 超过等待预算时循环数学上
+/// 不可能满足，此前会把 API 合法输入变成确定性失败）
+fn log_dom_stable_timeout(timeout: Duration) {
+    log::warn!(
+        "{}",
+        crate::i18n::tr_log_args(
+            "wait-dom-unstable-degraded",
+            &[(
+                "timeout",
+                fluent_bundle::FluentValue::from(timeout.as_millis() as i64),
+            )],
+        )
+    );
+}
+
+/// 读取 body.innerHTML 长度（自 [`WaitFor::wait_dom_stable`] 提取）
+async fn read_body_inner_html_len(page: &Page, check_expr: &str) -> Result<i64, EngineError> {
+    page.evaluate(check_expr)
+        .await
+        .map_err(|e| EngineError::BrowserError(format!("dom eval failed: {e}")))?
+        .into_value::<i64>()
+        .map_err(|e| EngineError::BrowserError(format!("dom eval decode failed: {e}")))
+}
+
+/// 稳定性状态推进（自 [`WaitFor::wait_dom_stable`] 提取）：
+/// 返回 true 表示长度已连续 stable_duration 不变。
+fn dom_length_stabilized(
+    len: i64,
+    last_len: &mut i64,
+    stable_since: &mut Option<Instant>,
+    stable_duration: Duration,
+) -> bool {
+    if len == *last_len {
+        if stable_since.is_none() {
+            *stable_since = Some(Instant::now());
+        }
+        if let Some(since) = *stable_since {
+            if since.elapsed() >= stable_duration {
+                return true;
+            }
+        }
+    } else {
+        *last_len = len;
+        *stable_since = None;
+    }
+    false
 }
 
 /// 网络空闲状态机（纯逻辑，独立于 CDP 便于单测）

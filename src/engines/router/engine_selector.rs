@@ -25,6 +25,32 @@ impl EngineRouter {
         &self,
         request: &InternalScrapeRequest,
     ) -> Vec<(f64, Arc<dyn ScraperEngine>)> {
+        let candidates = self.collect_engine_candidates(request);
+
+        // PERF-04 一次性收集 DashMap 为 HashMap，避免循环内多次 Ref 借用，
+        // 同时供 Second pass（calculate_engine_score）和 sort_candidates_by_strategy 复用，
+        // DashMap 全局只遍历一次。
+        let stats: std::collections::HashMap<String, EngineStats> = self
+            .engine_stats
+            .iter()
+            .map(|r| (r.key().clone(), r.value().clone()))
+            .collect();
+
+        // Second pass: calculate scores（从 HashMap 取 EngineStats，无 DashMap 借用开销）
+        let mut scored_candidates = self.score_engine_candidates(candidates, &stats);
+
+        // Sort by strategy（复用上方已收集的 stats，无需再次遍历 DashMap）
+        self.sort_candidates_by_strategy(&mut scored_candidates, &stats);
+
+        scored_candidates
+    }
+
+    /// 收集引擎候选（自 [`EngineRouter::select_optimal_engines`] 提取）：
+    /// 熔断/特征过滤 + 内存水位修正 + 支持度评分。
+    fn collect_engine_candidates(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Vec<(f64, String, Arc<dyn ScraperEngine>)> {
         let mut candidates = Vec::new();
 
         // First pass: collect engine info without holding lock for circuit breaker checks
@@ -90,16 +116,15 @@ impl EngineRouter {
             candidates.push((support_score, engine_name.to_string(), Arc::clone(engine)));
         }
 
-        // PERF-04 一次性收集 DashMap 为 HashMap，避免循环内多次 Ref 借用，
-        // 同时供 Second pass（calculate_engine_score）和 sort_candidates_by_strategy 复用，
-        // DashMap 全局只遍历一次。
-        let stats: std::collections::HashMap<String, EngineStats> = self
-            .engine_stats
-            .iter()
-            .map(|r| (r.key().clone(), r.value().clone()))
-            .collect();
+        candidates
+    }
 
-        // Second pass: calculate scores（从 HashMap 取 EngineStats，无 DashMap 借用开销）
+    /// 候选综合评分（自 [`EngineRouter::select_optimal_engines`] 提取）
+    fn score_engine_candidates(
+        &self,
+        candidates: Vec<(f64, String, Arc<dyn ScraperEngine>)>,
+        stats: &std::collections::HashMap<String, EngineStats>,
+    ) -> Vec<(f64, Arc<dyn ScraperEngine>)> {
         let mut scored_candidates = Vec::new();
 
         for (support_score, engine_name, engine) in candidates {
@@ -122,9 +147,6 @@ impl EngineRouter {
 
             scored_candidates.push((final_score, engine));
         }
-
-        // Sort by strategy（复用上方已收集的 stats，无需再次遍历 DashMap）
-        self.sort_candidates_by_strategy(&mut scored_candidates, &stats);
 
         scored_candidates
     }

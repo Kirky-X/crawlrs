@@ -309,39 +309,7 @@ impl ExaSearchEngine {
             return None;
         }
 
-        let mut title = String::new();
-        let mut url = String::new();
-        let mut description = String::new();
-
-        for line in block.lines() {
-            let line = line.trim();
-            if let Some(t) = line.strip_prefix("Title: ") {
-                title = t.trim().to_string();
-            } else if let Some(u) = line.strip_prefix("URL: ") {
-                url = u.trim().to_string();
-            } else if line.starts_with("Highlights:") {
-                // Highlights 后面的行是描述内容的片段
-                // 收集非字段行作为描述
-                continue;
-            } else if !line.starts_with("Published:")
-                && !line.starts_with("Author:")
-                && !line.is_empty()
-                && !line.starts_with("...")
-            {
-                // 非元数据行，作为描述片段
-                if !description.is_empty() {
-                    description.push(' ');
-                }
-                description.push_str(line);
-            }
-        }
-
-        // 截断描述到合理长度（char 边界安全，中文描述不 panic）
-        if description.chars().count() > 500 {
-            description = crate::common::text_slice::truncate_chars(&description, 500);
-            description.push_str("...");
-        }
-
+        let (title, url, description) = parse_text_fields(block);
         if url.is_empty() {
             return None;
         }
@@ -367,6 +335,44 @@ impl ExaSearchEngine {
             }
         })
     }
+}
+
+/// 解析结果块内的字段行（Title:/URL:/Published:/Author:/Highlights:）与描述片段。
+fn parse_text_fields(block: &str) -> (String, String, String) {
+    let mut title = String::new();
+    let mut url = String::new();
+    let mut description = String::new();
+
+    for line in block.lines() {
+        let line = line.trim();
+        if let Some(t) = line.strip_prefix("Title: ") {
+            title = t.trim().to_string();
+        } else if let Some(u) = line.strip_prefix("URL: ") {
+            url = u.trim().to_string();
+        } else if line.starts_with("Highlights:") {
+            // Highlights 后面的行是描述内容的片段
+            // 收集非字段行作为描述
+            continue;
+        } else if !line.starts_with("Published:")
+            && !line.starts_with("Author:")
+            && !line.is_empty()
+            && !line.starts_with("...")
+        {
+            // 非元数据行，作为描述片段
+            if !description.is_empty() {
+                description.push(' ');
+            }
+            description.push_str(line);
+        }
+    }
+
+    // 截断描述到合理长度（char 边界安全，中文描述不 panic）
+    if description.chars().count() > 500 {
+        description = crate::common::text_slice::truncate_chars(&description, 500);
+        description.push_str("...");
+    }
+
+    (title, url, description)
 }
 
 #[async_trait]

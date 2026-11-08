@@ -82,42 +82,26 @@ impl UrlNormalizer {
         }
 
         // 解析（base = None，无法解析相对路径）
-        let parsed =
-            Url::parse(trimmed).map_err(|e| UrlError::InvalidUrl(format!("parse failed: {e}")))?;
-
         // 仅接受 http/https
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err(UrlError::InvalidUrl(format!(
-                "unsupported scheme: {} (only http/https)",
-                parsed.scheme()
-            )));
-        }
+        let mut normalized = parse_and_validate_http_url(trimmed)?;
 
         // 重组（克隆以拥有可变 Url）
-        let mut normalized = parsed;
         normalized.set_fragment(None);
 
         // host 小写（scheme 已是小写，Url::parse 保证）
-        // 注意：set_host 会重新解析，但能正确处理 IDN 等边界情况
-        if let Some(host) = normalized.host_str() {
-            let lower = host.to_lowercase();
-            if lower != host {
-                // set_host 失败时返回错误（显性化）
-                normalized
-                    .set_host(Some(&lower))
-                    .map_err(|e| UrlError::InvalidUrl(format!("set_host failed: {e}")))?;
-            }
-        }
+        lowercase_host(&mut normalized)?;
 
         // 路径 trailing slash 统一：非根路径去除末尾 /
-        let path = normalized.path().to_string();
-        if path.len() > 1 && path.ends_with('/') {
-            // set_path 不接受空串，根路径用 "/"
-            let new_path = path.trim_end_matches('/');
-            normalized.set_path(if new_path.is_empty() { "/" } else { new_path });
-        }
+        normalize_path(&mut normalized);
 
         // query 处理：strip、剥已知 tracking 参数、或排序
+        self.normalize_query(&mut normalized);
+
+        Ok(normalized.to_string())
+    }
+
+    /// query 处理：strip、剥已知 tracking 参数、或排序
+    fn normalize_query(&self, normalized: &mut Url) {
         if self.strip_query {
             normalized.set_query(None);
         } else if let Some(q) = normalized.query() {
@@ -125,8 +109,6 @@ impl UrlNormalizer {
             let sorted = Self::sort_query(&filtered);
             normalized.set_query(Some(&sorted));
         }
-
-        Ok(normalized.to_string())
     }
 
     /// 已知 tracking 参数（剥除清单，保守集）
@@ -286,6 +268,48 @@ impl UrlNormalizer {
         variants.sort_unstable();
         variants.dedup();
         variants
+    }
+}
+
+/// 解析 URL 并校验 scheme（仅接受 http/https）。
+fn parse_and_validate_http_url(trimmed: &str) -> Result<Url, UrlError> {
+    // 解析（base = None，无法解析相对路径）
+    let parsed =
+        Url::parse(trimmed).map_err(|e| UrlError::InvalidUrl(format!("parse failed: {e}")))?;
+
+    // 仅接受 http/https
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(UrlError::InvalidUrl(format!(
+            "unsupported scheme: {} (only http/https)",
+            parsed.scheme()
+        )));
+    }
+    Ok(parsed)
+}
+
+/// host 小写。
+///
+/// 注意：set_host 会重新解析，但能正确处理 IDN 等边界情况；
+/// set_host 失败时返回错误（显性化）。
+fn lowercase_host(normalized: &mut Url) -> Result<(), UrlError> {
+    if let Some(host) = normalized.host_str() {
+        let lower = host.to_lowercase();
+        if lower != host {
+            normalized
+                .set_host(Some(&lower))
+                .map_err(|e| UrlError::InvalidUrl(format!("set_host failed: {e}")))?;
+        }
+    }
+    Ok(())
+}
+
+/// 路径 trailing slash 统一：非根路径去除末尾 `/`。
+fn normalize_path(normalized: &mut Url) {
+    let path = normalized.path().to_string();
+    if path.len() > 1 && path.ends_with('/') {
+        // set_path 不接受空串，根路径用 "/"
+        let new_path = path.trim_end_matches('/');
+        normalized.set_path(if new_path.is_empty() { "/" } else { new_path });
     }
 }
 

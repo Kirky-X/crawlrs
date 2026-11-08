@@ -18,10 +18,10 @@ use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::infrastructure::oxcache::CacheService;
-use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::dedup::Deduplicator;
 use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
+use crate::workers::coalesce_coordinator::RequestCoalescer;
 #[cfg(feature = "metrics")]
 use crate::workers::scheduler::memory_scheduler::MemoryScheduler;
 use crate::workers::shutdown::ShutdownCoordinator;

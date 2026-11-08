@@ -267,50 +267,57 @@ impl ResultDeduplicator {
             let normalized_url = self.normalize_url(&result.url);
             let normalized_title = self.normalize_title(&result.title);
 
-            // 使用 HashSet 进行快速去重检测
-            let url_exists = self.seen_urls.contains(&normalized_url);
-            let title_exists = self.seen_titles.contains(&normalized_title);
-
-            // 根据策略判断是否重复
-            let is_duplicate = match self.config.strategy {
-                DeduplicationStrategy::UrlOnly => url_exists,
-                DeduplicationStrategy::TitleOnly => title_exists,
-                DeduplicationStrategy::UrlAndTitle => {
-                    // 语义：URL 或标题任一精确匹配即视为重复
-                    // 不使用 fingerprint（与 Smart 策略区分）
-                    url_exists || title_exists
-                }
-                DeduplicationStrategy::Smart => {
-                    // URL 完全匹配
-                    url_exists
-                        // 标题完全匹配
-                        || title_exists
-                        // 使用 SimHash 检测相似标题（O(n²)，n = unique fingerprints）
-                        || (self.config.fingerprint_config.enabled
-                            && self.is_similar_by_fingerprint(
-                                self.generate_fingerprint(&normalized_title),
-                            ))
-                }
-            };
-
-            if !is_duplicate {
-                self.seen_urls.insert(normalized_url.clone());
-                self.seen_titles.insert(normalized_title.clone());
-
-                // 仅在 Smart 策略下记录 fingerprint（其他策略从不读取 seen_fingerprints）
-                // 避免在 UrlOnly/TitleOnly/UrlAndTitle 策略下的死写入（修复）
-                if matches!(self.config.strategy, DeduplicationStrategy::Smart)
-                    && self.config.fingerprint_config.enabled
-                {
-                    let fingerprint = self.generate_fingerprint(&normalized_title);
-                    self.seen_fingerprints.insert(fingerprint);
-                }
-
-                unique_results.push(result);
+            if self.is_duplicate(&normalized_url, &normalized_title) {
+                continue;
             }
+
+            self.remember_unique(&normalized_url, &normalized_title);
+            unique_results.push(result);
         }
 
         unique_results
+    }
+
+    /// 按配置策略判断规范化后的 URL/标题是否重复
+    fn is_duplicate(&self, normalized_url: &str, normalized_title: &str) -> bool {
+        // 使用 HashSet 进行快速去重检测
+        let url_exists = self.seen_urls.contains(normalized_url);
+        let title_exists = self.seen_titles.contains(normalized_title);
+
+        // 根据策略判断是否重复
+        match self.config.strategy {
+            DeduplicationStrategy::UrlOnly => url_exists,
+            DeduplicationStrategy::TitleOnly => title_exists,
+            DeduplicationStrategy::UrlAndTitle => {
+                // 语义：URL 或标题任一精确匹配即视为重复
+                // 不使用 fingerprint（与 Smart 策略区分）
+                url_exists || title_exists
+            }
+            DeduplicationStrategy::Smart => {
+                // URL 完全匹配
+                url_exists
+                    // 标题完全匹配
+                    || title_exists
+                    // 使用 SimHash 检测相似标题（O(n²)，n = unique fingerprints）
+                    || (self.config.fingerprint_config.enabled
+                        && self.is_similar_by_fingerprint(self.generate_fingerprint(normalized_title)))
+            }
+        }
+    }
+
+    /// 记录已见 URL/标题；Smart 策略额外记录标题指纹
+    fn remember_unique(&mut self, normalized_url: &str, normalized_title: &str) {
+        self.seen_urls.insert(normalized_url.to_string());
+        self.seen_titles.insert(normalized_title.to_string());
+
+        // 仅在 Smart 策略下记录 fingerprint（其他策略从不读取 seen_fingerprints）
+        // 避免在 UrlOnly/TitleOnly/UrlAndTitle 策略下的死写入（修复）
+        if matches!(self.config.strategy, DeduplicationStrategy::Smart)
+            && self.config.fingerprint_config.enabled
+        {
+            let fingerprint = self.generate_fingerprint(normalized_title);
+            self.seen_fingerprints.insert(fingerprint);
+        }
     }
 
     /// 批量去重多个引擎的结果

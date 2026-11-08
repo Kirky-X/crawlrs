@@ -224,6 +224,62 @@ fn truncate_error(error: Option<&str>) -> Option<String> {
     error.map(|e| e.chars().take(LAST_ERROR_MAX_CHARS).collect())
 }
 
+/// 行锁读取实例：串行化「读计数 → 阈值判定 → 状态迁移 → 写回」的读侧。
+///
+/// 并发两次 miss 各自递增（不再同读同值互相覆盖），Active→Cooldown 迁移不丢失。
+async fn find_locked_instance(
+    tx: &dbnexus::sea_orm::DatabaseTransaction,
+    url: &str,
+) -> Result<searxng_instance::Model, RepositoryError> {
+    searxng_instance::Entity::find()
+        .filter(searxng_instance::Column::Url.eq(url))
+        .lock_exclusive()
+        .one(tx)
+        .await
+        .map_err(|e| RepositoryError::Database(e.into()))?
+        .ok_or(RepositoryError::NotFound)
+}
+
+/// 计算超阈值后的下一状态与退役标志。
+///
+/// 超阈值 → 退役；`active` 不允许直迁 `retired`（状态机约束），先落 cooldown，
+/// 后续轮次由 cooldown→retired 完成退役。
+fn next_miss_state(
+    current_state: SearxngInstanceState,
+    miss_count: i32,
+    retire_after: i32,
+) -> (SearxngInstanceState, bool) {
+    let mut retired = false;
+    let mut next_state = current_state;
+    if miss_count > retire_after {
+        if current_state.can_transition_to(SearxngInstanceState::Retired) {
+            next_state = SearxngInstanceState::Retired;
+            retired = true;
+        } else if current_state == SearxngInstanceState::Active {
+            next_state = SearxngInstanceState::Cooldown;
+        }
+    }
+    (next_state, retired)
+}
+
+/// 写回 miss 计数与下一状态。
+async fn persist_dataset_miss(
+    tx: &dbnexus::sea_orm::DatabaseTransaction,
+    model: searxng_instance::Model,
+    miss_count: i32,
+    next_state: SearxngInstanceState,
+) -> Result<(), RepositoryError> {
+    let mut active: searxng_instance::ActiveModel = model.into();
+    active.dataset_miss_count = Set(miss_count);
+    active.state = Set(next_state.as_str().to_string());
+    active.updated_at = Set(now_tz());
+    active
+        .update(tx)
+        .await
+        .map_err(|e| RepositoryError::Database(e.into()))?;
+    Ok(())
+}
+
 #[async_trait]
 impl SearxngInstanceRepository for SearxngInstanceRepositoryImpl {
     async fn try_acquire_collect_lock(
@@ -486,13 +542,7 @@ impl SearxngInstanceRepository for SearxngInstanceRepositoryImpl {
 
         // 行锁串行化「读计数 → 阈值判定 → 状态迁移 → 写回」：
         // 并发两次 miss 各自递增（不再同读同值互相覆盖），Active→Cooldown 迁移不丢失。
-        let model = searxng_instance::Entity::find()
-            .filter(searxng_instance::Column::Url.eq(url))
-            .lock_exclusive()
-            .one(&tx)
-            .await
-            .map_err(|e| RepositoryError::Database(e.into()))?
-            .ok_or(RepositoryError::NotFound)?;
+        let model = find_locked_instance(&tx, url).await?;
 
         // seed 来源永不因数据集缺席退役（也不累计缺席计数）
         if model.source != "searx_space" {
@@ -508,27 +558,9 @@ impl SearxngInstanceRepository for SearxngInstanceRepositoryImpl {
             .parse()
             .map_err(|e| RepositoryError::Database(anyhow::anyhow!("{e}")))?;
 
-        // 超阈值 → 退役；`active` 不允许直迁 `retired`（状态机约束），先落 cooldown，
-        // 后续轮次由 cooldown→retired 完成退役。
-        let mut retired = false;
-        let mut next_state = current_state;
-        if miss_count > retire_after {
-            if current_state.can_transition_to(SearxngInstanceState::Retired) {
-                next_state = SearxngInstanceState::Retired;
-                retired = true;
-            } else if current_state == SearxngInstanceState::Active {
-                next_state = SearxngInstanceState::Cooldown;
-            }
-        }
+        let (next_state, retired) = next_miss_state(current_state, miss_count, retire_after);
 
-        let mut active: searxng_instance::ActiveModel = model.into();
-        active.dataset_miss_count = Set(miss_count);
-        active.state = Set(next_state.as_str().to_string());
-        active.updated_at = Set(now_tz());
-        active
-            .update(&tx)
-            .await
-            .map_err(|e| RepositoryError::Database(e.into()))?;
+        persist_dataset_miss(&tx, model, miss_count, next_state).await?;
         tx.commit()
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;

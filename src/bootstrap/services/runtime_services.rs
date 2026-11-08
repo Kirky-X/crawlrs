@@ -17,7 +17,7 @@ use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::team_semaphore::{AdaptiveParams, TeamSemaphore};
 use crate::engines::engine_client::EngineClient;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
-use crate::utils::coalesce::RequestCoalescer;
+use crate::workers::coalesce_coordinator::RequestCoalescer;
 
 #[cfg(feature = "rate-limit")]
 use crate::domain::services::rate_limiting_service::{

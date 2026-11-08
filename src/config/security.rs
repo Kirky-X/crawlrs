@@ -9,6 +9,30 @@ use super::settings::Settings;
 ///
 /// 验证配置的安全性要求，包括 webhook secret、数据库密码、S3 凭据等
 pub fn validate_security(settings: &Settings) -> Result<(), sdforge::validator::ValidationError> {
+    validate_webhook_secret(settings)?;
+
+    // 检查速率限制是否禁用
+    if !settings.rate_limiting.enabled {
+        return Err(sdforge::validator::ValidationError::new(
+            "rate_limiting_disabled",
+        ));
+    }
+
+    validate_database_security(settings)?;
+
+    // JWT secret 校验（auth-on 时强制早期失败反馈）
+    //
+    // 仅在 `auth` feature 启用时检查——auth-off 走 default_identity_middleware，
+    // 不读取 jwt_secret。空 / 弱密钥（< 32 字节）会被 `build_garrison_config` 二次拒绝，
+    // 此处提前检查让运维在启动时即收到反馈而非等到 garrison 初始化。
+    #[cfg(feature = "auth")]
+    validate_jwt_secret(settings)?;
+
+    Ok(())
+}
+
+/// webhook secret 校验（自 [`validate_security`] 提取）
+fn validate_webhook_secret(settings: &Settings) -> Result<(), sdforge::validator::ValidationError> {
     // 检查 webhook secret 是否为空
     if settings.webhook.secret().is_empty() {
         return Err(sdforge::validator::ValidationError::new(
@@ -38,13 +62,13 @@ pub fn validate_security(settings: &Settings) -> Result<(), sdforge::validator::
         ));
     }
 
-    // 检查速率限制是否禁用
-    if !settings.rate_limiting.enabled {
-        return Err(sdforge::validator::ValidationError::new(
-            "rate_limiting_disabled",
-        ));
-    }
+    Ok(())
+}
 
+/// 数据库连接串密码强度校验（自 [`validate_security`] 提取）
+fn validate_database_security(
+    settings: &Settings,
+) -> Result<(), sdforge::validator::ValidationError> {
     let weak_patterns = ["password=password", "password=postgres", "password=admin"];
     if weak_patterns
         .iter()
@@ -70,26 +94,23 @@ pub fn validate_security(settings: &Settings) -> Result<(), sdforge::validator::
         }
     }
 
-    // JWT secret 校验（auth-on 时强制早期失败反馈）
-    //
-    // 仅在 `auth` feature 启用时检查——auth-off 走 default_identity_middleware，
-    // 不读取 jwt_secret。空 / 弱密钥（< 32 字节）会被 `build_garrison_config` 二次拒绝，
-    // 此处提前检查让运维在启动时即收到反馈而非等到 garrison 初始化。
-    #[cfg(feature = "auth")]
-    {
-        let jwt_secret = settings.auth.jwt_secret();
-        if jwt_secret.is_empty() {
-            return Err(sdforge::validator::ValidationError::new(
-                "auth_jwt_secret_empty",
-            ));
-        }
-        if jwt_secret.len() < 32 {
-            return Err(sdforge::validator::ValidationError::new(
-                "auth_jwt_secret_weak",
-            ));
-        }
-    }
+    Ok(())
+}
 
+/// JWT secret 校验（自 [`validate_security`] 提取；auth-on 时强制早期失败反馈）
+#[cfg(feature = "auth")]
+fn validate_jwt_secret(settings: &Settings) -> Result<(), sdforge::validator::ValidationError> {
+    let jwt_secret = settings.auth.jwt_secret();
+    if jwt_secret.is_empty() {
+        return Err(sdforge::validator::ValidationError::new(
+            "auth_jwt_secret_empty",
+        ));
+    }
+    if jwt_secret.len() < 32 {
+        return Err(sdforge::validator::ValidationError::new(
+            "auth_jwt_secret_weak",
+        ));
+    }
     Ok(())
 }
 

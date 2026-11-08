@@ -15,7 +15,7 @@
 //! 这些工具完成 cache key 计算与安全过滤，调用方在 `process_scrape_task`
 //! 中先用 `generate_scrape_cache_key` 计算 key，再传入读写方法。
 //!
-//! 请求身份指纹的唯一实现位于 [`crate::utils::coalesce::request_fingerprint`]，
+//! 请求身份指纹的唯一实现位于 [`crate::workers::request_identity::request_fingerprint`]，
 //! 本模块直接复用；禁止在缓存链路另建字段清单。
 
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use serde::{Serialize, Serializer};
 
 use crate::common::CacheContext;
 use crate::engines::engine_client::{CapturedResponse, ScrapeOptions, ScrapeResponse};
-use crate::utils::coalesce::request_fingerprint;
+use crate::workers::request_identity::request_fingerprint;
 
 // cache key 生成
 
@@ -56,7 +56,9 @@ use crate::utils::coalesce::request_fingerprint;
 ///   headers/proxy/timeout/sync_wait_ms/needs_tls_fingerprint 等）
 /// - `cache_mode` 是缓存控制开关，**不参与**：`None` 与 `Some(Enabled)` 语义
 ///   等价，`ReadOnly` / `Bypass` 只改变本次读写行为。纳入会导致 ReadOnly
-///   读写 key 不同而永远 miss、Bypass 写入无人读取
+///   读写 key 不同而永远 miss、Bypass 写入无人读取。合并键另有由 `cache_mode`
+///   派生的 `cache_read_allowed` 布尔投影（见 `coalesce_coordinator::key`），
+///   缓存键不受其影响，四模式保持同一键。
 /// - headers 先小写名再按（名, 值）排序，`HashMap` 迭代序不影响指纹
 /// - 新增字段自动纳入，**禁止**在缓存链路维护第二份字段清单
 ///
@@ -227,7 +229,6 @@ mod tests {
     use crate::common::CacheMode;
     use crate::domain::id::Id;
     use crate::engines::engine_client::HttpMethod;
-    use crate::utils::coalesce::CoalesceKey;
 
     /// 固定租户：同一用例内构造的 key 共享租户维度
     fn test_team() -> Id {
@@ -284,9 +285,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_key_fingerprint_matches_coalesce_fingerprint() {
-        // 单一实现来源：缓存键指纹必须与合并键指纹逐位一致，
-        // 防止缓存链路私自维护第二份字段清单。
+    fn test_cache_key_fingerprint_matches_shared_request_fingerprint() {
+        // 单一实现来源：缓存键指纹必须与 `request_fingerprint` 逐位一致，
+        // 防止缓存链路私自维护第二份字段清单。合并键另叠加
+        // `cache_read_allowed` 投影（见 coalesce_coordinator::key），不与缓存键相等。
         let mut opts = ScrapeOptions::default();
         opts.needs_js = true;
         opts.headers
@@ -294,12 +296,44 @@ mod tests {
 
         let key =
             generate_scrape_cache_key(&make_ctx("https://example.com", HttpMethod::Get), &opts);
-        let expected = CoalesceKey::new(test_team(), "https://example.com", &opts).fingerprint();
+        let expected = request_fingerprint(&opts);
 
         assert!(
             key.ends_with(&format!("?fp={:016x}", expected)),
-            "cache key fingerprint must reuse coalesce::request_fingerprint"
+            "cache key fingerprint must reuse workers::request_identity::request_fingerprint"
         );
+    }
+
+    #[test]
+    fn test_cache_key_ignores_cache_mode_control_switch() {
+        // 四种 cache_mode 的读写行为不同，但抓取结果身份相同：
+        // 缓存键必须四模式一致，否则 ReadOnly 读写 key 不同永远 miss、
+        // Bypass 写入无人读取。
+        let ctx = make_ctx("https://example.com/cache-mode", HttpMethod::Get);
+        let baseline = generate_scrape_cache_key(
+            &ctx,
+            &ScrapeOptions {
+                cache_mode: None,
+                ..Default::default()
+            },
+        );
+
+        for mode in [
+            CacheMode::Enabled,
+            CacheMode::Disabled,
+            CacheMode::ReadOnly,
+            CacheMode::Bypass,
+        ] {
+            let opts = ScrapeOptions {
+                cache_mode: Some(mode),
+                ..Default::default()
+            };
+            assert_eq!(
+                generate_scrape_cache_key(&ctx, &opts),
+                baseline,
+                "cache key must ignore cache_mode ({mode:?})"
+            );
+        }
     }
 
     #[test]

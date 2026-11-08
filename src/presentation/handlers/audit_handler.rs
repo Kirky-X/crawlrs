@@ -10,7 +10,7 @@ use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{
     extract::{Extension, Query},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
@@ -62,67 +62,74 @@ pub async fn get_audit_logs(
 
     // IDOR 防护 (CWE-862)：跨 key/team 查询需要 Admin 权限。
     // 非 Admin 用户只能查看自身 api_key_id 或所属 team_id 的审计日志。
-    let is_admin = auth_state.scope.has_permission(ScopePermission::Admin);
-    if let Some(req_key_id) = query.api_key_id {
-        if req_key_id != auth_state.api_key_id && !is_admin {
-            return error_response(
-                StatusCode::FORBIDDEN,
-                crate::i18n::t(&locale, &bundle, "api-insufficient-permissions-api-key"),
-            );
-        }
-    }
-    if let Some(req_team_id) = query.team_id {
-        if req_team_id != auth_state.team_id && !is_admin {
-            return error_response(
-                StatusCode::FORBIDDEN,
-                crate::i18n::t(&locale, &bundle, "api-insufficient-permissions-team"),
-            );
-        }
+    if let Some(response) = enforce_audit_scope(&query, &auth_state, &locale, &bundle) {
+        return response;
     }
 
     match query {
         AuditLogsQuery {
             api_key_id: Some(api_key_id),
             ..
-        } => {
-            match audit_service
+        } => logs_response(
+            audit_service
                 .get_logs_for_key(api_key_id, limit, offset)
-                .await
-            {
-                Ok(logs) => {
-                    let response = AuditLogsResponseDto { logs };
-                    (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
-                }
-                Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-            }
-        }
+                .await,
+        ),
         AuditLogsQuery {
             team_id: Some(team_id),
             ..
-        } => {
-            match audit_service
+        } => logs_response(
+            audit_service
                 .get_logs_for_team(team_id, limit, offset)
-                .await
-            {
-                Ok(logs) => {
-                    let response = AuditLogsResponseDto { logs };
-                    (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
-                }
-                Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-            }
-        }
-        _ => {
-            match audit_service
+                .await,
+        ),
+        _ => logs_response(
+            audit_service
                 .get_logs_for_key(auth_state.api_key_id, limit, offset)
-                .await
-            {
-                Ok(logs) => {
-                    let response = AuditLogsResponseDto { logs };
-                    (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
-                }
-                Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-            }
+                .await,
+        ),
+    }
+}
+
+/// IDOR 防护：非 Admin 只能查询自身 api_key_id / 所属 team_id，违规返回 403
+fn enforce_audit_scope(
+    query: &AuditLogsQuery,
+    auth_state: &AuthState,
+    locale: &Locale,
+    bundle: &I18nBundle,
+) -> Option<Response> {
+    let is_admin = auth_state.scope.has_permission(ScopePermission::Admin);
+    if let Some(req_key_id) = query.api_key_id {
+        if req_key_id != auth_state.api_key_id && !is_admin {
+            return Some(error_response(
+                StatusCode::FORBIDDEN,
+                crate::i18n::t(locale, bundle, "api-insufficient-permissions-api-key"),
+            ));
         }
+    }
+    if let Some(req_team_id) = query.team_id {
+        if req_team_id != auth_state.team_id && !is_admin {
+            return Some(error_response(
+                StatusCode::FORBIDDEN,
+                crate::i18n::t(locale, bundle, "api-insufficient-permissions-team"),
+            ));
+        }
+    }
+    None
+}
+
+/// 审计日志查询结果 → 统一 HTTP 响应
+fn logs_response<T, E>(result: Result<Vec<T>, E>) -> Response
+where
+    T: serde::Serialize,
+    E: std::fmt::Display,
+{
+    match result {
+        Ok(logs) => {
+            let response = AuditLogsResponseDto { logs };
+            (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
+        }
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 

@@ -118,9 +118,29 @@ impl HtmlParser {
         let document = Html::parse_document(html);
         let mut results = Vec::with_capacity(20);
 
+        for element in self.find_result_elements(&document) {
+            let Some(mut item) = self.parse_result_element(&element, engine) else {
+                continue;
+            };
+
+            // Deduplicate by URL
+            if results.iter().any(|r: &ResponseItem| r.url == item.url) {
+                continue;
+            }
+
+            // XSS 转义放在去重通过之后：重复结果的标题/摘要不再白做转义分配
+            item.title = escape_html_text(&item.title);
+            item.description = escape_html_text(&item.description);
+            results.push(item);
+        }
+
+        results
+    }
+
+    /// 按结果选择器优先级取首个非空匹配集合
+    fn find_result_elements<'a>(&self, document: &'a Html) -> Vec<ElementRef<'a>> {
         // Try each result selector until we find matches
-        let result_elements = self
-            .result_selectors
+        self.result_selectors
             .iter()
             .find_map(|s| {
                 let elements: Vec<_> = document.select(s).collect();
@@ -130,64 +150,78 @@ impl HtmlParser {
                     None
                 }
             })
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
 
-        for element in result_elements {
-            // Extract title
-            let title = element
-                .select(&self.title_selector)
-                .next()
-                .map(|e| e.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-
-            if title.is_empty() {
-                continue;
-            }
-
-            // Extract URL
-            let mut url = String::new();
-            if let Some(a) = element.select(&self.link_selector).next() {
-                let raw_href = a.value().attr("href").unwrap_or("");
-                if !raw_href.is_empty() {
-                    url = if engine == SearchEngineType::Baidu {
-                        self.resolve_baidu_url(raw_href, &element)
-                    } else {
-                        Self::clean_url(raw_href)
-                    };
-                }
-            }
-
-            if url.is_empty() || !url.starts_with("http") {
-                continue;
-            }
-
-            // Extract snippet
-            let description = self
-                .snippet_selectors
-                .iter()
-                .find_map(|s| {
-                    element
-                        .select(s)
-                        .next()
-                        .map(|e| e.text().collect::<String>().trim().to_string())
-                        .filter(|t| !t.is_empty())
-                })
-                .unwrap_or_default();
-
-            // Deduplicate by URL
-            if results.iter().any(|r: &ResponseItem| r.url == url) {
-                continue;
-            }
-
-            results.push(ResponseItem {
-                title: escape_html_text(&title),
-                url,
-                description: escape_html_text(&description),
-                engine,
-            });
+    /// 从单个结果元素提取标题/URL/摘要；标题为空或 URL 非法时返回 None
+    ///
+    /// 标题与摘要保持原文（未转义）；调用方在去重通过、push 之前统一经
+    /// `escape_html_text` 做 XSS 转义。
+    fn parse_result_element(
+        &self,
+        element: &ElementRef<'_>,
+        engine: SearchEngineType,
+    ) -> Option<ResponseItem> {
+        // Extract title
+        let title = self.extract_title(element);
+        if title.is_empty() {
+            return None;
         }
 
-        results
+        // Extract URL
+        let url = self.extract_url(element, engine);
+        if url.is_empty() || !url.starts_with("http") {
+            return None;
+        }
+
+        // Extract snippet
+        let description = self.extract_description(element);
+
+        Some(ResponseItem {
+            title,
+            url,
+            description,
+            engine,
+        })
+    }
+
+    /// 提取结果标题文本（缺失时为空串）
+    fn extract_title(&self, element: &ElementRef<'_>) -> String {
+        element
+            .select(&self.title_selector)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default()
+    }
+
+    /// 提取结果 URL：百度走中转解包，其余引擎做通用清洗
+    fn extract_url(&self, element: &ElementRef<'_>, engine: SearchEngineType) -> String {
+        let mut url = String::new();
+        if let Some(a) = element.select(&self.link_selector).next() {
+            let raw_href = a.value().attr("href").unwrap_or("");
+            if !raw_href.is_empty() {
+                url = if engine == SearchEngineType::Baidu {
+                    self.resolve_baidu_url(raw_href, element)
+                } else {
+                    Self::clean_url(raw_href)
+                };
+            }
+        }
+        url
+    }
+
+    /// 提取结果摘要：按选择器优先级取首个非空文本
+    fn extract_description(&self, element: &ElementRef<'_>) -> String {
+        self.snippet_selectors
+            .iter()
+            .find_map(|s| {
+                element
+                    .select(s)
+                    .next()
+                    .map(|e| e.text().collect::<String>().trim().to_string())
+                    .filter(|t| !t.is_empty())
+            })
+            .unwrap_or_default()
     }
 
     /// 解析百度结果锚点的最终 URL（仅 `SearchEngineType::Baidu` 路径调用）。

@@ -74,6 +74,29 @@ pub fn validate_proxy_url(
     allowed_schemes: &'static [&'static str],
 ) -> Result<String, ProxyUrlError> {
     // 1. 白名单检查 scheme（先于 parse，避免依赖 url crate 的 scheme 解析行为）
+    validate_proxy_scheme(proxy_url, allowed_schemes)?;
+
+    // 2. 空白字符检查（防止 argv 分隔）
+    if proxy_url.chars().any(|c| c.is_whitespace()) {
+        return Err(ProxyUrlError::ContainsWhitespace);
+    }
+
+    // 3. 完整 URL 解析（验证 host 存在、port 合法等）
+    let parsed = Url::parse(proxy_url).map_err(|e| ProxyUrlError::InvalidFormat(e.to_string()))?;
+
+    // 4. host 必须非空
+    if parsed.host_str().is_none() || parsed.host_str().map(|h| h.is_empty()).unwrap_or(true) {
+        return Err(ProxyUrlError::MissingHost);
+    }
+
+    Ok(proxy_url.to_string())
+}
+
+/// scheme 字符集与白名单校验
+fn validate_proxy_scheme(
+    proxy_url: &str,
+    allowed_schemes: &'static [&'static str],
+) -> Result<(), ProxyUrlError> {
     // scheme 必须是 ASCII alpha 开头，由 [a-zA-Z0-9+.-] 组成
     let scheme_end = proxy_url
         .find("://")
@@ -96,21 +119,7 @@ pub fn validate_proxy_url(
             allowed_schemes,
         ));
     }
-
-    // 2. 空白字符检查（防止 argv 分隔）
-    if proxy_url.chars().any(|c| c.is_whitespace()) {
-        return Err(ProxyUrlError::ContainsWhitespace);
-    }
-
-    // 3. 完整 URL 解析（验证 host 存在、port 合法等）
-    let parsed = Url::parse(proxy_url).map_err(|e| ProxyUrlError::InvalidFormat(e.to_string()))?;
-
-    // 4. host 必须非空
-    if parsed.host_str().is_none() || parsed.host_str().map(|h| h.is_empty()).unwrap_or(true) {
-        return Err(ProxyUrlError::MissingHost);
-    }
-
-    Ok(proxy_url.to_string())
+    Ok(())
 }
 
 /// 脱敏代理 URL 中的凭证信息

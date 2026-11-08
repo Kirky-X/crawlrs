@@ -41,7 +41,7 @@ use url::Url;
 
 use crate::application::dto::map_request::MapRequestDto;
 use crate::application::use_cases::map_use_case::{
-    MapUseCase, SitemapFetcher, SitemapKind, SitemapStreamOptions,
+    MapUseCase, SitemapFetcher, SitemapKind, SitemapStream, SitemapStreamOptions,
 };
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -181,24 +181,74 @@ pub async fn feed_sitemap_as_tasks(
     cache: &dyn CacheService,
     pointer_ttl_secs: u64,
 ) -> anyhow::Result<SitemapFeedStats> {
-    let use_case = MapUseCase::new(fetcher);
-    let dto = MapRequestDto {
-        url: sitemap_url.clone(),
-        include_patterns: None,
-        exclude_patterns: None,
-        limit: None,
-    };
-    let stream = use_case
-        .execute_streaming(&dto, options)
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let stream = open_sitemap_stream(fetcher, &sitemap_url, options).await?;
     let mut rx = stream.rx;
 
     // seek 决策：仅 Urlset 流（保序）精确跳过；Index 流不 seek（见模块文档）
     let mut stats = SitemapFeedStats::default();
-    let seek: Option<usize> = match load_pointer(cache, seed.crawl_id, &sitemap_url).await {
+    let seek =
+        resolve_seek_position(cache, seed.crawl_id, &sitemap_url, stream.kind, &mut stats).await;
+
+    // include 为显式空列表 = 全部拒绝（对齐 extract_and_queue_links 短路语义；
+    // 与 UrlPatternFilter 的「空 include = 无限制」不同，必须单独短路）
+    let (pattern_filter, blacklist_filter, filter_ctx, empty_include_short_circuit) =
+        build_feed_filters(include_patterns, exclude_patterns, domain_blacklist);
+
+    feed_sitemap_stream(
+        &mut rx,
+        seek,
+        &mut stats,
+        pattern_filter.as_ref(),
+        blacklist_filter.as_ref(),
+        &filter_ctx,
+        empty_include_short_circuit,
+        &seed,
+        &sitemap_url,
+        dedup,
+        task_repo,
+        crawl_repo,
+        cache,
+        pointer_ttl_secs,
+    )
+    .await?;
+
+    // 喂入完成：指针使命结束（404/空流零消费时无指针可清）
+    if stats.consumed > 0 {
+        let _ = cache.delete(&sitemap_feed_pointer_key(seed.crawl_id)).await;
+    }
+    Ok(stats)
+}
+
+/// 打开流式 sitemap 消费端点（自 [`feed_sitemap_as_tasks`] 提取）
+async fn open_sitemap_stream(
+    fetcher: Arc<dyn SitemapFetcher>,
+    sitemap_url: &str,
+    options: SitemapStreamOptions,
+) -> anyhow::Result<SitemapStream> {
+    let use_case = MapUseCase::new(fetcher);
+    let dto = MapRequestDto {
+        url: sitemap_url.to_string(),
+        include_patterns: None,
+        exclude_patterns: None,
+        limit: None,
+    };
+    use_case
+        .execute_streaming(&dto, options)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
+/// seek 位置决策（自 [`feed_sitemap_as_tasks`] 提取）：仅 Urlset 流（保序）精确跳过
+async fn resolve_seek_position(
+    cache: &dyn CacheService,
+    crawl_id: crate::domain::id::Id,
+    sitemap_url: &str,
+    kind: SitemapKind,
+    stats: &mut SitemapFeedStats,
+) -> Option<usize> {
+    match load_pointer(cache, crawl_id, sitemap_url).await {
         Some(consumed) if consumed > 0 => {
-            if stream.kind == SitemapKind::Urlset {
+            if kind == SitemapKind::Urlset {
                 stats.resumed_from = Some(consumed);
                 Some(consumed)
             } else {
@@ -209,7 +259,7 @@ pub async fn feed_sitemap_as_tasks(
                         &[
                             (
                                 "crawl_id",
-                                fluent_bundle::FluentValue::from(seed.crawl_id.to_string()),
+                                fluent_bundle::FluentValue::from(crawl_id.to_string()),
                             ),
                             (
                                 "consumed",
@@ -222,8 +272,20 @@ pub async fn feed_sitemap_as_tasks(
             }
         }
         _ => None,
-    };
+    }
+}
 
+/// 构造 FilterChain 组件（自 [`feed_sitemap_as_tasks`] 提取）
+fn build_feed_filters(
+    include_patterns: Option<Vec<String>>,
+    exclude_patterns: Option<Vec<String>>,
+    domain_blacklist: Vec<String>,
+) -> (
+    Option<UrlPatternFilter>,
+    Option<DomainFilter>,
+    FilterContext,
+    bool,
+) {
     // include 为显式空列表 = 全部拒绝（对齐 extract_and_queue_links 短路语义；
     // 与 UrlPatternFilter 的「空 include = 无限制」不同，必须单独短路）
     let empty_include_short_circuit =
@@ -242,7 +304,32 @@ pub async fn feed_sitemap_as_tasks(
         Some(DomainFilter::denylist(domain_blacklist))
     };
     let filter_ctx = FilterContext::default();
+    (
+        pattern_filter,
+        blacklist_filter,
+        filter_ctx,
+        empty_include_short_circuit,
+    )
+}
 
+/// 消费 sitemap 流并按批入队（自 [`feed_sitemap_as_tasks`] 提取）
+#[allow(clippy::too_many_arguments)]
+async fn feed_sitemap_stream(
+    rx: &mut tokio::sync::mpsc::Receiver<String>,
+    seek: Option<usize>,
+    stats: &mut SitemapFeedStats,
+    pattern_filter: Option<&UrlPatternFilter>,
+    blacklist_filter: Option<&DomainFilter>,
+    filter_ctx: &FilterContext,
+    empty_include_short_circuit: bool,
+    seed: &SeedTaskContext,
+    sitemap_url: &str,
+    dedup: &Arc<parking_lot::RwLock<Deduplicator>>,
+    task_repo: &dyn TaskRepository,
+    crawl_repo: &dyn CrawlRepository,
+    cache: &dyn CacheService,
+    pointer_ttl_secs: u64,
+) -> anyhow::Result<()> {
     let mut batch: Vec<String> = Vec::with_capacity(FEED_BATCH_SIZE.min(64));
     while let Some(loc) = rx.recv().await {
         if let Some(seek_n) = seek {
@@ -258,13 +345,13 @@ pub async fn feed_sitemap_as_tasks(
         if batch.len() >= FEED_BATCH_SIZE {
             flush_batch(
                 &mut batch,
-                &mut stats,
-                pattern_filter.as_ref(),
-                blacklist_filter.as_ref(),
-                &filter_ctx,
+                stats,
+                pattern_filter,
+                blacklist_filter,
+                filter_ctx,
                 empty_include_short_circuit,
-                &seed,
-                &sitemap_url,
+                seed,
+                sitemap_url,
                 dedup,
                 task_repo,
                 crawl_repo,
@@ -277,13 +364,13 @@ pub async fn feed_sitemap_as_tasks(
     if !batch.is_empty() {
         flush_batch(
             &mut batch,
-            &mut stats,
-            pattern_filter.as_ref(),
-            blacklist_filter.as_ref(),
-            &filter_ctx,
+            stats,
+            pattern_filter,
+            blacklist_filter,
+            filter_ctx,
             empty_include_short_circuit,
-            &seed,
-            &sitemap_url,
+            seed,
+            sitemap_url,
             dedup,
             task_repo,
             crawl_repo,
@@ -293,11 +380,7 @@ pub async fn feed_sitemap_as_tasks(
         .await?;
     }
 
-    // 喂入完成：指针使命结束（404/空流零消费时无指针可清）
-    if stats.consumed > 0 {
-        let _ = cache.delete(&sitemap_feed_pointer_key(seed.crawl_id)).await;
-    }
-    Ok(stats)
+    Ok(())
 }
 
 /// 单批处理：FilterChain 过滤 → 分层去重 → 入队 → 持久化指针

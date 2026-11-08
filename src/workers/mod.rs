@@ -32,6 +32,11 @@ pub mod manager;
 /// 从 ScrapeWorker 抽取的 HTML→Markdown 转换逻辑。
 #[cfg(feature = "content")]
 pub mod markdown_post_processor;
+/// 请求身份指纹（`ScrapeOptions` 内容相关字段的确定性编码）
+///
+/// 缓存键与合并键共用的唯一实现；依赖 `engines`/`common`，故位于 worker 层，
+/// `utils::coalesce` 只保留泛型 single-flight 原语。
+mod request_identity;
 pub mod scheduler;
 pub mod scrape_executor;
 pub mod scrape_response_builder;

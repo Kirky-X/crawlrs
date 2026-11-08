@@ -26,69 +26,24 @@ use crate::workers::scrape_executor::{process_text_encoding, save_result};
 impl ScrapeWorker {
     pub(super) async fn process_crawl_task(&self, mut task: Task) -> Result<()> {
         // 1. 解析 Crawl 任务特定的 Payload
-        let (crawl_id, depth, config) = match parse_crawl_payload(&task) {
-            Ok(result) => result,
-            Err(e) => {
-                error!("Failed to parse crawl payload: {}", e);
-                self.repository
-                    .mark_failed(task.id, Some(self.worker_id))
-                    .await?;
-                return Ok(());
-            }
+        let Some((crawl_id, depth, config)) = self.parse_crawl_task_payload(&task).await? else {
+            return Ok(());
         };
 
         // 2. Robots.txt Check
         // robots UA 来自 robots.user_agent 配置（匹配与抓取共用）
-        if !check_robots_txt_fn(
-            &task,
-            self.robots_checker.as_ref(),
-            self.settings.robots.user_agent.as_str(),
-        )
-        .await
-        {
-            self.repository
-                .mark_failed(task.id, Some(self.worker_id))
-                .await?;
+        if !self.passes_robots_gate(&task).await? {
             return Ok(());
         }
 
         // 2.2 F5：robots Crawl-delay 联动 per-host 限速时钟（首值生效不回退）。
         // check_robots_txt 刚取过 robots 内容（内存缓存命中），此处仅读取解析；
         // 获取失败沿用 robots 路径的 fail-open 语义（跳过注入，不打断任务）。
-        match self
-            .robots_checker
-            .get_crawl_delay(&task.url, self.settings.robots.user_agent.as_str())
-            .await
-        {
-            Ok(Some(delay)) => {
-                if let Ok(u) = url::Url::parse(&task.url) {
-                    if let Some(host) = u.host_str() {
-                        self.engine_client.set_crawl_delay(host, delay);
-                        debug!(
-                            "crawl-delay {:?} applied for host {} (task {})",
-                            delay, host, task.id
-                        );
-                    }
-                }
-            }
-            Ok(None) => {}
-            Err(e) => debug!("crawl-delay lookup skipped for task {}: {e}", task.id),
-        }
+        self.apply_crawl_delay(&task).await;
 
         // 2.5 SSRF 防护 (CWE-918)
-        if let Some(ref proxy_url) = config.proxy {
-            if is_internal_url(proxy_url) {
-                warn!(
-                    "SSRF via proxy blocked in worker proxy={} task_id={} team_id={}",
-                    crate::utils::url_redaction::redact_url_for_log(proxy_url),
-                    task.id,
-                    task.team_id
-                );
-                self.repository
-                    .mark_failed(task.id, Some(self.worker_id))
-                    .await?;
-                return Ok(());
-            }
+        if self.reject_internal_proxy_target(&task, &config).await? {
+            return Ok(());
         }
 
         let request = build_crawl_request_fn(
@@ -108,6 +63,91 @@ impl ScrapeWorker {
                     .await
             }
         }
+    }
+
+    /// 解析 Crawl 任务 Payload（自 [`ScrapeWorker::process_crawl_task`] 提取）；
+    /// 解析失败时标记任务失败并返回 `None`（调用方直接返回 Ok(())）。
+    async fn parse_crawl_task_payload(
+        &self,
+        task: &Task,
+    ) -> Result<Option<(crate::domain::id::Id, u32, CrawlConfigDto)>> {
+        match parse_crawl_payload(task) {
+            Ok(result) => Ok(Some(result)),
+            Err(e) => {
+                error!("Failed to parse crawl payload: {}", e);
+                self.repository
+                    .mark_failed(task.id, Some(self.worker_id))
+                    .await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Robots.txt 准入（自 [`ScrapeWorker::process_crawl_task`] 提取）：
+    /// 返回 true 表示放行，false 表示已标记失败（调用方直接返回 Ok(())）。
+    async fn passes_robots_gate(&self, task: &Task) -> Result<bool> {
+        // robots UA 来自 robots.user_agent 配置（匹配与抓取共用）
+        if !check_robots_txt_fn(
+            task,
+            self.robots_checker.as_ref(),
+            self.settings.robots.user_agent.as_str(),
+        )
+        .await
+        {
+            self.repository
+                .mark_failed(task.id, Some(self.worker_id))
+                .await?;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// robots Crawl-delay 联动 per-host 限速时钟（自
+    /// [`ScrapeWorker::process_crawl_task`] 提取）
+    async fn apply_crawl_delay(&self, task: &Task) {
+        match self
+            .robots_checker
+            .get_crawl_delay(&task.url, self.settings.robots.user_agent.as_str())
+            .await
+        {
+            Ok(Some(delay)) => {
+                if let Ok(u) = url::Url::parse(&task.url) {
+                    if let Some(host) = u.host_str() {
+                        self.engine_client.set_crawl_delay(host, delay);
+                        debug!(
+                            "crawl-delay {:?} applied for host {} (task {})",
+                            delay, host, task.id
+                        );
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => debug!("crawl-delay lookup skipped for task {}: {e}", task.id),
+        }
+    }
+
+    /// 代理 SSRF 防护（自 [`ScrapeWorker::process_crawl_task`] 提取）；
+    /// 返回 true 表示已拦截并标记失败（调用方直接返回 Ok(())）。
+    async fn reject_internal_proxy_target(
+        &self,
+        task: &Task,
+        config: &CrawlConfigDto,
+    ) -> Result<bool> {
+        if let Some(ref proxy_url) = config.proxy {
+            if is_internal_url(proxy_url) {
+                warn!(
+                    "SSRF via proxy blocked in worker proxy={} task_id={} team_id={}",
+                    crate::utils::url_redaction::redact_url_for_log(proxy_url),
+                    task.id,
+                    task.team_id
+                );
+                self.repository
+                    .mark_failed(task.id, Some(self.worker_id))
+                    .await?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// 处理 Crawl 任务成功响应

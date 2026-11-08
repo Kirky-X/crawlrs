@@ -15,7 +15,8 @@ use log::{debug, error, info, warn};
 
 use crate::config::SearxngCollectorSettings;
 use crate::domain::repositories::searxng_instance_repository::{
-    normalize_instance_url, SearxngInstanceRepository, SearxngInstanceSource, UpsertOutcome,
+    normalize_instance_url, SearxngInstance, SearxngInstanceRepository, SearxngInstanceSource,
+    UpsertOutcome,
 };
 use crate::domain::repositories::task_repository::RepositoryError;
 
@@ -101,43 +102,67 @@ pub(super) async fn retire_absent(
 ) -> Result<(), SearxngError> {
     // 缺席退役：既有 searx_space 实例未出现在本轮数据集 → 累计缺席；
     // seed 来源永不退役（仓储侧豁免）。
-    let existing = repo.list_paginated(UNBOUNDED_LIMIT, 0).await.map_err(|e| {
-        error!("searxng registry listing failed: {e}");
-        SearxngError::Repository(e.to_string())
-    })?;
-    for instance in existing {
-        if instance.source != SearxngInstanceSource::SearxSpace {
-            continue;
-        }
-        if present.contains(&instance.url) {
-            continue;
-        }
-        match repo
-            .record_dataset_miss(&instance.url, collector.retire_miss_cycles)
-            .await
-        {
-            Ok(true) => {
-                report.retired += 1;
-                info!(
-                    "searxng instance retired for dataset absence url={}",
-                    instance.url
-                );
-            }
-            Ok(false) => {}
-            Err(RepositoryError::NotFound) => {
-                debug!(
-                    "searxng instance vanished during collection url={}",
-                    instance.url
-                );
-            }
-            Err(e) => {
-                report.errors += 1;
-                warn!(
-                    "searxng dataset-miss record failed url={} error={e}",
-                    instance.url
-                );
-            }
-        }
+    for instance in list_tracked_instances(repo).await? {
+        retire_instance_if_absent(
+            repo,
+            &instance,
+            present,
+            collector.retire_miss_cycles,
+            report,
+        )
+        .await;
     }
     Ok(())
+}
+
+/// 读取全部既有实例（`UNBOUNDED_LIMIT` 上界，仓储错误映射为 `Repository`）。
+async fn list_tracked_instances(
+    repo: &dyn SearxngInstanceRepository,
+) -> Result<Vec<SearxngInstance>, SearxngError> {
+    repo.list_paginated(UNBOUNDED_LIMIT, 0).await.map_err(|e| {
+        error!("searxng registry listing failed: {e}");
+        SearxngError::Repository(e.to_string())
+    })
+}
+
+/// 单个实例的缺席退役判定（非 searx_space 来源与仍在数据集中的实例跳过）。
+async fn retire_instance_if_absent(
+    repo: &dyn SearxngInstanceRepository,
+    instance: &SearxngInstance,
+    present: &HashSet<String>,
+    retire_miss_cycles: i32,
+    report: &mut CollectorReport,
+) {
+    if instance.source != SearxngInstanceSource::SearxSpace {
+        return;
+    }
+    if present.contains(&instance.url) {
+        return;
+    }
+    match repo
+        .record_dataset_miss(&instance.url, retire_miss_cycles)
+        .await
+    {
+        Ok(true) => {
+            report.retired += 1;
+            info!(
+                "searxng instance retired for dataset absence url={}",
+                instance.url
+            );
+        }
+        Ok(false) => {}
+        Err(RepositoryError::NotFound) => {
+            debug!(
+                "searxng instance vanished during collection url={}",
+                instance.url
+            );
+        }
+        Err(e) => {
+            report.errors += 1;
+            warn!(
+                "searxng dataset-miss record failed url={} error={e}",
+                instance.url
+            );
+        }
+    }
 }

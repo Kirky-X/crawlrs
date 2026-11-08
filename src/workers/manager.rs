@@ -13,7 +13,7 @@ use crate::engines::engine_client::EngineClient;
 use crate::infrastructure::oxcache::CacheService;
 use crate::queue::task_queue::TaskQueue;
 // 请求合并器（同 URL 并发只允许首个执行实际抓取）
-use crate::utils::coalesce::RequestCoalescer;
+use crate::workers::coalesce_coordinator::RequestCoalescer;
 // CoalesceCoordinator（封装 try_coalesce 逻辑，注入 ScrapeWorker）
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 use crate::workers::expiration_worker::ExpirationWorker;
@@ -1251,7 +1251,9 @@ mod tests {
             engine_client: Arc::new(EngineClient::new()),
             create_scrape_use_case: Arc::new(MockCreateScrapeUseCase),
             team_semaphore: Arc::new(TeamSemaphore::new(10)),
-            request_coalescer: Arc::new(crate::utils::coalesce::RequestCoalescer::new()),
+            request_coalescer: Arc::new(
+                crate::workers::coalesce_coordinator::RequestCoalescer::new(),
+            ),
             robots_checker: Arc::new(MockRobotsChecker),
             http_client: Arc::new(reqwest::Client::new()),
             extraction_service: Arc::new(MockExtractionService),

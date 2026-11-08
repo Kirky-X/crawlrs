@@ -72,30 +72,48 @@ fn build_outline(
     let mut out = String::new();
     let mut truncated = false;
     for &root in roots {
-        let mut stack = vec![root];
-        while let Some(idx) = stack.pop() {
-            let node = &nodes[idx];
-            for &child in children[idx].iter().rev() {
-                stack.push(child);
-            }
-            if let Some(line) = outline_line(node) {
-                let add = out.len() + if out.is_empty() { 0 } else { 1 } + line.len();
-                if add > budget_chars {
-                    truncated = true;
-                    stack.clear();
-                    break;
-                }
-                if !out.is_empty() {
-                    out.push('\n');
-                }
-                out.push_str(&line);
-            }
-        }
+        truncated = outline_from_root(nodes, children, root, budget_chars, &mut out);
         if truncated {
             break;
         }
     }
     (out, truncated)
+}
+
+/// 单根 DFS：按预算追加大纲行，返回是否因预算超限而截断
+fn outline_from_root(
+    nodes: &[AxNode],
+    children: &[Vec<usize>],
+    root: usize,
+    budget_chars: usize,
+    out: &mut String,
+) -> bool {
+    let mut stack = vec![root];
+    while let Some(idx) = stack.pop() {
+        let node = &nodes[idx];
+        for &child in children[idx].iter().rev() {
+            stack.push(child);
+        }
+        if let Some(line) = outline_line(node) {
+            if !try_push_outline_line(out, &line, budget_chars) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 预算内追加一行（非首行前置换行）；超预算返回 false
+fn try_push_outline_line(out: &mut String, line: &str, budget_chars: usize) -> bool {
+    let add = out.len() + if out.is_empty() { 0 } else { 1 } + line.len();
+    if add > budget_chars {
+        return false;
+    }
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(line);
+    true
 }
 
 /// 末行截断标注：标注放不下时回退丢行腾位；丢到只剩空仍放不下

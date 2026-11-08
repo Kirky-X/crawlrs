@@ -14,7 +14,7 @@ use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::sleep;
 
 use crate::application::dto::crawl_request::CrawlConfigDto;
-use crate::application::dto::scrape_request::ScrapeRequestDto;
+use crate::application::dto::scrape_request::{ScrapeOptionsDto, ScrapeRequestDto};
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::config::settings::Settings;
 use crate::domain::id::Id;
@@ -47,7 +47,7 @@ use crate::workers::shutdown::ShutdownCoordinator;
 // cache key 生成
 use crate::workers::cache_utils;
 // 请求合并键（租户 + 规范化 URL + 完整请求身份指纹）
-use crate::utils::coalesce::CoalesceKey;
+use crate::workers::coalesce_coordinator::CoalesceKey;
 // URL 日志脱敏
 use crate::utils::url_redaction::redact_url_for_log;
 // Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
@@ -341,971 +341,6 @@ impl ScrapeWorker {
         result
     }
 
-    async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
-        debug!("task_id: {}", task.id);
-
-        let (scrape_request_dto, mut scrape_request) =
-            match self.prepare_scrape_request(&task).await? {
-                Some(pair) => pair,
-                None => return Ok(()),
-            };
-
-        if !self
-            .validate_scrape_request(&task, &scrape_request, scrape_request_dto.as_ref())
-            .await?
-        {
-            return Ok(());
-        }
-
-        // 请求合并——同合并键（租户 + 规范化 URL + 完整请求身份指纹）并发只允许
-        // 首个执行实际抓取
-        //
-        // 调用 CoalesceCoordinator（独立组件），返回 `Some(guard)` 表示获得执行权，
-        // guard 在抓取完成（含错误路径）后随作用域结束 Drop，自动从 in_flight 移除条目并广播给等待方。
-        // 返回 `None` 表示已被其他 worker 处理（等待方从 result_repo 读到结果，
-        // 或任务被延后重排），调用方应直接返回 Ok。
-        //
-        // 键取自本任务实际会下发的请求：task.team_id（租户隔离，M-2）、
-        // scrape_request.url（与实际下发 URL 一致，URL 归一化在 CoalesceKey 内完成）、
-        // scrape_request.options 全字段（headers/proxy/method/body/needs_js/...
-        // 任一不同都不得互相收养结果）。
-        let coalesce_key =
-            CoalesceKey::new(task.team_id, &scrape_request.url, &scrape_request.options);
-        let _coalesce_guard = match self
-            .coalesce_coordinator
-            .try_coalesce(&coalesce_key, &task, self.worker_id)
-            .await?
-        {
-            Some(g) => g,
-            None => return Ok(()),
-        };
-
-        // 抓取成功/失败回填 AIMDController
-        //
-        // 由 `TeamSemaphore` 封装——Fixed 模式 noop；Adaptive 模式调用
-        // `AIMDController::record_*` 并经 `AdaptiveSemaphore::set_target` 推入新 target。
-        // guard 在 match 块作用域结束时 Drop，确保先广播给等待方再释放。
-
-        let prior_result = self
-            .prepare_conditional_request(&task, &mut scrape_request, scrape_request_dto.as_ref())
-            .await;
-
-        let response = self.scrape_with_cache(task.team_id, &scrape_request).await;
-
-        match response {
-            Ok(response) => {
-                self.finalize_scrape_success(
-                    &mut task,
-                    &scrape_request,
-                    scrape_request_dto.as_ref(),
-                    prior_result,
-                    response,
-                )
-                .await
-            }
-            Err(e) => self.finalize_scrape_failure(&mut task, e).await,
-        }
-    }
-
-    /// 解析任务 payload 并构造 [`ScrapeRequest`]。
-    ///
-    /// PERF- 解析一次 payload，dto 与 ScrapeRequest 复用同一份解析结果。
-    ///
-    /// 旧实现：
-    /// 1) build_scrape_request(&task) 内部 from_value(payload.clone) 得 dto
-    /// 2) handle_scrape_success(&task, &response) 内部再 from_value(payload.clone) 得 dto
-    ///
-    /// → 每次抓取 clone + 解析 payload 2 次。
-    ///
-    /// 新实现：
-    /// 1) parse_scrape_request_dto(&task) 得 dto（仅 1 次 clone + 解析）
-    /// 2) build_scrape_request_from_dto(&dto) 复用 dto 构造 ScrapeRequest（零额外解析）
-    /// 3) handle_scrape_success(&task, dto.as_ref, &response) 复用 dto 引用（零额外解析）
-    ///
-    /// → 每次抓取 clone + 解析 payload 1 次。
-    ///
-    /// 返回 `Ok(None)` 表示 payload 反序列化失败，任务已标记 Failed，调用方直接返回。
-    async fn prepare_scrape_request(
-        &self,
-        task: &Task,
-    ) -> Result<Option<(Option<ScrapeRequestDto>, ScrapeRequest)>> {
-        match Self::parse_scrape_request_dto(task) {
-            Ok(dto) => {
-                let req = match Self::build_scrape_request_from_dto(&dto) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        error!(
-                            "Failed to build scrape request from dto, using default: {}",
-                            e
-                        );
-                        ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(
-                            self.settings.timeouts.engines.default_timeout_seconds,
-                        ))
-                    }
-                };
-                Ok(Some((Some(dto), req)))
-            }
-            Err(e) => {
-                // payload 反序列化失败即失败：不再静默回退
-                // 默认 ScrapeRequest 带残缺配置执行，改为标记任务 Failed 并终止。
-                // 仅输出 task_id 与错误摘要，绝不打印原始 payload（可能含敏感/超大内容）。
-                error!(
-                    "payload_invalid: task {} marked failed after payload deserialization error: {}",
-                    task.id, e
-                );
-                self.repository
-                    .mark_failed(task.id, Some(self.worker_id))
-                    .await?;
-                Ok(None)
-            }
-        }
-    }
-
-    /// SSRF 防护与 robots.txt 门控。
-    ///
-    /// 返回 `Ok(false)` 表示任务已标记 Failed（SSRF 命中或 robots Disallow），
-    /// 调用方直接返回。
-    async fn validate_scrape_request(
-        &self,
-        task: &Task,
-        scrape_request: &ScrapeRequest,
-        scrape_request_dto: Option<&ScrapeRequestDto>,
-    ) -> Result<bool> {
-        // SSRF 防护 (CWE-918)：静态校验 options.proxy 不指向内部网络（防御纵深）。
-        // handler 层已通过 validate_url 完成完整 DNS 解析校验，
-        // 此处仅用静态检查拦截直接入队的恶意任务（如 private IP / localhost），不依赖网络。
-        if let Some(ref proxy_url) = scrape_request.options.proxy {
-            if is_internal_url(proxy_url) {
-                warn!(
-                    "SSRF via proxy blocked in worker proxy={} task_id={} team_id={}",
-                    redact_url_for_log(proxy_url),
-                    task.id,
-                    task.team_id
-                );
-                self.repository
-                    .mark_failed(task.id, Some(self.worker_id))
-                    .await?;
-                return Ok(false);
-            }
-        }
-
-        // robots.txt 遵从（可选，默认关闭）：请求级 options.respect_robots 覆盖
-        // 全局 robots.scrape_respect_robots。robots 获取失败 fail-open（与 crawl
-        // 路径一致）；命中 Disallow 时任务置 Failed（原因记入日志，含 task_id）。
-        // 单页抓取不执行 Crawl-delay（非爬虫逐链接语义）。
-        let respect_override = scrape_request_dto
-            .and_then(|dto| dto.options.as_ref())
-            .and_then(|o| o.respect_robots);
-        let robots_allowed = crate::workers::scrape_executor::check_scrape_robots_allowed(
-            task,
-            respect_override,
-            self.settings.robots.scrape_respect_robots,
-            self.settings.robots.user_agent.as_str(),
-            self.robots_checker.as_ref(),
-        )
-        .await?;
-        if !robots_allowed {
-            warn!(
-                "robots_disallowed: task {} marked failed, url={}, ua={}",
-                task.id,
-                redact_url_for_log(&task.url),
-                self.settings.robots.user_agent
-            );
-            self.repository
-                .mark_failed(task.id, Some(self.worker_id))
-                .await?;
-            return Ok(false);
-        }
-
-        Ok(true)
-    }
-
-    /// 增量抓取（scoped 切片）：`conditional_request=true` 且同任务已有
-    /// 带验证器的历史结果时，把 If-None-Match / If-Modified-Since 合并进
-    /// 请求头发起条件请求；`304` 时复用历史结果内容（见 process_scrape_task
-    /// 的短路分支）。历史查询失败降级为无条件抓取（warn 显性化，不阻塞抓取）。
-    async fn prepare_conditional_request(
-        &self,
-        task: &Task,
-        scrape_request: &mut ScrapeRequest,
-        scrape_request_dto: Option<&ScrapeRequestDto>,
-    ) -> Option<crate::domain::models::ScrapeResult> {
-        let mut prior_result: Option<crate::domain::models::ScrapeResult> = None;
-        let conditional_enabled = scrape_request_dto
-            .and_then(|d| d.options.as_ref())
-            .and_then(|o| o.conditional_request)
-            .unwrap_or(false);
-        if conditional_enabled {
-            match self.result_repository.find_by_task_id(task.id).await {
-                Ok(Some(prior)) => {
-                    if let Some((etag, last_modified)) = extract_cache_validators(&prior.headers) {
-                        if !etag.is_empty() {
-                            scrape_request
-                                .options
-                                .headers
-                                .insert("If-None-Match".to_string(), etag);
-                        }
-                        if let Some(lm) = last_modified.filter(|m| !m.is_empty()) {
-                            scrape_request
-                                .options
-                                .headers
-                                .insert("If-Modified-Since".to_string(), lm);
-                        }
-                        prior_result = Some(prior);
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    warn!(
-                        "{}",
-                        crate::i18n::tr_log_args(
-                            "scrape-conditional-lookup-failed",
-                            &[
-                                (
-                                    "task_id",
-                                    fluent_bundle::FluentValue::from(task.id.to_string()),
-                                ),
-                                ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                            ],
-                        )
-                    );
-                }
-            }
-        }
-        prior_result
-    }
-
-    /// 高级缓存模式门控 + 引擎执行。
-    ///
-    /// 构造 `CacheContext`，按 `cache_mode` 决定读写行为：
-    /// - 读缓存：`is_cacheable && should_read` → 查缓存，命中直返跳过 `engine_client.scrape`
-    /// - 写缓存：`is_cacheable && should_write` 且抓取成功 → 序列化写回
-    ///
-    /// `cache_mode=None`（默认）等价于 `Enabled`（`unwrap_or_default()`）。
-    /// 不可缓存的请求（data:/blob:/POST）跳过整个缓存流程；cache key 也只在
-    /// 缓存流程实际启用（可缓存且可读或可写）时生成。
-    ///
-    /// `team_id` 进入 cache key：跨租户不共享缓存条目（CWE-200）。
-    async fn scrape_with_cache(
-        &self,
-        team_id: Id,
-        scrape_request: &ScrapeRequest,
-    ) -> Result<ScrapeResponse, EngineError> {
-        let cache_ctx = CacheContext {
-            team_id,
-            url: scrape_request.url.clone(),
-            method: scrape_request.options.method,
-            mode: scrape_request.options.cache_mode.unwrap_or_default(),
-        };
-
-        // cache key 仅在缓存流程实际启用时生成：`is_cacheable` 且至少一个
-        // 读写方向被允许。`Disabled` 与不可缓存请求（data:/blob:/POST 等）
-        // 不做指纹计算。读/写共用同一个 `Option<String>`，避免门控前无条件
-        // 生成 key（M1：指纹含 JSON 规范化，属非平凡开销）。
-        let cache_key = (cache_ctx.is_cacheable()
-            && (cache_ctx.should_read() || cache_ctx.should_write()))
-        .then(|| cache_utils::generate_scrape_cache_key(&cache_ctx, &scrape_request.options));
-
-        // 读缓存门控
-        let cached_response = match cache_key.as_deref() {
-            Some(cache_key) if cache_ctx.should_read() => {
-                match try_read_scrape_cache(&cache_ctx, cache_key, self.cache_service.as_ref())
-                    .await
-                {
-                    Ok(Some(cached)) => {
-                        // debug 禁用时跳过 redact_url_for_log 调用（~1μs）
-                        // log crate 的 debug! 宏本身已 lazy format_args，但函数参数在宏调用前已求值，
-                        // 需 log_enabled! 守卫才能避免 redact_url_for_log 的 Url::parse + String 分配。
-                        if log::log_enabled!(log::Level::Debug) {
-                            debug!(
-                                "Cache hit, returning cached response url={} mode={:?}",
-                                redact_url_for_log(&cache_ctx.url),
-                                cache_ctx.mode
-                            );
-                        }
-                        Some(cached)
-                    }
-                    Ok(None) => None,
-                    Err(e) => {
-                        // 缓存读失败不吞，记录后降级为 miss（不阻塞抓取）
-                        // 日志使用脱敏 URL，防止 query 参数泄露
-                        warn!(
-                            "Cache read failed, falling back to scrape url={} error={}",
-                            redact_url_for_log(&cache_ctx.url),
-                            e
-                        );
-                        None
-                    }
-                }
-            }
-            _ => None,
-        };
-
-        match cached_response {
-            Some(cached) => Ok(cached),
-            None => {
-                let resp = self.engine_client.scrape(scrape_request).await;
-                // 写缓存门控：仅抓取成功且 should_write 时写回
-                if let Ok(ref r) = resp {
-                    if cache_ctx.should_write() {
-                        if let Some(cache_key) = cache_key.as_deref() {
-                            if let Err(e) = try_write_scrape_cache(
-                                &cache_ctx,
-                                cache_key,
-                                r,
-                                self.cache_service.as_ref(),
-                                self.settings.cache.types.search.ttl_seconds,
-                            )
-                            .await
-                            {
-                                // 缓存写失败不吞，记录但不影响抓取结果
-                                // 日志使用脱敏 URL
-                                warn!(
-                                    "Cache write failed url={} error={}",
-                                    redact_url_for_log(&cache_ctx.url),
-                                    e
-                                );
-                            }
-                        }
-                    }
-                }
-                resp
-            }
-        }
-    }
-
-    /// 抓取成功路径：AIMD 记账 → 304 短路 → 持久化（handle_scrape_success）→
-    /// 守卫胜利者扣除高级功能费用。
-    ///
-    /// 抓取成功/失败回填 AIMDController：由 `TeamSemaphore` 封装——Fixed 模式 noop；
-    /// Adaptive 模式调用 `AIMDController::record_*` 并经 `AdaptiveSemaphore::set_target`
-    /// 推入新 target。
-    async fn finalize_scrape_success(
-        &self,
-        task: &mut Task,
-        scrape_request: &ScrapeRequest,
-        scrape_request_dto: Option<&ScrapeRequestDto>,
-        prior_result: Option<crate::domain::models::ScrapeResult>,
-        response: ScrapeResponse,
-    ) -> Result<()> {
-        self.team_semaphore.record_success(task.team_id);
-
-        // 304 短路：目标站确认内容未变，复用历史结果内容回填 200 响应，
-        // 省去重复传输与重新提取。无历史结果可回填时为协议异常（304
-        // 必然对应我们发出的条件请求），显性置 Failed 不返回空正文。
-        let response = if response.status_code == 304 {
-            match prior_result {
-                Some(ref prior) => {
-                    info!(
-                        "{}",
-                        crate::i18n::tr_log_args(
-                            "scrape-304-reused",
-                            &[
-                                (
-                                    "task_id",
-                                    fluent_bundle::FluentValue::from(task.id.to_string()),
-                                ),
-                                (
-                                    "bytes",
-                                    fluent_bundle::FluentValue::from(prior.content.len() as i64),
-                                ),
-                            ],
-                        )
-                    );
-                    not_modified_response(prior, &response)
-                }
-                None => {
-                    error!(
-                        "{}",
-                        crate::i18n::tr_log_args(
-                            "scrape-304-no-prior",
-                            &[(
-                                "task_id",
-                                fluent_bundle::FluentValue::from(task.id.to_string()),
-                            )],
-                        )
-                    );
-                    self.handle_failure(
-                        task,
-                        "304 response without prior result for conditional request",
-                    )
-                    .await?;
-                    return Ok(());
-                }
-            }
-        } else {
-            response
-        };
-
-        debug!("status_code: {}", response.status_code);
-        info!("Scrape successful, status: {}", response.status_code);
-
-        // handle_scrape_success 改为 owned ScrapeResponse，
-        // 调用前提前提取 has_screenshot 标志（response 将被 move 消费）
-        let has_screenshot = response.screenshot.is_some();
-        let has_proxy = scrape_request.options.proxy.is_some();
-
-        match self
-            .handle_scrape_success(task, scrape_request_dto, response)
-            .await
-        {
-            Err(e) => {
-                error!("Scrape success handler failed: {}", e);
-                debug!("error: {}", e);
-                let err_msg = e.to_string();
-                self.handle_failure(task, &err_msg).await?;
-            }
-            Ok(false) => {
-                // 丢守卫：认领方会重新执行并扣费，本 worker 不做任何计费
-                warn!(
-                    "Task {} completion guard lost; feature credits not deducted by worker {}",
-                    task.id, self.worker_id
-                );
-            }
-            Ok(true) => {
-                debug!("Scrape success handler completed successfully");
-                // 守卫胜利者扣除高级功能费用 (PRD-253)；token 费用已在
-                // handle_scrape_success 内部于守卫胜利后统一扣除
-                self.deduct_feature_credits(task.team_id, task.id, has_screenshot, has_proxy)
-                    .await;
-            }
-        }
-        Ok(())
-    }
-
-    /// 立即失败回填（finalize_scrape_failure 的 timeout / reason 重试上限
-    /// 两分支共用）：取最新任务态 → 置 `Failed` + `completed_at` + `error`
-    /// （可附额外 payload 字段）→ 守卫式写入。任务已不存在（find_by_id 空）
-    /// 时静默跳过；写入失败经 `?` 上抛（与原两分支行为一致）。
-    async fn mark_task_failed_immediately(
-        &self,
-        task_id: crate::domain::id::Id,
-        error_message: &str,
-        extra_payload_fields: &[(&'static str, Value)],
-    ) -> Result<()> {
-        // Fetch task to ensure we have latest state
-        if let Ok(Some(mut t)) = self.repository.find_by_id(task_id).await {
-            t.status = TaskStatus::Failed;
-            t.completed_at = Some(Utc::now());
-            // 直接操作 t.payload，避免 clone 整个 JSON
-            // （原实现 let mut payload = t.payload.clone + 后续 t.payload = payload
-            // 在失败路径上多分配一次 JSON Value）
-            if let Some(obj) = t.payload.as_object_mut() {
-                obj.insert("error".to_string(), json!(error_message));
-                for (key, value) in extra_payload_fields {
-                    obj.insert((*key).to_string(), value.clone());
-                }
-            }
-            // 守卫式写入：锁被抢占/任务被终结时放弃写入
-            self.repository.update_task_guarded(&t).await?;
-        }
-        Ok(())
-    }
-
-    /// 抓取失败路径：AIMD 记账 → 重试分类（timeout 立即失败 / RetryTracker
-    /// reason 上限 / handle_failure 重排）→ 失败 Webhook。
-    async fn finalize_scrape_failure(&self, task: &mut Task, e: EngineError) -> Result<()> {
-        self.team_semaphore.record_failure(task.team_id);
-        error!("Scrape failed: {}", e);
-        debug!("error: {}", e);
-
-        // 分类错误并计算重试指令（observability + reason-specific 限制）
-        let retry_reason = e.retry_reason();
-        let directive = RetryDirective::for_attempt(retry_reason, task.attempt_count as u32);
-        debug!(
-            "retry classification: reason={:?} attempt={} directive={:?}",
-            retry_reason, task.attempt_count, directive
-        );
-
-        // If it's a timeout error, mark as failed immediately instead of rescheduling
-        let err_str = e.to_string().to_lowercase();
-        if err_str.contains("timeout")
-            || err_str.contains("expired")
-            || err_str.contains("all engines failed")
-        {
-            debug!("Timeout or AllEnginesFailed detected, marking task as failed");
-            self.mark_task_failed_immediately(task.id, &e.to_string(), &[])
-                .await?;
-        } else {
-            // reason-specific 重试限制检查
-            // RetryTracker 各 reason 独立计数——AntiBot/FeatureToggle 达上限后
-            // 即使总 max_retries 未耗尽也立即标记失败，避免无谓重试。
-            let mut tracker = RetryTracker::new_default();
-            for _ in 0..task.attempt_count {
-                tracker.record(retry_reason);
-            }
-            if !tracker.should_retry(retry_reason) {
-                info!(
-                    "retry limit reached for reason {:?} (attempt={}), \
-                     marking task {} as failed",
-                    retry_reason, task.attempt_count, task.id
-                );
-                self.mark_task_failed_immediately(
-                    task.id,
-                    &e.to_string(),
-                    &[("retry_limit_reason", json!(format!("{:?}", retry_reason)))],
-                )
-                .await?;
-            } else {
-                let err_msg = e.to_string();
-                self.handle_failure(task, &err_msg).await?;
-            }
-        }
-
-        // 触发失败 Webhook
-        self.trigger_webhook(task, Some(e.to_string())).await;
-        Ok(())
-    }
-
-    // `try_coalesce` 方法已迁移至 `CoalesceCoordinator`（独立组件）。
-    // 原 `request_coalescer` 字段已替换为 `coalesce_coordinator: Arc<CoalesceCoordinator>`。
-    // 调用方在 `process_scrape_task` 中通过 `self.coalesce_coordinator.try_coalesce(...)` 触发。
-
-    // process_crawl_task / handle_crawl_success / handle_crawl_failure
-    // 已迁移至 `crawl_task.rs`（partial impl block）
-
-    /// 使用配置的规则提取数据（支持 rules > prompt > schema 优先级）
-    async fn extract_data_with_rules(
-        &self,
-        task: &Task,
-        response: &ScrapeResponse,
-        config: &CrawlConfigDto,
-    ) -> Option<Value> {
-        if let Some(rules) = &config.extraction_rules {
-            match self
-                .extraction_service
-                .extract(&response.content, rules, Some(&task.url))
-                .await
-            {
-                Ok((data, usage)) => {
-                    self.deduct_token_credits(
-                        task.team_id,
-                        task.id,
-                        &usage,
-                        "Tokens used for extraction",
-                    )
-                    .await;
-                    Some(data)
-                }
-                Err(e) => {
-                    error!("Extraction failed for url {}: {}", task.url, e);
-                    None
-                }
-            }
-        } else if let Some(prompt) = &config.extraction_prompt {
-            if !prompt.is_empty() {
-                match self
-                    .extract_with_prompt(&response.content, prompt, &task.url)
-                    .await
-                {
-                    Ok((data, usage)) => {
-                        self.deduct_token_credits(
-                            task.team_id,
-                            task.id,
-                            &usage,
-                            "Tokens used for prompt extraction",
-                        )
-                        .await;
-                        Some(data)
-                    }
-                    Err(e) => {
-                        error!("Prompt extraction failed for url {}: {}", task.url, e);
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        } else if let Some(schema) = &config.extraction_schema {
-            match self.extract_with_schema(&response.content, schema).await {
-                Ok((data, usage)) => {
-                    self.deduct_token_credits(
-                        task.team_id,
-                        task.id,
-                        &usage,
-                        "Tokens used for schema extraction",
-                    )
-                    .await;
-                    Some(data)
-                }
-                Err(e) => {
-                    error!("Schema extraction failed for url {}: {}", task.url, e);
-                    None
-                }
-            }
-        } else {
-            None
-        }
-    }
-
-    /// 使用 Prompt 提取数据（共享辅助方法）
-    ///
-    /// 将 prompt 包装为 `ExtractionRule { use_llm: true }` 后调用 `extraction_service.extract()`。
-    /// 供 Scrape 路径（handle_scrape_success）和 Crawl 路径（extract_data_with_rules）共同调用。
-    async fn extract_with_prompt(
-        &self,
-        html: &str,
-        prompt: &str,
-        base_url: &str,
-    ) -> Result<(Value, crate::domain::services::llm::TokenUsage)> {
-        let mut rules = HashMap::with_capacity(1);
-        rules.insert(
-            "extracted_data".to_string(),
-            crate::domain::services::extraction_service::ExtractionRule {
-                selector: None,
-                attr: None,
-                is_array: false,
-                use_llm: Some(true),
-                llm_prompt: Some(prompt.to_string()),
-                output_format: None,
-            },
-        );
-        self.extraction_service
-            .extract(html, &rules, Some(base_url))
-            .await
-    }
-
-    /// 使用 Schema 提取数据（共享辅助方法）
-    ///
-    /// 直接调用 `extraction_service.extract_with_schema()`。
-    /// 供 Scrape 路径（handle_scrape_success）和 Crawl 路径（extract_data_with_rules）共同调用。
-    async fn extract_with_schema(
-        &self,
-        html: &str,
-        schema: &Value,
-    ) -> Result<(Value, crate::domain::services::llm::TokenUsage)> {
-        // 走 rag-auto 入口：rag 未注入时与 extract_with_schema 完全等价；
-        // 注入后按 schema 派生检索 query，用相关分块压缩 LLM 输入（fail-open）
-        self.extraction_service
-            .extract_with_rag_auto(html, None, schema)
-            .await
-    }
-
-    // handle_crawl_failure 已迁移至 `crawl_task.rs`
-
-    // process_extract_task / handle_rules_extraction / handle_prompt_extraction
-    // / handle_schema_extraction / save_extract_result 已迁移至 `extract_task.rs`
-
-    async fn handle_scrape_success(
-        &self,
-        task: &Task,
-        scrape_request_dto: Option<&ScrapeRequestDto>,
-        response: ScrapeResponse,
-    ) -> Result<bool> {
-        debug!("task_id: {}", task.id);
-
-        // 文本编码处理 - 集成文本处理功能
-        // process_text_encoding 返回 Cow<'_, str>，禁用路径零 clone
-        let processed_content = match process_text_encoding(task, &response).await {
-            Ok(content) => content.into_owned(),
-            Err(e) => {
-                warn!(
-                    "{}",
-                    crate::i18n::tr_log_args(
-                        "scrape-task-encoding-fallback",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                    )
-                );
-                response.content.clone()
-            }
-        };
-
-        // PERF- 复用 process_scrape_task 已解析的 ScrapeRequestDto 引用，
-        // 不再在 handle_scrape_success 内部二次 from_value(task.payload.clone())。
-        let parsed_req = scrape_request_dto;
-
-        // 创建处理后的响应用于后续处理
-        // 调用 MarkdownPostProcessor（独立组件）
-        // 若 formats 含 "markdown" 则生成 Markdown，否则返回 Ok(None)
-        //
-        // （错误显性化）：generate() 现返回 Result<Option<String>, _>，
-        // 区分"未请求 markdown"（Ok(None)）与"转换失败/空结果"（Err）。
-        // 调用方策略：markdown 为增强字段，失败不阻断基础抓取结果，
-        // 错误时记录告警并继续（generated_markdown = None）。
-        // generate() 改为 async，支持 only_main_content 前置正文提取
-        #[cfg(feature = "content")]
-        let generated_markdown: Option<String> = if let Some(req) = parsed_req.as_ref() {
-            self.markdown_post_processor
-                .generate(task.id, req, &processed_content)
-                .await
-                .unwrap_or_else(|e| {
-                    warn!(
-                        "task_id: {}, markdown post-processing failed: {}",
-                        task.id, e
-                    );
-                    None
-                })
-        } else {
-            None
-        };
-        #[cfg(not(feature = "content"))]
-        let generated_markdown: Option<String> = None;
-
-        // handle_scrape_success 改为 owned ScrapeResponse，
-        // 构造 processed_response 时直接 move 字段，避免 clone screenshot(100KB+)/headers/...
-        let processed_response = ScrapeResponse {
-            js_degraded: response.js_degraded,
-            content: processed_content,
-            status_code: response.status_code,
-            screenshot: response.screenshot,
-            content_type: response.content_type,
-            headers: response.headers,
-            response_time_ms: response.response_time_ms,
-            final_url: response.final_url,
-            markdown: generated_markdown.or(response.markdown),
-            captured_responses: response.captured_responses,
-        };
-
-        // Token 扣费延后：先收集用量，仅在赢得 mark_completed 守卫后统一扣除，
-        // 防止丢守卫的陈旧 worker 与认领方对同一次任务双扣费
-        let (extracted_data, pending_token_usages) = self
-            .run_extraction_stage(task, parsed_req, &processed_response.content)
-            .await;
-
-        // 先落库结果（save_result 按 task_id 幂等 upsert），再以锁守卫终结任务：
-        // 中间崩溃的窗口退化为"结果已存、任务可被僵尸恢复重跑"，重跑后幂等覆盖
-        // 不会产生双结果；而旧顺序（先 Completed 后存结果）中间崩溃会留下
-        // "任务 Completed 但结果永久缺失"的不可恢复状态。
-        save_result(
-            task,
-            &processed_response,
-            extracted_data,
-            self.result_repository.as_ref(),
-        )
-        .await?;
-        let marked = self
-            .repository
-            .mark_completed(task.id, Some(self.worker_id))
-            .await?;
-        if marked == 0 {
-            warn!(
-                "Task {} no longer owned by worker {}, skipping token/feature credit \
-                 deduction and webhook delivery",
-                task.id, self.worker_id
-            );
-            return Ok(false);
-        }
-
-        // 守卫胜利：统一执行延后的 token 扣费（仅本 worker 认领期间产生的用量）
-        for usage in &pending_token_usages {
-            self.deduct_token_credits(task.team_id, task.id, usage, "Tokens used for extraction")
-                .await;
-        }
-        debug!(
-            "task_id: {}, Successfully marked task as completed",
-            task.id
-        );
-
-        self.trigger_webhook(task, None).await;
-        Ok(true)
-    }
-
-    // `maybe_generate_markdown` 方法已迁移至 `MarkdownPostProcessor`（独立组件）。
-    // 原 `HtmdMarkdownService` 调用已替换为 `self.markdown_post_processor.generate(...)`，
-    // 由 `handle_scrape_success` 中调用。
-
-    async fn trigger_webhook(&self, task: &Task, error_msg: Option<String>) {
-        let result = match error_msg {
-            Some(msg) => self.webhook_service.trigger_failure(task, msg).await,
-            None => self.webhook_service.trigger_completion(task).await,
-        };
-
-        if let Err(e) = result {
-            error!("Failed to trigger webhook for task {}: {}", task.id, e);
-        }
-    }
-
-    async fn handle_failure(&self, task: &mut Task, error: &str) -> Result<()> {
-        match self.retry_handler.handle_failure(task, error).await {
-            crate::domain::services::retry_handler::HandleFailureResult::Retried { .. } => Ok(()),
-            crate::domain::services::retry_handler::HandleFailureResult::Failed => Ok(()),
-            crate::domain::services::retry_handler::HandleFailureResult::Error(e) => Err(e),
-        }
-    }
-
-    async fn deduct_feature_credits(
-        &self,
-        team_id: crate::domain::id::Id,
-        task_id: crate::domain::id::Id,
-        screenshot: bool,
-        proxy: bool,
-    ) {
-        let mut extra_credits = 0;
-
-        // 2. Screenshot: 2 Credits
-        if screenshot {
-            extra_credits += 2;
-        }
-
-        // 3. Proxy: 1 Credit
-        if proxy {
-            extra_credits += 1;
-        }
-
-        if extra_credits > 0 {
-            // 幂等守卫：丢失完成守卫的陈旧 worker 若重跑本
-            // 扣费路径，不得对同一任务二次扣费。已存在同任务 Scrape 扣费流水则跳过。
-            match self
-                .credits_repository
-                .has_deduction_for_task(
-                    task_id,
-                    crate::domain::models::CreditsTransactionType::Scrape,
-                )
-                .await
-            {
-                Ok(true) => {
-                    warn!(
-                        "Skipping duplicate feature-credit deduction for task {} (already charged)",
-                        task_id
-                    );
-                    return;
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    // fail-closed：无法确认幂等时不扣费，避免客户可见的双扣费事故；
-                    // 显式 error 记录供对账补偿（漏扣可事后追偿，双扣不可逆）。
-                    error!(
-                        "Idempotency check failed for task {} feature credits: {}; \
-                         skipping deduction to avoid double-charge",
-                        task_id, e
-                    );
-                    return;
-                }
-            }
-            if let Err(e) = self
-                .credits_repository
-                .deduct_credits(
-                    team_id,
-                    extra_credits,
-                    crate::domain::models::CreditsTransactionType::Scrape,
-                    format!(
-                        "Extra credits for scrape (screenshot/proxy) for task {}",
-                        task_id
-                    ),
-                    Some(task_id),
-                )
-                .await
-            {
-                error!("Failed to deduct extra credits for task {}: {}", task_id, e);
-                // 欠费追偿记录负数流水，余额进入负值并留 DEBT 标记
-                self.record_debt(
-                    team_id,
-                    task_id,
-                    extra_credits,
-                    "screenshot/proxy extra credits",
-                )
-                .await;
-            }
-        }
-    }
-
-    async fn deduct_token_credits(
-        &self,
-        team_id: crate::domain::id::Id,
-        task_id: crate::domain::id::Id,
-        usage: &crate::domain::services::llm::TokenUsage,
-        description: &str,
-    ) {
-        if usage.total_tokens > 0 {
-            // 幂等守卫：已存在同任务 Extract 扣费流水则跳过，
-            // 防止陈旧 worker 重跑扣费路径造成双扣费；in-memory 计数一并跳过避免虚高。
-            match self
-                .credits_repository
-                .has_deduction_for_task(
-                    task_id,
-                    crate::domain::models::CreditsTransactionType::Extract,
-                )
-                .await
-            {
-                Ok(true) => {
-                    warn!(
-                        "Skipping duplicate token-credit deduction for task {} (already charged)",
-                        task_id
-                    );
-                    return;
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    error!(
-                        "Idempotency check failed for task {} token credits: {}; \
-                         skipping deduction to avoid double-charge",
-                        task_id, e
-                    );
-                    return;
-                }
-            }
-            // 1. Record in-memory for real-time tracking
-            self.token_usage
-                .entry(team_id)
-                .or_insert_with(|| AtomicI64::new(0))
-                .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
-
-            // 2. Convert to credits and deduct from database
-            // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
-            let credits_to_deduct = std::cmp::max(1, (usage.total_tokens as i64 * 10 + 999) / 1000);
-            if credits_to_deduct > 0 {
-                if let Err(e) = self
-                    .credits_repository
-                    .deduct_credits(
-                        team_id,
-                        credits_to_deduct,
-                        crate::domain::models::CreditsTransactionType::Extract,
-                        format!("{} ({} tokens)", description, usage.total_tokens),
-                        Some(task_id),
-                    )
-                    .await
-                {
-                    error!("Failed to deduct credits for token usage: {}", e);
-                    // 欠费追偿同上，记录负数流水
-                    self.record_debt(team_id, task_id, credits_to_deduct, "LLM token usage")
-                        .await;
-                } else {
-                    info!(
-                        "Deducted {} credits for {} tokens for team {}",
-                        credits_to_deduct, usage.total_tokens, team_id
-                    );
-                }
-            }
-        }
-    }
-
-    /// 欠费追偿后置扣费失败时以负数流水入账。
-    ///
-    /// `add_credits_safe` 存储过程不检查下限，负数金额使余额进入负值，
-    /// 并在 `credits_transactions` 留下 `DEBT:` 标记流水，供补账与对账使用，
-    /// 避免后置扣费失败被静默吞掉形成坏账。
-    async fn record_debt(
-        &self,
-        team_id: crate::domain::id::Id,
-        task_id: crate::domain::id::Id,
-        amount: i64,
-        reason: &str,
-    ) {
-        if let Err(debt_err) = self
-            .credits_repository
-            .add_credits(
-                team_id,
-                -amount,
-                crate::domain::models::CreditsTransactionType::ManualAdjustment,
-                format!("DEBT: post-task charge failed ({})", reason),
-                Some(task_id),
-            )
-            .await
-        {
-            error!(
-                "CRITICAL: Failed to record debt of {} credits for team {} (task {}): {}",
-                amount, team_id, task_id, debt_err
-            );
-        } else {
-            log::warn!(
-                "Recorded debt of {} credits for team {} (task {})",
-                amount,
-                team_id,
-                task_id
-            );
-        }
-    }
-
     /// 从 Task payload 解析出 [`ScrapeRequestDto`]（PERF- 拆分两步式）。
     ///
     /// 该方法仅负责反序列化，调用方可继续调 [`Self::build_scrape_request_from_dto`]
@@ -1325,31 +360,9 @@ impl ScrapeWorker {
     /// 不再读取 `task.payload`，避免重复解析与 clone。
     pub(crate) fn build_scrape_request_from_dto(dto: &ScrapeRequestDto) -> Result<ScrapeRequest> {
         let options = dto.options.as_ref();
-
-        let mut headers = HashMap::with_capacity(16);
-        if let Some(opts) = options {
-            if let Some(h) = &opts.headers {
-                if let Some(obj) = h.as_object() {
-                    for (k, v) in obj {
-                        if let Some(s) = v.as_str() {
-                            headers.insert(k.clone(), s.to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        let needs_js = dto.actions.as_ref().map(|a| !a.is_empty()).unwrap_or(false)
-            || options.and_then(|o| o.js_rendering).unwrap_or(false);
-
-        let screenshot_config = options.and_then(|o| {
-            o.screenshot_options.as_ref().map(|so| ScreenshotConfig {
-                full_page: so.full_page.unwrap_or(false),
-                selector: so.selector.clone(),
-                quality: so.quality,
-                format: so.format.clone(),
-            })
-        });
+        let headers = build_dto_headers(options);
+        let needs_js = dto_needs_js(dto, options);
+        let screenshot_config = build_dto_screenshot_config(options);
 
         Ok(ScrapeRequest {
             url: dto.url.clone(),
@@ -1372,59 +385,13 @@ impl ScrapeWorker {
                     .and_then(|o| o.needs_tls_fingerprint)
                     .unwrap_or(false),
                 use_fire_engine: options.and_then(|o| o.use_fire_engine).unwrap_or(false),
-                actions: dto
-                    .actions
-                    .clone()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|a| match a {
-                        crate::application::dto::scrape_request::ScrapeActionDto::Wait {
-                            milliseconds,
-                        } => Some(PageAction::Wait { milliseconds }),
-                        crate::application::dto::scrape_request::ScrapeActionDto::Click {
-                            selector,
-                        } => Some(PageAction::Click { selector }),
-                        crate::application::dto::scrape_request::ScrapeActionDto::Scroll {
-                            direction,
-                        } => {
-                            // Map string direction to ScrollDirection enum
-                            let dir = match direction.to_lowercase().as_str() {
-                                "up" => ScrollDirection::Up,
-                                "top" => ScrollDirection::Top,
-                                "bottom" => ScrollDirection::Bottom,
-                                _ => ScrollDirection::Down,
-                            };
-                            Some(PageAction::Scroll { direction: dir })
-                        }
-                        crate::application::dto::scrape_request::ScrapeActionDto::Screenshot {
-                            ..
-                        } => {
-                            // Screenshot action is handled by global needs_screenshot option
-                            None
-                        }
-                        crate::application::dto::scrape_request::ScrapeActionDto::Input {
-                            selector,
-                            text,
-                        } => Some(PageAction::Input { selector, text }),
-                    })
-                    .collect(),
+                actions: map_dto_actions(dto),
                 sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
                 // needs_mllm 在 engine-mllm 特性关闭时显性失败：任务已在队列中，静默降级
                 // 到普通引擎会让用户以为做了视觉分析——失败必须显性化。
                 // （API 入口的 create_scrape use-case 在提交时已先行拒绝，此处
                 // 兜底覆盖直写队列/旧版本任务等绕过 use-case 的路径。）
-                needs_mllm: {
-                    let requested = options.and_then(|o| o.needs_mllm).unwrap_or(false);
-                    if requested {
-                        #[cfg(not(feature = "engine-mllm"))]
-                        anyhow::bail!(
-                            "task requested needs_mllm but this build lacks the `engine-mllm` feature"
-                        );
-                        #[cfg(feature = "engine-mllm")]
-                        log::debug!("task requests MLLM analysis");
-                    }
-                    requested
-                },
+                needs_mllm: resolve_needs_mllm(options)?,
                 block_ads: options.and_then(|o| o.block_ads).unwrap_or(false),
                 block_media: options.and_then(|o| o.block_media).unwrap_or(false),
                 session_id: None,
@@ -1432,14 +399,7 @@ impl ScrapeWorker {
                 //
                 // bypass_cache=Some(true) 覆盖 cache_mode 为 Bypass（应急绕过读，正常写回）。
                 // 其余情况按 cache_mode 走；两者皆 None 时等价于 Enabled（默认）。
-                cache_mode: {
-                    let bypass = options.and_then(|o| o.bypass_cache).unwrap_or(false);
-                    if bypass {
-                        Some(CacheMode::Bypass)
-                    } else {
-                        options.and_then(|o| o.cache_mode)
-                    }
-                },
+                cache_mode: map_dto_cache_mode(options),
                 // P22 接线：DTO 的 wait_for（毫秒）映射为 DomStable 等待策略——
                 // 与 create_scrape use-case 层的映射保持一致（此前此处硬编码
                 // None，调用方传入的 wait_for 被静默丢弃）
@@ -1459,6 +419,102 @@ impl ScrapeWorker {
     pub fn build_scrape_request(task: &Task) -> Result<ScrapeRequest> {
         let dto = Self::parse_scrape_request_dto(task)?;
         Self::build_scrape_request_from_dto(&dto)
+    }
+}
+
+/// DTO options → 请求头 map（仅保留字符串值）
+fn build_dto_headers(options: Option<&ScrapeOptionsDto>) -> HashMap<String, String> {
+    let mut headers = HashMap::with_capacity(16);
+    if let Some(opts) = options {
+        if let Some(h) = &opts.headers {
+            if let Some(obj) = h.as_object() {
+                for (k, v) in obj {
+                    if let Some(s) = v.as_str() {
+                        headers.insert(k.clone(), s.to_string());
+                    }
+                }
+            }
+        }
+    }
+    headers
+}
+
+/// JS 渲染需求：存在动作或显式开启
+fn dto_needs_js(dto: &ScrapeRequestDto, options: Option<&ScrapeOptionsDto>) -> bool {
+    dto.actions.as_ref().map(|a| !a.is_empty()).unwrap_or(false)
+        || options.and_then(|o| o.js_rendering).unwrap_or(false)
+}
+
+/// DTO 截图选项 → 引擎截图配置
+fn build_dto_screenshot_config(options: Option<&ScrapeOptionsDto>) -> Option<ScreenshotConfig> {
+    options.and_then(|o| {
+        o.screenshot_options.as_ref().map(|so| ScreenshotConfig {
+            full_page: so.full_page.unwrap_or(false),
+            selector: so.selector.clone(),
+            quality: so.quality,
+            format: so.format.clone(),
+        })
+    })
+}
+
+/// DTO 动作 → 引擎页面动作（Screenshot 由全局 needs_screenshot 承载）
+fn map_dto_actions(dto: &ScrapeRequestDto) -> Vec<PageAction> {
+    dto.actions
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|a| match a {
+            crate::application::dto::scrape_request::ScrapeActionDto::Wait { milliseconds } => {
+                Some(PageAction::Wait { milliseconds })
+            }
+            crate::application::dto::scrape_request::ScrapeActionDto::Click { selector } => {
+                Some(PageAction::Click { selector })
+            }
+            crate::application::dto::scrape_request::ScrapeActionDto::Scroll { direction } => {
+                // Map string direction to ScrollDirection enum
+                let dir = map_scroll_direction(&direction);
+                Some(PageAction::Scroll { direction: dir })
+            }
+            crate::application::dto::scrape_request::ScrapeActionDto::Screenshot { .. } => {
+                // Screenshot action is handled by global needs_screenshot option
+                None
+            }
+            crate::application::dto::scrape_request::ScrapeActionDto::Input { selector, text } => {
+                Some(PageAction::Input { selector, text })
+            }
+        })
+        .collect()
+}
+
+/// 滚动方向字符串 → 枚举（未知值回落 Down）
+fn map_scroll_direction(direction: &str) -> ScrollDirection {
+    match direction.to_lowercase().as_str() {
+        "up" => ScrollDirection::Up,
+        "top" => ScrollDirection::Top,
+        "bottom" => ScrollDirection::Bottom,
+        _ => ScrollDirection::Down,
+    }
+}
+
+/// needs_mllm 解析：特性缺失时显性失败
+fn resolve_needs_mllm(options: Option<&ScrapeOptionsDto>) -> Result<bool> {
+    let requested = options.and_then(|o| o.needs_mllm).unwrap_or(false);
+    if requested {
+        #[cfg(not(feature = "engine-mllm"))]
+        anyhow::bail!("task requested needs_mllm but this build lacks the `engine-mllm` feature");
+        #[cfg(feature = "engine-mllm")]
+        log::debug!("task requests MLLM analysis");
+    }
+    Ok(requested)
+}
+
+/// cache_mode 桥接：bypass_cache 覆盖为 Bypass，否则沿用 DTO
+fn map_dto_cache_mode(options: Option<&ScrapeOptionsDto>) -> Option<CacheMode> {
+    let bypass = options.and_then(|o| o.bypass_cache).unwrap_or(false);
+    if bypass {
+        Some(CacheMode::Bypass)
+    } else {
+        options.and_then(|o| o.cache_mode)
     }
 }
 
@@ -1741,6 +797,12 @@ impl ScrapeWorker {
 
 // 任务准入 / 结果提取辅助方法（partial impl block）
 mod task_lifecycle;
+// 抓取管线（partial impl block）
+mod scrape_pipeline;
+// 提取与计费（partial impl block）
+mod extraction_billing;
+// 成功收尾 / webhook / 失败处理（partial impl block）
+mod success_finalization;
 // Crawl 任务处理方法（partial impl block）
 mod crawl_task;
 // Extract 任务处理方法（partial impl block）

@@ -47,28 +47,7 @@ impl EngineRouter {
     ) -> Result<InternalScrapeResponse, String> {
         if let Some(detection) = check_antibot_response(&response, request_url) {
             if detection.needs_browser {
-                // F7：记录 host 反爬记忆，TTL 内后续同 host
-                // 请求直接按 needs_js 路由
-                if let Ok(u) = url::Url::parse(request_url) {
-                    if let Some(host) = u.host_str() {
-                        self.record_host_browser_hint(host);
-                        // host 纪律观测：429 → 冷却；
-                        // 裸 403（无 WAF 指纹）→ 连击计数
-                        if detection.tech == crate::engines::antibot::AntiBotTech::RateLimited {
-                            self.host_discipline.observe(
-                                host,
-                                ObserveOutcome::RateLimited {
-                                    retry_after: detection
-                                        .retry_after_secs
-                                        .map(Duration::from_secs),
-                                },
-                            );
-                        } else if response.status_code == 403 && !is_known_waf(detection.tech) {
-                            self.host_discipline
-                                .observe(host, ObserveOutcome::Forbidden { challenge: false });
-                        }
-                    }
-                }
+                self.observe_antibot_host(request_url, &detection, response.status_code);
                 self.update_engine_stats(engine_name, false, response_time);
                 // F2：挑战页 = 身份可疑证据，同址 mark_bad
                 if let Some(identity) = session_identity {
@@ -94,6 +73,35 @@ impl EngineRouter {
             }
         }
         Ok(response)
+    }
+
+    /// F7 host 反爬记忆与 host 纪律观测（429 → 冷却；裸 403 无 WAF 指纹 → 连击计数）。
+    fn observe_antibot_host(
+        &self,
+        request_url: &str,
+        detection: &crate::engines::antibot::Detection,
+        status_code: u16,
+    ) {
+        // F7：记录 host 反爬记忆，TTL 内后续同 host
+        // 请求直接按 needs_js 路由
+        if let Ok(u) = url::Url::parse(request_url) {
+            if let Some(host) = u.host_str() {
+                self.record_host_browser_hint(host);
+                // host 纪律观测：429 → 冷却；
+                // 裸 403（无 WAF 指纹）→ 连击计数
+                if detection.tech == crate::engines::antibot::AntiBotTech::RateLimited {
+                    self.host_discipline.observe(
+                        host,
+                        ObserveOutcome::RateLimited {
+                            retry_after: detection.retry_after_secs.map(Duration::from_secs),
+                        },
+                    );
+                } else if status_code == 403 && !is_known_waf(detection.tech) {
+                    self.host_discipline
+                        .observe(host, ObserveOutcome::Forbidden { challenge: false });
+                }
+            }
+        }
     }
 }
 

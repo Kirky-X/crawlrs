@@ -165,9 +165,11 @@ pub enum WaitFor {
 
 /// Optional configuration for scrape operations.
 ///
-/// `Serialize` 供请求合并键（`utils::coalesce`）对完整请求身份做确定性指纹：
+/// `Serialize` 供请求身份指纹（`workers::request_identity`）对完整请求身份做确定性指纹：
 /// 新增字段会自动进入指纹，避免同 URL 不同选项的请求被错误合并。
-/// 例外：`cache_mode` 是缓存/合并控制开关，指纹计算时归一为 `None`，不参与身份。
+/// 例外：`cache_mode` 本身是缓存/合并控制开关，指纹计算时归一为 `None`；
+/// 合并键另行叠加由它派生的 `cache_read_allowed` 布尔投影（见
+/// `workers::request_identity::coalesce_fingerprint`）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ScrapeOptions {
     /// HTTP method for the request

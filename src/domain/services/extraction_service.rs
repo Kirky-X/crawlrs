@@ -300,38 +300,46 @@ impl ExtractionService {
 
             if let Some(selector_str) = &rule.selector {
                 if let Ok(selector) = Selector::parse(selector_str) {
-                    let document = Html::parse_document(html_content);
-
-                    if rule.is_array {
-                        // Array extraction - 使用辅助方法优化
-                        let mut values = Vec::new();
-                        for element in document.select(&selector) {
-                            if let Some(v) =
-                                Self::extract_element_value(element, &rule.attr, base.as_ref())
-                                    .filter(|v| !v.is_empty())
-                            {
-                                values.push(Value::String(v));
-                            }
-                        }
-                        result.insert(key.clone(), Value::Array(values));
-                    } else {
-                        // Single element extraction - 使用辅助方法优化
-                        if let Some(element) = document.select(&selector).next() {
-                            let value =
-                                Self::extract_element_value(element, &rule.attr, base.as_ref());
-                            result.insert(
-                                key.clone(),
-                                value.map(Value::String).unwrap_or(Value::Null),
-                            );
-                        } else {
-                            result.insert(key.clone(), Value::Null);
-                        }
-                    }
+                    result.insert(
+                        key.clone(),
+                        Self::extract_rule_value(html_content, &selector, rule, base.as_ref()),
+                    );
                 }
             }
         }
 
         Ok(json!(result))
+    }
+
+    /// 按单条规则提取：数组规则收集全部匹配，单值规则取首个匹配（无匹配 → Null）。
+    fn extract_rule_value(
+        html_content: &str,
+        selector: &Selector,
+        rule: &ExtractionRule,
+        base: Option<&Url>,
+    ) -> Value {
+        let document = Html::parse_document(html_content);
+
+        if rule.is_array {
+            // Array extraction - 使用辅助方法优化
+            let mut values = Vec::new();
+            for element in document.select(selector) {
+                if let Some(v) =
+                    Self::extract_element_value(element, &rule.attr, base).filter(|v| !v.is_empty())
+                {
+                    values.push(Value::String(v));
+                }
+            }
+            Value::Array(values)
+        } else {
+            // Single element extraction - 使用辅助方法优化
+            if let Some(element) = document.select(selector).next() {
+                let value = Self::extract_element_value(element, &rule.attr, base);
+                value.map(Value::String).unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            }
+        }
     }
 
     /// 提取单个元素的属性值 - 消除深层嵌套
@@ -389,82 +397,104 @@ impl ExtractionService {
         for (key, rule) in rules {
             if rule.use_llm.unwrap_or(false) {
                 // LLM Extraction Flow
-                let format = rule.output_format.as_deref().unwrap_or("json");
-
-                let prompt = rule
-                    .llm_prompt
-                    .clone()
-                    .unwrap_or_else(|| format!("Extract {} from the text", key));
-                let schema = json!({ "type": if rule.is_array { "array" } else { "string" }, "description": prompt });
-
-                // 1. Noise removal via CSS or selector
-                let content_to_process = if let Some(sel) = &rule.selector {
-                    let document = Html::parse_document(html_content);
-                    if let Ok(selector) = Selector::parse(sel) {
-                        document
-                            .select(&selector)
-                            .map(|e| Self::get_clean_text(&e.html()))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    } else {
-                        Self::get_clean_text(html_content)
-                    }
-                } else {
-                    Self::get_clean_text(html_content)
-                };
-
-                // 2. LLM Interaction（经 with_provenance 入口：按各自开关接入 F8 分块
-                // 与 F9 溯源；双开关关闭时等价原 extract_data 单发路径）
-                match self
-                    .llm_service
-                    .extract_data_with_provenance(&content_to_process, &schema, format)
-                    .await
-                {
-                    Ok((val, prov, usage)) => {
-                        result.insert(key.clone(), attach_provenance(val, prov));
-                        total_usage.prompt_tokens += usage.prompt_tokens;
-                        total_usage.completion_tokens += usage.completion_tokens;
-                        total_usage.total_tokens += usage.total_tokens;
-                    }
-                    Err(e) => {
-                        println!("LLM extraction failed for key '{}': {}", key, e);
-                        log::error!("LLM extraction failed for key '{}': {}", key, e);
-                        result.insert(key.clone(), Value::Null);
-                    }
-                }
+                let (value, usage) = self.extract_llm_field(key, rule, html_content).await;
+                result.insert(key.clone(), value);
+                total_usage.prompt_tokens += usage.prompt_tokens;
+                total_usage.completion_tokens += usage.completion_tokens;
+                total_usage.total_tokens += usage.total_tokens;
                 continue;
             }
 
             // Traditional CSS Selector Extraction - 委托给统一的 extract_element_value
             // 之前是 70+ 行内联重复逻辑（与上方 extract_with_selectors 完全一致），
             // 现在直接复用 Self::extract_element_value，行为与历史完全一致。
-            if let Some(selector_str) = &rule.selector {
-                if let Ok(selector) = Selector::parse(selector_str) {
-                    let document = Html::parse_document(html_content);
-
-                    if rule.is_array {
-                        // Array extraction - 复用 extract_element_value（与 extract_with_selectors 一致）
-                        let values: Vec<Value> = document
-                            .select(&selector)
-                            .filter_map(|element| {
-                                Self::extract_element_value(element, &rule.attr, base.as_ref())
-                                    .filter(|v| !v.is_empty())
-                                    .map(Value::String)
-                            })
-                            .collect();
-                        result.insert(key.clone(), Value::Array(values));
-                    } else {
-                        // Single element extraction - 复用 extract_element_value
-                        let value = document.select(&selector).next().and_then(|element| {
-                            Self::extract_element_value(element, &rule.attr, base.as_ref())
-                        });
-                        result.insert(key.clone(), value.map(Value::String).unwrap_or(Value::Null));
-                    }
-                }
+            if let Some(value) = Self::extract_selector_field(rule, html_content, base.as_ref()) {
+                result.insert(key.clone(), value);
             }
         }
 
         Ok((json!(result), total_usage))
+    }
+
+    /// 单条 LLM 规则提取；失败时记录错误并返回 Null，不中断整体提取
+    async fn extract_llm_field(
+        &self,
+        key: &str,
+        rule: &ExtractionRule,
+        html_content: &str,
+    ) -> (Value, TokenUsage) {
+        let format = rule.output_format.as_deref().unwrap_or("json");
+
+        let prompt = rule
+            .llm_prompt
+            .clone()
+            .unwrap_or_else(|| format!("Extract {} from the text", key));
+        let schema = json!({ "type": if rule.is_array { "array" } else { "string" }, "description": prompt });
+
+        // 1. Noise removal via CSS or selector
+        let content_to_process = Self::prepare_llm_content(html_content, rule.selector.as_deref());
+
+        // 2. LLM Interaction（经 with_provenance 入口：按各自开关接入 F8 分块
+        // 与 F9 溯源；双开关关闭时等价原 extract_data 单发路径）
+        match self
+            .llm_service
+            .extract_data_with_provenance(&content_to_process, &schema, format)
+            .await
+        {
+            Ok((val, prov, usage)) => (attach_provenance(val, prov), usage),
+            Err(e) => {
+                println!("LLM extraction failed for key '{}': {}", key, e);
+                log::error!("LLM extraction failed for key '{}': {}", key, e);
+                (Value::Null, TokenUsage::default())
+            }
+        }
+    }
+
+    /// LLM 规则的内容预处理：按选择器取干净文本，无选择器/非法选择器降级全文
+    fn prepare_llm_content(html_content: &str, selector: Option<&str>) -> String {
+        if let Some(sel) = selector {
+            let document = Html::parse_document(html_content);
+            if let Ok(selector) = Selector::parse(sel) {
+                return document
+                    .select(&selector)
+                    .map(|e| Self::get_clean_text(&e.html()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+            }
+            return Self::get_clean_text(html_content);
+        }
+        Self::get_clean_text(html_content)
+    }
+
+    /// 单条 CSS 选择器规则提取；选择器缺失或非法时不写入结果
+    fn extract_selector_field(
+        rule: &ExtractionRule,
+        html_content: &str,
+        base: Option<&Url>,
+    ) -> Option<Value> {
+        let selector_str = rule.selector.as_ref()?;
+        let selector = Selector::parse(selector_str).ok()?;
+        let document = Html::parse_document(html_content);
+
+        if rule.is_array {
+            // Array extraction - 复用 extract_element_value（与 extract_with_selectors 一致）
+            let values: Vec<Value> = document
+                .select(&selector)
+                .filter_map(|element| {
+                    Self::extract_element_value(element, &rule.attr, base)
+                        .filter(|v| !v.is_empty())
+                        .map(Value::String)
+                })
+                .collect();
+            Some(Value::Array(values))
+        } else {
+            // Single element extraction - 复用 extract_element_value
+            let value = document
+                .select(&selector)
+                .next()
+                .and_then(|element| Self::extract_element_value(element, &rule.attr, base));
+            Some(value.map(Value::String).unwrap_or(Value::Null))
+        }
     }
 
     /// 获取干净的文本内容（去除 script, style 等噪音）

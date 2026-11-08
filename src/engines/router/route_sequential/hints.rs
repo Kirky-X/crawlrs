@@ -73,52 +73,63 @@ impl EngineRouter {
         request: &InternalScrapeRequest,
     ) -> Option<Result<InternalScrapeResponse, EngineError>> {
         #[cfg(feature = "engine-moli")]
-        if request.needs_js {
-            if let Some(watermark) = &self.memory {
-                if watermark.level() == crate::engines::memory_watermark::MemoryLevel::Critical {
-                    self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
-                    if self.memory_fallback_to_static {
-                        if let Some(static_engine) =
-                            self.engines.iter().find(|e| e.name() == "reqwest")
-                        {
-                            warn!(
-                                "memory Critical without JS engines, degrading request to static engine (js_degraded): {}",
-                                request.url
-                            );
-                            let mut static_request = request.clone();
-                            static_request.needs_js = false;
-                            let fallback_started = std::time::Instant::now();
-                            let mut response = match static_engine.scrape(&static_request).await {
-                                Ok(resp) => resp,
-                                Err(e) => {
-                                    return Some(Err(EngineError::AllEnginesFailed(format!(
-                                        "static fallback after memory degradation failed: {e}"
-                                    ))))
-                                }
-                            };
-                            response.js_degraded = true;
-                            // 降级旁路与候选循环同款簿记：引擎统计/熔断/指标不因
-                            // 旁路执行而失真（否则 reqwest 健康面板漏记这些请求）
-                            let engine_name = static_engine.name();
-                            let response_time = fallback_started.elapsed();
-                            self.update_engine_stats(engine_name, true, response_time);
-                            self.circuit_breaker.record_success(engine_name).await;
-                            self.metrics
-                                .record_engine_latency(engine_name, response_time);
-                            self.metrics.record_engine_success(engine_name);
-                            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
-                            self.metrics
-                                .successful_requests
-                                .fetch_add(1, Ordering::Relaxed);
-                            return Some(Ok(response));
-                        }
-                    }
-                    return Some(Err(EngineError::MemoryConstrained(
-                        "no JS engine available under Critical memory watermark".to_string(),
-                    )));
-                }
-            }
+        if let Some(outcome) = self.try_static_memory_fallback(request).await {
+            return Some(outcome);
         }
         None
+    }
+
+    /// 内存水位 Critical 且无 JS 引擎时的静态引擎降级
+    /// （自 [`handle_no_candidates`] 提取；控制流与日志逐字保留）。
+    #[cfg(feature = "engine-moli")]
+    async fn try_static_memory_fallback(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Option<Result<InternalScrapeResponse, EngineError>> {
+        if !request.needs_js {
+            return None;
+        }
+        let watermark = self.memory.as_ref()?;
+        if watermark.level() != crate::engines::memory_watermark::MemoryLevel::Critical {
+            return None;
+        }
+        self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
+        if self.memory_fallback_to_static {
+            if let Some(static_engine) = self.engines.iter().find(|e| e.name() == "reqwest") {
+                warn!(
+                    "memory Critical without JS engines, degrading request to static engine (js_degraded): {}",
+                    request.url
+                );
+                let mut static_request = request.clone();
+                static_request.needs_js = false;
+                let fallback_started = std::time::Instant::now();
+                let mut response = match static_engine.scrape(&static_request).await {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        return Some(Err(EngineError::AllEnginesFailed(format!(
+                            "static fallback after memory degradation failed: {e}"
+                        ))))
+                    }
+                };
+                response.js_degraded = true;
+                // 降级旁路与候选循环同款簿记：引擎统计/熔断/指标不因
+                // 旁路执行而失真（否则 reqwest 健康面板漏记这些请求）
+                let engine_name = static_engine.name();
+                let response_time = fallback_started.elapsed();
+                self.update_engine_stats(engine_name, true, response_time);
+                self.circuit_breaker.record_success(engine_name).await;
+                self.metrics
+                    .record_engine_latency(engine_name, response_time);
+                self.metrics.record_engine_success(engine_name);
+                self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+                self.metrics
+                    .successful_requests
+                    .fetch_add(1, Ordering::Relaxed);
+                return Some(Ok(response));
+            }
+        }
+        Some(Err(EngineError::MemoryConstrained(
+            "no JS engine available under Critical memory watermark".to_string(),
+        )))
     }
 }

@@ -18,11 +18,54 @@ mod finalize;
 mod hints;
 
 use super::{check_js_upgrade_probe, EngineRouter, LoadBalancingStrategy};
-use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse};
+use crate::engines::engine_client::{
+    EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+};
 use crate::utils::retry::{RetryReason, RetryTracker};
 use log::{debug, warn};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// `route_internal` 准备阶段的结果。
+enum PreparedRoute {
+    /// 候选引擎已就绪，进入顺序/竞速执行。
+    Ready(RoutePlan),
+    /// 准备阶段已产生最终结果（无候选，或竞速模式已返回）。
+    Immediate(Result<InternalScrapeResponse, EngineError>),
+}
+
+/// 顺序执行所需的请求上下文与候选引擎。
+struct RoutePlan {
+    host: Option<String>,
+    request: InternalScrapeRequest,
+    candidates: Vec<(f64, Arc<dyn ScraperEngine>)>,
+    start_time: Instant,
+}
+
+/// 单次引擎尝试的静态上下文。
+struct AttemptContext<'a> {
+    request: &'a InternalScrapeRequest,
+    host: Option<&'a str>,
+    start_time: Instant,
+    max_retries: usize,
+}
+
+/// 跨 attempt 保留的可变重试状态。
+struct AttemptState<'a> {
+    tracker: &'a mut RetryTracker,
+    last_error: &'a mut Option<EngineError>,
+    last_reason: &'a mut Option<RetryReason>,
+    force_needs_js: &'a mut bool,
+}
+
+/// 单次引擎尝试的控制流结果。
+enum AttemptOutcome {
+    /// 尝试结束并携带最终路由结果（成功响应或终止错误）。
+    Done(Result<InternalScrapeResponse, EngineError>),
+    /// 本引擎失败，继续下一候选。
+    Retry,
+}
 
 impl EngineRouter {
     /// Internal route implementation without timeout
@@ -31,6 +74,14 @@ impl EngineRouter {
         &self,
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
+        match self.prepare_route(request).await {
+            PreparedRoute::Immediate(outcome) => outcome,
+            PreparedRoute::Ready(plan) => self.run_sequential(plan).await,
+        }
+    }
+
+    /// 候选选择与前置处理（host hints / 空候选降级 / 轮询 / 竞速分派）。
+    async fn prepare_route(&self, request: &InternalScrapeRequest) -> PreparedRoute {
         let start_time = Instant::now();
 
         let (host, request) = self.apply_host_hints(request).await;
@@ -42,13 +93,13 @@ impl EngineRouter {
 
         if candidates.is_empty() {
             if let Some(outcome) = self.handle_no_candidates(&request).await {
-                return outcome;
+                return PreparedRoute::Immediate(outcome);
             }
             warn!("No suitable engines available for request");
             self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
-            return Err(EngineError::AllEnginesFailed(
+            return PreparedRoute::Immediate(Err(EngineError::AllEnginesFailed(
                 "No suitable engines available".to_string(),
-            ));
+            )));
         }
 
         // 轮询策略特殊处理
@@ -65,8 +116,27 @@ impl EngineRouter {
 
         // 并发竞速模式
         if self.race_mode_enabled && candidates.len() > 1 {
-            return self.route_race_mode(&request, candidates, start_time).await;
+            return PreparedRoute::Immediate(
+                self.route_race_mode(&request, candidates, start_time).await,
+            );
         }
+
+        PreparedRoute::Ready(RoutePlan {
+            host,
+            request,
+            candidates,
+            start_time,
+        })
+    }
+
+    /// 传统顺序模式执行体（带 max_retries 限制）。
+    async fn run_sequential(&self, plan: RoutePlan) -> Result<InternalScrapeResponse, EngineError> {
+        let RoutePlan {
+            host,
+            request,
+            candidates,
+            start_time,
+        } = plan;
 
         // 传统顺序模式 (带 max_retries 限制)
         let max_attempts = self.max_engine_attempts.max(1).min(candidates.len());
@@ -86,242 +156,27 @@ impl EngineRouter {
         let mut tracker = RetryTracker::new_default();
         let mut last_reason: Option<RetryReason> = None;
 
+        let context = AttemptContext {
+            request: &request,
+            host: host.as_deref(),
+            start_time,
+            max_retries,
+        };
+        let mut state = AttemptState {
+            tracker: &mut tracker,
+            last_error: &mut last_error,
+            last_reason: &mut last_reason,
+            force_needs_js: &mut force_needs_js,
+        };
+
         for (score, engine) in candidates.into_iter().take(max_attempts) {
             total_attempts += 1;
-            let engine_name = engine.name();
-
-            self.metrics.record_engine_selection(engine_name);
-            self.metrics.record_attempt();
-
-            debug!(
-                "Trying engine {} with score {:.2} for request to {}",
-                engine_name, score, request.url
-            );
-
-            let remaining = request
-                .timeout
-                .checked_sub(start_time.elapsed())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                return Err(EngineError::Timeout(request.timeout));
-            }
-
-            let directive =
-                self.compute_attempt_directive(total_attempts, last_reason, host.as_deref());
-
-            let (attempt_request, session_identity) = self.build_attempt_request(
-                &request,
-                host.as_deref(),
-                directive,
-                total_attempts,
-                force_needs_js,
-                remaining,
-            );
-
-            let engine_start = Instant::now();
-
-            // 瀑布式 MRT 超时包裹
-            //
-            // 单引擎调用以 `min(remaining, engine.max_response_time())` 包裹：
-            // - `remaining` = 请求整体剩余时间（request.timeout - 已耗时）
-            // - `mrt` = 引擎级最大响应时间（engine.max_response_time()）
-            //
-            // 取 min 确保：
-            // 1. remaining < mrt：请求整体超时优先（不浪费 MRT 配额）
-            // 2. mrt < remaining：超 MRT 即切下一引擎（瀑布式 fallback）
-            //
-            // race_mode 路径不受影响（保留作为可选模式，在 route_race_mode 中独立处理）。
-            let engine_mrt = engine.max_response_time();
-            let effective_timeout = std::cmp::min(remaining, engine_mrt);
-
-            match tokio::time::timeout(effective_timeout, engine.scrape(&attempt_request)).await {
-                Ok(Ok(response)) => {
-                    let response_time = engine_start.elapsed();
-
-                    #[cfg(feature = "content")]
-                    let response = match self
-                        .record_antibot_failure(
-                            response,
-                            &request.url,
-                            engine_name,
-                            response_time,
-                            session_identity.as_ref(),
-                        )
-                        .await
-                    {
-                        Err(challenge_reason) => {
-                            last_error = Some(EngineError::AntiBotDetected(challenge_reason));
-                            force_needs_js = true;
-
-                            // 记录 AntiBot 失败到 tracker
-                            let reason = RetryReason::AntiBot;
-                            tracker.record(reason);
-                            last_reason = Some(reason);
-
-                            // 检查 tracker 上限（anti_bot cap=2）+ max_retries
-                            // 使用 should_stop_after_retry_check 消除重复（DRY）
-                            if self.should_stop_after_retry_check(
-                                &tracker,
-                                reason,
-                                total_attempts,
-                                max_retries,
-                            ) {
-                                return Err(last_error.unwrap_or_else(|| {
-                                    EngineError::AllEnginesFailed("Max retries reached".to_string())
-                                }));
-                            }
-                            continue;
-                        }
-                        Ok(resp) => resp,
-                    };
-
-                    // 流式 HTTP→Chrome 升级探测
-                    //
-                    // HTTP 引擎（needs_js==false）返回"成功"响应后，检查是否疑似 SPA 空壳。
-                    // 若 probe 判定 upgrade，将当前结果视为失败（不返回空壳给用户），
-                    // 以 needs_js=true 重新 route_internal 改派浏览器引擎（Playwright）渲染。
-                    //
-                    // 防递归：递归调用时 request.needs_js=true，attempt_request.needs_js=true，
-                    // 故 `!attempt_request.needs_js` 为 false，probe 检查自然跳过。
-                    if !attempt_request.needs_js {
-                        let verdict = check_js_upgrade_probe(&response);
-                        if verdict.upgrade {
-                            let mut js_request = request.clone();
-                            js_request.needs_js = true;
-
-                            // 死端预检：以 needs_js=true 重选引擎为空（部署未注册
-                            // 任何 JS-capable 引擎）时，递归只会返回
-                            // `No suitable engines available` 并丢弃这份已成功的响应。
-                            // probe 仅是启发式，此时降级返回原始响应：跳过本次 probe
-                            // 的失败记账，控制流落入下方成功收尾段（stats 成功记账 /
-                            // 熔断 record_success / host 纪律 / session Cookie 捕获
-                            // 均按成功语义原样执行）。
-                            if self.select_optimal_engines(&js_request).is_empty() {
-                                warn!(
-                                    "JS upgrade probe hit (score={}, reason={}) but no \
-                                     JS-capable engine is registered for the needs_js \
-                                     re-route; degrading to the original HTTP response \
-                                     for {}",
-                                    verdict.score, verdict.reason, request.url
-                                );
-                            } else {
-                                self.update_engine_stats(engine_name, false, response_time);
-                                self.metrics.record_engine_failure(
-                                    engine_name,
-                                    &format!("js-upgrade-probe: {}", verdict.reason),
-                                );
-                                debug!(
-                                    "Engine {} returned SPA shell (probe score={}, reason={}); \
-                                     re-routing with needs_js=true to dispatch browser engine",
-                                    engine_name, verdict.score, verdict.reason
-                                );
-                                return Box::pin(self.route_internal(&js_request)).await;
-                            }
-                        }
-                    }
-
-                    return self
-                        .finish_success(
-                            response,
-                            engine_name,
-                            response_time,
-                            start_time,
-                            host.as_deref(),
-                            session_identity.as_ref(),
-                        )
-                        .await;
-                }
-                Ok(Err(e)) => {
-                    let response_time = engine_start.elapsed();
-                    self.record_engine_error(engine_name, response_time, &e);
-
-                    if e.is_retryable() {
-                        self.circuit_breaker.record_failure(engine_name).await;
-
-                        // 记录失败原因到 tracker（在 e move 之前取 reason）
-                        let reason = e.retry_reason();
-                        tracker.record(reason);
-                        last_reason = Some(reason);
-
-                        // 检查 tracker 上限（AntiBot cap=2、FeatureToggle cap=3、total=5）+ max_retries
-                        // 使用 should_stop_after_retry_check 消除重复（DRY）
-                        if self.should_stop_after_retry_check(
-                            &tracker,
-                            reason,
-                            total_attempts,
-                            max_retries,
-                        ) {
-                            return Err(e);
-                        }
-
-                        warn!(
-                            "Engine {} failed with retryable error: {}, trying next engine \
-                             (reason={:?}, tracker total={})",
-                            engine_name,
-                            e,
-                            reason,
-                            tracker.total()
-                        );
-                        last_error = Some(e);
-                        continue;
-                    }
-
-                    warn!(
-                        "Engine {} failed with non-retryable error: {}",
-                        engine_name, e
-                    );
-                    // 指标口径对齐：提前终止路径同样累计 total/failed，
-                    // 否则 success_rate 分母缺失导致统计失真
-                    self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
-                    self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
-                    return Err(e);
-                }
-                Err(_elapsed) => {
-                    // MRT 瀑布式超时——`tokio::time::timeout` 在 effective_timeout 后
-                    // 取消 engine.scrape() future，进入此分支。
-                    //
-                    // 根据 effective_timeout 的来源区分两种语义：
-                    // - `effective_timeout == remaining`（remaining <= engine_mrt）：
-                    //   请求整体超时（剩余时间耗尽），返回 `EngineError::Timeout`。
-                    //   此时即使切下一引擎也无力回天，由上层 route_sequential 循环下轮
-                    //   的 `remaining.is_zero()` 检查兜底。
-                    // - `effective_timeout == engine_mrt`（engine_mrt < remaining）：
-                    //   真正的引擎 MRT 超时，返回 `EngineError::EngineMrtExceeded`，
-                    //   router 触发瀑布式 fallback 切下一引擎继续。
-                    //
-                    // 边界情况 `remaining == engine_mrt`：按 Timeout 处理（保守语义，
-                    // 避免误认为仍有剩余时间可 fallback）。
-                    let response_time = engine_start.elapsed();
-                    self.update_engine_stats(engine_name, false, response_time);
-
-                    let timeout_err = Self::mrt_timeout_error(
-                        engine_name,
-                        effective_timeout,
-                        engine_mrt,
-                        remaining,
-                    );
-
-                    self.metrics
-                        .record_engine_failure(engine_name, &timeout_err.to_string());
-
-                    self.circuit_breaker.record_failure(engine_name).await;
-
-                    let reason = timeout_err.retry_reason();
-                    tracker.record(reason);
-                    last_reason = Some(reason);
-
-                    if self.should_stop_after_retry_check(
-                        &tracker,
-                        reason,
-                        total_attempts,
-                        max_retries,
-                    ) {
-                        return Err(timeout_err);
-                    }
-
-                    last_error = Some(timeout_err);
-                    continue;
-                }
+            match self
+                .attempt_engine(engine, score, total_attempts, &context, &mut state)
+                .await
+            {
+                AttemptOutcome::Done(result) => return result,
+                AttemptOutcome::Retry => {}
             }
         }
 
@@ -330,5 +185,257 @@ impl EngineRouter {
         self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
         Err(last_error
             .unwrap_or_else(|| EngineError::AllEnginesFailed("All engines failed".to_string())))
+    }
+
+    /// 单引擎尝试：执行一次带 MRT 包裹的 scrape，并按结果更新重试状态。
+    async fn attempt_engine(
+        &self,
+        engine: Arc<dyn ScraperEngine>,
+        score: f64,
+        total_attempts: usize,
+        context: &AttemptContext<'_>,
+        state: &mut AttemptState<'_>,
+    ) -> AttemptOutcome {
+        let request = context.request;
+        let host = context.host;
+        let start_time = context.start_time;
+        let max_retries = context.max_retries;
+
+        let engine_name = engine.name();
+
+        self.metrics.record_engine_selection(engine_name);
+        self.metrics.record_attempt();
+
+        debug!(
+            "Trying engine {} with score {:.2} for request to {}",
+            engine_name, score, request.url
+        );
+
+        let remaining = request
+            .timeout
+            .checked_sub(start_time.elapsed())
+            .unwrap_or(Duration::from_millis(0));
+        if remaining.is_zero() {
+            return AttemptOutcome::Done(Err(EngineError::Timeout(request.timeout)));
+        }
+
+        let directive = self.compute_attempt_directive(total_attempts, *state.last_reason, host);
+
+        let (attempt_request, session_identity) = self.build_attempt_request(
+            request,
+            host,
+            directive,
+            total_attempts,
+            *state.force_needs_js,
+            remaining,
+        );
+
+        let engine_start = Instant::now();
+
+        // 瀑布式 MRT 超时包裹
+        //
+        // 单引擎调用以 `min(remaining, engine.max_response_time())` 包裹：
+        // - `remaining` = 请求整体剩余时间（request.timeout - 已耗时）
+        // - `mrt` = 引擎级最大响应时间（engine.max_response_time()）
+        //
+        // 取 min 确保：
+        // 1. remaining < mrt：请求整体超时优先（不浪费 MRT 配额）
+        // 2. mrt < remaining：超 MRT 即切下一引擎（瀑布式 fallback）
+        //
+        // race_mode 路径不受影响（保留作为可选模式，在 route_race_mode 中独立处理）。
+        let engine_mrt = engine.max_response_time();
+        let effective_timeout = std::cmp::min(remaining, engine_mrt);
+
+        match tokio::time::timeout(effective_timeout, engine.scrape(&attempt_request)).await {
+            Ok(Ok(response)) => {
+                let response_time = engine_start.elapsed();
+
+                #[cfg(feature = "content")]
+                let response = match self
+                    .record_antibot_failure(
+                        response,
+                        &request.url,
+                        engine_name,
+                        response_time,
+                        session_identity.as_ref(),
+                    )
+                    .await
+                {
+                    Err(challenge_reason) => {
+                        *state.last_error = Some(EngineError::AntiBotDetected(challenge_reason));
+                        *state.force_needs_js = true;
+
+                        // 记录 AntiBot 失败到 tracker
+                        let reason = RetryReason::AntiBot;
+                        state.tracker.record(reason);
+                        *state.last_reason = Some(reason);
+
+                        // 检查 tracker 上限（anti_bot cap=2）+ max_retries
+                        // 使用 should_stop_after_retry_check 消除重复（DRY）
+                        if self.should_stop_after_retry_check(
+                            state.tracker,
+                            reason,
+                            total_attempts,
+                            max_retries,
+                        ) {
+                            return AttemptOutcome::Done(Err(state
+                                .last_error
+                                .take()
+                                .unwrap_or_else(|| {
+                                    EngineError::AllEnginesFailed("Max retries reached".to_string())
+                                })));
+                        }
+                        return AttemptOutcome::Retry;
+                    }
+                    Ok(resp) => resp,
+                };
+
+                // 流式 HTTP→Chrome 升级探测
+                //
+                // HTTP 引擎（needs_js==false）返回"成功"响应后，检查是否疑似 SPA 空壳。
+                // 若 probe 判定 upgrade，将当前结果视为失败（不返回空壳给用户），
+                // 以 needs_js=true 重新 route_internal 改派浏览器引擎（Playwright）渲染。
+                //
+                // 防递归：递归调用时 request.needs_js=true，attempt_request.needs_js=true，
+                // 故 `!attempt_request.needs_js` 为 false，probe 检查自然跳过。
+                if !attempt_request.needs_js {
+                    let verdict = check_js_upgrade_probe(&response);
+                    if verdict.upgrade {
+                        let mut js_request = request.clone();
+                        js_request.needs_js = true;
+
+                        // 死端预检：以 needs_js=true 重选引擎为空（部署未注册
+                        // 任何 JS-capable 引擎）时，递归只会返回
+                        // `No suitable engines available` 并丢弃这份已成功的响应。
+                        // probe 仅是启发式，此时降级返回原始响应：跳过本次 probe
+                        // 的失败记账，控制流落入下方成功收尾段（stats 成功记账 /
+                        // 熔断 record_success / host 纪律 / session Cookie 捕获
+                        // 均按成功语义原样执行）。
+                        if self.select_optimal_engines(&js_request).is_empty() {
+                            warn!(
+                                "JS upgrade probe hit (score={}, reason={}) but no \
+                                 JS-capable engine is registered for the needs_js \
+                                 re-route; degrading to the original HTTP response \
+                                 for {}",
+                                verdict.score, verdict.reason, request.url
+                            );
+                        } else {
+                            self.update_engine_stats(engine_name, false, response_time);
+                            self.metrics.record_engine_failure(
+                                engine_name,
+                                &format!("js-upgrade-probe: {}", verdict.reason),
+                            );
+                            debug!(
+                                "Engine {} returned SPA shell (probe score={}, reason={}); \
+                                 re-routing with needs_js=true to dispatch browser engine",
+                                engine_name, verdict.score, verdict.reason
+                            );
+                            return AttemptOutcome::Done(
+                                Box::pin(self.route_internal(&js_request)).await,
+                            );
+                        }
+                    }
+                }
+
+                AttemptOutcome::Done(
+                    self.finish_success(
+                        response,
+                        engine_name,
+                        response_time,
+                        start_time,
+                        host,
+                        session_identity.as_ref(),
+                    )
+                    .await,
+                )
+            }
+            Ok(Err(e)) => {
+                let response_time = engine_start.elapsed();
+                self.record_engine_error(engine_name, response_time, &e);
+
+                if e.is_retryable() {
+                    self.circuit_breaker.record_failure(engine_name).await;
+
+                    // 记录失败原因到 tracker（在 e move 之前取 reason）
+                    let reason = e.retry_reason();
+                    state.tracker.record(reason);
+                    *state.last_reason = Some(reason);
+
+                    // 检查 tracker 上限（AntiBot cap=2、FeatureToggle cap=3、total=5）+ max_retries
+                    // 使用 should_stop_after_retry_check 消除重复（DRY）
+                    if self.should_stop_after_retry_check(
+                        state.tracker,
+                        reason,
+                        total_attempts,
+                        max_retries,
+                    ) {
+                        return AttemptOutcome::Done(Err(e));
+                    }
+
+                    warn!(
+                        "Engine {} failed with retryable error: {}, trying next engine \
+                         (reason={:?}, tracker total={})",
+                        engine_name,
+                        e,
+                        reason,
+                        state.tracker.total()
+                    );
+                    *state.last_error = Some(e);
+                    return AttemptOutcome::Retry;
+                }
+
+                warn!(
+                    "Engine {} failed with non-retryable error: {}",
+                    engine_name, e
+                );
+                // 指标口径对齐：提前终止路径同样累计 total/failed，
+                // 否则 success_rate 分母缺失导致统计失真
+                self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+                self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
+                AttemptOutcome::Done(Err(e))
+            }
+            Err(_elapsed) => {
+                // MRT 瀑布式超时——`tokio::time::timeout` 在 effective_timeout 后
+                // 取消 engine.scrape() future，进入此分支。
+                //
+                // 根据 effective_timeout 的来源区分两种语义：
+                // - `effective_timeout == remaining`（remaining <= engine_mrt）：
+                //   请求整体超时（剩余时间耗尽），返回 `EngineError::Timeout`。
+                //   此时即使切下一引擎也无力回天，由上层 route_sequential 循环下轮
+                //   的 `remaining.is_zero()` 检查兜底。
+                // - `effective_timeout == engine_mrt`（engine_mrt < remaining）：
+                //   真正的引擎 MRT 超时，返回 `EngineError::EngineMrtExceeded`，
+                //   router 触发瀑布式 fallback 切下一引擎继续。
+                //
+                // 边界情况 `remaining == engine_mrt`：按 Timeout 处理（保守语义，
+                // 避免误认为仍有剩余时间可 fallback）。
+                let response_time = engine_start.elapsed();
+                self.update_engine_stats(engine_name, false, response_time);
+
+                let timeout_err =
+                    Self::mrt_timeout_error(engine_name, effective_timeout, engine_mrt, remaining);
+
+                self.metrics
+                    .record_engine_failure(engine_name, &timeout_err.to_string());
+
+                self.circuit_breaker.record_failure(engine_name).await;
+
+                let reason = timeout_err.retry_reason();
+                state.tracker.record(reason);
+                *state.last_reason = Some(reason);
+
+                if self.should_stop_after_retry_check(
+                    state.tracker,
+                    reason,
+                    total_attempts,
+                    max_retries,
+                ) {
+                    return AttemptOutcome::Done(Err(timeout_err));
+                }
+
+                *state.last_error = Some(timeout_err);
+                AttemptOutcome::Retry
+            }
+        }
     }
 }

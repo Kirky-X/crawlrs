@@ -210,58 +210,60 @@ fn classify_sitemap_status(status: u16) -> Option<Result<SitemapStream, MapError
 /// 才能在通道满时安全等待消费方 `recv`，不会因接收端尚未交付而永久阻塞。
 #[cfg(feature = "sitemap")]
 fn spawn_loc_stream(xml: String, channel_capacity: usize) -> SitemapStream {
-    use quick_xml::events::Event;
-
     let kind = if is_sitemap_index(&xml) {
         SitemapKind::SitemapIndex
     } else {
         SitemapKind::Urlset
     };
     let (tx, rx) = tokio::sync::mpsc::channel(channel_capacity.max(1));
-    tokio::spawn(async move {
-        let mut reader = quick_xml::Reader::from_str(&xml);
-        let mut in_loc = false;
-        let mut loc_text = String::new();
-        loop {
-            match reader.read_event() {
-                Ok(Event::Start(e)) => {
-                    let name = e.name().local_name();
-                    if name.as_ref().eq_ignore_ascii_case("loc") {
-                        in_loc = true;
-                        loc_text.clear();
-                    }
-                }
-                Ok(Event::Text(t)) if in_loc => {
-                    match quick_xml::escape::unescape(&t.xml10_content()) {
-                        Ok(unescaped) => loc_text.push_str(&unescaped),
-                        Err(e) => {
-                            log::warn!("sitemap loc entity unescape failed: {e}");
-                        }
-                    }
-                }
-                Ok(Event::End(e)) => {
-                    if in_loc && e.name().local_name().as_ref().eq_ignore_ascii_case("loc") {
-                        in_loc = false;
-                        let loc = loc_text.trim();
-                        if !loc.is_empty() && tx.send(loc.to_string()).await.is_err() {
-                            // 消费端已关闭：停止解析
-                            break;
-                        }
-                    }
-                }
-                Ok(Event::Eof) => break,
-                Ok(_) => {}
-                Err(e) => {
-                    log::warn!(
-                        "sitemap XML parse error: {e}; keeping partial results already produced"
-                    );
-                    break;
-                }
-            }
-        }
-    });
+    tokio::spawn(stream_loc_events(xml, tx));
 
     SitemapStream { kind, rx }
+}
+
+/// 解析循环任务体：遇 `<loc>` 即 `send`，通道满即 await（背压）。
+#[cfg(feature = "sitemap")]
+async fn stream_loc_events(xml: String, tx: tokio::sync::mpsc::Sender<String>) {
+    use quick_xml::events::Event;
+
+    let mut reader = quick_xml::Reader::from_str(&xml);
+    let mut in_loc = false;
+    let mut loc_text = String::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = e.name().local_name();
+                if name.as_ref().eq_ignore_ascii_case("loc") {
+                    in_loc = true;
+                    loc_text.clear();
+                }
+            }
+            Ok(Event::Text(t)) if in_loc => match quick_xml::escape::unescape(&t.xml10_content()) {
+                Ok(unescaped) => loc_text.push_str(&unescaped),
+                Err(e) => {
+                    log::warn!("sitemap loc entity unescape failed: {e}");
+                }
+            },
+            Ok(Event::End(e)) => {
+                if in_loc && e.name().local_name().as_ref().eq_ignore_ascii_case("loc") {
+                    in_loc = false;
+                    let loc = loc_text.trim();
+                    if !loc.is_empty() && tx.send(loc.to_string()).await.is_err() {
+                        // 消费端已关闭：停止解析
+                        break;
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!(
+                    "sitemap XML parse error: {e}; keeping partial results already produced"
+                );
+                break;
+            }
+        }
+    }
 }
 
 /// `/v1/map` 结果
@@ -303,31 +305,39 @@ impl MapUseCase {
         let mut locs = parse_locs(&first.body);
         if is_sitemap_index(&first.body) {
             // 递归一层：取前 MAX_SUB_SITEMAPS 个子 sitemap 展开
-            let children: Vec<String> = locs.iter().take(MAX_SUB_SITEMAPS).cloned().collect();
-            locs.clear();
-            for child in children {
-                // 连接级瞬态错误（如 keep-alive 连接被对端关闭）与 ≥400 状态各重试一次
-                // （4xx/5xx 也可能瞬态：网关抖动；404 已在上方转为空流）；仍失败则按既有
-                // 语义放弃该子 sitemap 的内容（不计为整体失败）
-                let fetched = match self.fetcher.fetch(&child).await {
-                    Ok(f) => Some(f),
-                    // 连接级瞬态错误 / ≥400 状态重试一次（ok 语义：仍失败则放弃该子 sitemap）
-                    Err(MapError::TargetUnreachable(_)) | Err(MapError::SitemapStatus(_)) => {
-                        self.fetcher.fetch(&child).await.ok()
-                    }
-                    Err(e) => return Err(e),
-                };
-                if let Some(fetched) = fetched {
-                    if fetched.status == 200 {
-                        locs.extend(parse_locs(&fetched.body));
-                    }
-                }
-            }
+            locs = self.expand_sitemap_index(locs).await?;
         }
 
         Ok(MapResult {
             links: finalize_links(locs, dto),
         })
+    }
+
+    /// 递归一层展开 sitemap index：取前 [`MAX_SUB_SITEMAPS`] 个子 sitemap，
+    /// 子 sitemap 瞬态错误或 ≥400 状态重试一次，仍失败则放弃该子 sitemap
+    async fn expand_sitemap_index(&self, mut locs: Vec<String>) -> Result<Vec<String>, MapError> {
+        let children: Vec<String> = locs.iter().take(MAX_SUB_SITEMAPS).cloned().collect();
+        locs.clear();
+        for child in children {
+            // 连接级瞬态错误（如 keep-alive 连接被对端关闭）与 ≥400 状态各重试一次
+            // （4xx/5xx 也可能瞬态：网关抖动；404 已在上方转为空流）；仍失败则按既有
+            // 语义放弃该子 sitemap 的内容（不计为整体失败）
+            let fetched = match self.fetcher.fetch(&child).await {
+                Ok(f) => Some(f),
+                // 连接级瞬态错误 / ≥400 状态重试一次（ok 语义：仍失败则放弃该子 sitemap）
+                Err(MapError::TargetUnreachable(_)) | Err(MapError::SitemapStatus(_)) => {
+                    self.fetcher.fetch(&child).await.ok()
+                }
+                Err(e) => return Err(e),
+            };
+            if let Some(fetched) = fetched {
+                if fetched.status == 200 {
+                    locs.extend(parse_locs(&fetched.body));
+                }
+            }
+        }
+
+        Ok(locs)
     }
 
     /// 流式执行（F11：sitemap 一等请求源的产出口）

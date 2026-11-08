@@ -548,7 +548,9 @@ fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> 
         engine_client: Arc::new(EngineClient::new()),
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase),
         team_semaphore: Arc::new(TeamSemaphore::new(10)),
-        request_coalescer: Arc::new(crawlrs::utils::coalesce::RequestCoalescer::new()),
+        request_coalescer: Arc::new(
+            crawlrs::workers::coalesce_coordinator::RequestCoalescer::new(),
+        ),
         robots_checker: Arc::new(MockRobotsChecker),
         http_client: Arc::new(reqwest::Client::new()),
         extraction_service: Arc::new(MockExtractionService),

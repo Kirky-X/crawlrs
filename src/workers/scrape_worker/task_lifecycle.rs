@@ -148,46 +148,94 @@ impl ScrapeWorker {
         let mut extracted_data = None;
         if let Some(req) = parsed_req {
             if let Some(rules) = &req.extraction_rules {
-                match self
-                    .extraction_service
-                    .extract(content, rules, Some(&task.url))
-                    .await
-                {
-                    Ok((data, usage)) => {
-                        extracted_data = Some(data);
-                        // Record usage (PRD-334: Tokens Billing) — 扣费延后至守卫胜利后
-                        self.record_extraction_usage(task, usage, &mut pending_token_usages);
-                    }
-                    Err(e) => {
-                        error!("Extraction failed for url {}: {}", task.url, e);
-                    }
-                }
+                extracted_data = self
+                    .try_rule_extraction(task, content, rules, &mut pending_token_usages)
+                    .await;
             } else if let Some(prompt) = &req.extraction_prompt {
                 // extraction_prompt 为空字符串时视为未设置
                 if !prompt.is_empty() {
-                    match self.extract_with_prompt(content, prompt, &task.url).await {
-                        Ok((data, usage)) => {
-                            extracted_data = Some(data);
-                            self.record_extraction_usage(task, usage, &mut pending_token_usages);
-                        }
-                        Err(e) => {
-                            error!("Prompt extraction failed for url {}: {}", task.url, e);
-                        }
-                    }
+                    extracted_data = self
+                        .try_prompt_extraction(task, content, prompt, &mut pending_token_usages)
+                        .await;
                 }
             } else if let Some(schema) = &req.extraction_schema {
-                match self.extract_with_schema(content, schema).await {
-                    Ok((data, usage)) => {
-                        extracted_data = Some(data);
-                        self.record_extraction_usage(task, usage, &mut pending_token_usages);
-                    }
-                    Err(e) => {
-                        error!("Schema extraction failed for url {}: {}", task.url, e);
-                    }
-                }
+                extracted_data = self
+                    .try_schema_extraction(task, content, schema, &mut pending_token_usages)
+                    .await;
             }
         }
         (extracted_data, pending_token_usages)
+    }
+
+    /// extraction_rules 路径（自 [`ScrapeWorker::run_extraction_stage`] 提取）
+    async fn try_rule_extraction(
+        &self,
+        task: &Task,
+        content: &str,
+        rules: &std::collections::HashMap<
+            String,
+            crate::domain::services::extraction_service::ExtractionRule,
+        >,
+        pending_token_usages: &mut Vec<crate::domain::services::llm::TokenUsage>,
+    ) -> Option<Value> {
+        let mut extracted_data = None;
+        match self
+            .extraction_service
+            .extract(content, rules, Some(&task.url))
+            .await
+        {
+            Ok((data, usage)) => {
+                extracted_data = Some(data);
+                // Record usage (PRD-334: Tokens Billing) — 扣费延后至守卫胜利后
+                self.record_extraction_usage(task, usage, pending_token_usages);
+            }
+            Err(e) => {
+                error!("Extraction failed for url {}: {}", task.url, e);
+            }
+        }
+        extracted_data
+    }
+
+    /// extraction_prompt 路径（自 [`ScrapeWorker::run_extraction_stage`] 提取）
+    async fn try_prompt_extraction(
+        &self,
+        task: &Task,
+        content: &str,
+        prompt: &str,
+        pending_token_usages: &mut Vec<crate::domain::services::llm::TokenUsage>,
+    ) -> Option<Value> {
+        let mut extracted_data = None;
+        match self.extract_with_prompt(content, prompt, &task.url).await {
+            Ok((data, usage)) => {
+                extracted_data = Some(data);
+                self.record_extraction_usage(task, usage, pending_token_usages);
+            }
+            Err(e) => {
+                error!("Prompt extraction failed for url {}: {}", task.url, e);
+            }
+        }
+        extracted_data
+    }
+
+    /// extraction_schema 路径（自 [`ScrapeWorker::run_extraction_stage`] 提取）
+    async fn try_schema_extraction(
+        &self,
+        task: &Task,
+        content: &str,
+        schema: &Value,
+        pending_token_usages: &mut Vec<crate::domain::services::llm::TokenUsage>,
+    ) -> Option<Value> {
+        let mut extracted_data = None;
+        match self.extract_with_schema(content, schema).await {
+            Ok((data, usage)) => {
+                extracted_data = Some(data);
+                self.record_extraction_usage(task, usage, pending_token_usages);
+            }
+            Err(e) => {
+                error!("Schema extraction failed for url {}: {}", task.url, e);
+            }
+        }
+        extracted_data
     }
 
     /// 记录单次提取的 token 用量（自 [`ScrapeWorker::handle_scrape_success`] 提取）
