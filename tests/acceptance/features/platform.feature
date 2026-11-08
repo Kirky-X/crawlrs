@@ -52,7 +52,32 @@ Feature: Platform capabilities
     When I POST "/v1/tasks/_query" with an empty body
     Then the response status is 200 or 422
 
+  Scenario: Batch cancel via tasks endpoint
+    # 契约：POST /v1/tasks/_cancel 批量取消（TaskCancelRequestDto.task_ids 必填），
+    # 返回 data.cancelled_tasks 数组与 data.total_cancelled 计数
+    Given an admin API key
+    When I create a scrape at "/v1/scrape" for "{mock_base}/page"
+    And I store response JSON field "data.id" as "task_a"
+    And I create a scrape at "/v1/scrape" for "{mock_base}/fail"
+    And I store response JSON field "data.id" as "task_b"
+    And I cancel tasks from context "task_a" and "task_b" at "/v1/tasks/_cancel"
+    Then the response status is 200
+    And the response JSON pointer "/data/cancelled_tasks" is an array of length 2
+    And the response JSON field "data.total_cancelled" is a non-empty string or number
+
   Scenario: Regular key cannot access admin api-keys endpoint
     Given a regular API key signed via admin endpoint
     When I sign a regular API key with scopes "read"
     Then the response status is 403
+
+  Scenario: Audit denied requests are listable
+    Given an admin API key
+    When I GET "/v1/audit/denied"
+    Then the response status is 200
+    And the response JSON field "success" is true
+
+  Scenario: SearXNG endpoints return 503 while disabled
+    # 契约：search.searxng.enabled=false（默认）时实例端点统一 503 SERVICE_UNAVAILABLE
+    Given an admin API key
+    When I GET "/v1/searxng/pool"
+    Then the response status is 503

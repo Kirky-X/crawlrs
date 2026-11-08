@@ -12,11 +12,11 @@ Feature: Extract
   HTML 数据提取端点正常流与异常矩阵
 
   Scenario: Extract data from a mock page
-    # 契约：POST /v1/extract 创建异步任务，返回 {id, status:"pending"}（200/201）；
+    # 契约：POST /v1/extract 创建异步任务（默认 5s 同步等待，超窗 202 Accepted）；
     # 结果经 GET /v1/scrape/{id} 轮询（任务通用查询）
     Given an admin API key
     When I extract url "{mock_base}/page" at "/v1/extract"
-    Then the response status is 200 or 201
+    Then the response status is one of "200,201,202"
     And the response JSON field "data.status" is "pending"
     And the response JSON field "data.id" is a non-empty string
 
@@ -29,3 +29,9 @@ Feature: Extract
     Given an admin API key
     When I POST "/v1/extract" with an empty body
     Then the response status is 422
+
+  Scenario: sync_wait_ms above the maximum is rejected with 400
+    # 契约：sync_wait_ms > 30000 由 handler 手动校验（晚于 SSRF、早于任务创建）→ 400
+    Given an admin API key
+    When I extract url "{mock_base}/page" at "/v1/extract" with sync wait ms 30001
+    Then the response status is 400

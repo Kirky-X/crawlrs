@@ -47,3 +47,18 @@ Feature: Scrape lifecycle
     And I GET the task detail at "/v1/scrape"
     Then the response status is 200
     And the response JSON field "data.status" is "completed"
+
+  Scenario: Cancel a created scrape task
+    # 契约：mark_cancelled 为无条件 UPDATE（无状态前置校验），任何自有任务取消 → 200
+    Given an admin API key
+    When I create a scrape at "/v1/scrape" for "{mock_base}/page"
+    Then the response status is 201
+    When I store response JSON field "data.id" as "task_id"
+    And I POST template "/v1/scrape/{task_id}/_cancel"
+    Then the response status is 200
+    And the response JSON field "success" is true
+
+  Scenario: Cancel unknown scrape id returns 404
+    Given an admin API key
+    When I POST "/v1/scrape/00000000-0000-0000-0000-000000000000/_cancel" with an empty body
+    Then the response status is 404

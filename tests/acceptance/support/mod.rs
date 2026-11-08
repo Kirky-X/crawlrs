@@ -128,7 +128,7 @@ async fn start_mock_sitemap_site() -> wiremock::MockServer {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let server = MockServer::start().await;
-    // 根 sitemap：3 loc，其中 1 个匹配 */blog/*
+    // 根 sitemap：3 loc，其中 2 个匹配 */blog/*（include 得 2 条 / exclude 剩 1 条）
     Mock::given(method("GET"))
         .and(path("/sitemap.xml"))
         .respond_with(ResponseTemplate::new(200).set_body_string(

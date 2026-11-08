@@ -5,7 +5,7 @@
 
 # R-map-001~004：/v1/map 验收
 # sitemap 由 support 的 4 个专用 wiremock 站提供：
-#   {sitemap_base}  → 3 loc 根 sitemap（含 1 个 */blog/*）
+#   {sitemap_base}  → 3 loc 根 sitemap（2 个匹配 */blog/*，exclude 后剩 1 条）
 #   {index_base}    → index（2 子 sitemap 共 5 loc）
 #   {site404}       → 任意 GET 404（缺 sitemap）
 #   {site500}       → 任意 GET 500（目标不可达）
@@ -61,3 +61,10 @@ Feature: Map endpoint
     Given no API key
     When I map "{sitemap_base}/page"
     Then the response status is 401
+
+  Scenario: Map with exclude pattern filters links
+    # 契约：根 sitemap 3 loc（2 个匹配 */blog/*），exclude 后剩 1 条
+    Given an admin API key
+    When I map "{sitemap_base}/page" excluding "*/blog/*"
+    Then the response status is 200
+    And the response JSON pointer "/data/links" is an array of length 1

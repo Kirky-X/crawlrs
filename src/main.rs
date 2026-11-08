@@ -14,6 +14,8 @@ enum ServiceType {
 /// Pure function extracted from `from_args` for testability.
 /// - `Some("api")` or `None` → `Ok(ServiceType::Api)`
 /// - `Some("worker")` → `Ok(ServiceType::Worker)`
+/// - `Some("bootstrap")` → `Ok(ServiceType::Bootstrap)`
+/// - `Some("migrate")` → `Ok(ServiceType::Migrate)`
 /// - Other values → `Err` with descriptive message
 fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
     let service_type = arg.unwrap_or("api");
@@ -618,6 +620,12 @@ mod tests {
     fn tc_parse_service_type_migrate() {
         let result = parse_service_type(Some("migrate"));
         assert!(matches!(result, Ok(ServiceType::Migrate)));
+    }
+
+    #[test]
+    fn tc_parse_service_type_bootstrap() {
+        let result = parse_service_type(Some("bootstrap"));
+        assert!(matches!(result, Ok(ServiceType::Bootstrap)));
     }
 
     #[test]

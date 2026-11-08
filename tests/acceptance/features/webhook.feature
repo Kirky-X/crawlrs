@@ -13,7 +13,7 @@ Feature: Webhook delivery end-to-end
     When I create a scrape at "/v1/scrape" for "{mock_base}/page" with webhook "{mock_base}/hook"
     Then the response status is 201
     When I wait for scrape "/v1/scrape" to complete within 30 seconds
-    And I wait at most 20 seconds for a webhook delivery to "/hook"
+    And I wait at most 20 seconds for a webhook delivery to "/hook" for task from context "task_id"
     Then the delivery has non-empty headers "webhook-id,webhook-timestamp,webhook-signature"
     And the delivery signature verifies with the test secret
     And the delivery body JSON contains the task id from context "task_id"
