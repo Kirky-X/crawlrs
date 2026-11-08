@@ -193,6 +193,52 @@ impl PooledPage {
             instance.release().await;
         }
     }
+
+    /// 复用页 Drop 归还（自 [`Drop::drop`] 提取）：runtime 可用时 spawn
+    /// [`TabPool::release`] task；runtime 不可用（如 shutdown 中）直接 drop Page。
+    fn spawn_tab_return(tab_pool: Arc<TabPool>, page: Page) {
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    tab_pool.release(page).await;
+                });
+            }
+            Err(_) => {
+                // runtime 不可用（如 shutdown 中），Page 直接 drop（关闭 tab）
+                debug!("tokio runtime unavailable, dropping Page directly");
+            }
+        }
+    }
+
+    /// 隔离页 Drop 清理（自 [`Drop::drop`] 提取）：spawn 清理 task 先销毁
+    /// context 再归还 Browser；runtime 不可用时返回 `Some(instance)`，由调用方
+    /// 放回字段走自身 Drop 经 return channel 归还。
+    fn spawn_context_cleanup(
+        context_id: BrowserContextId,
+        instance: BrowserInstance,
+    ) -> Option<BrowserInstance> {
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    let browser = instance.browser().clone();
+                    if let Err(e) = browser.dispose_browser_context(context_id).await {
+                        error!("Failed to dispose browser context on drop: {}", e);
+                    }
+                    instance.release().await;
+                });
+                None
+            }
+            Err(_) => {
+                // runtime 不可用：context 销毁只能放弃（浏览器进程退出时回收）。
+                // BrowserInstance 放回字段走自身 Drop 经 return channel 归还，
+                // 避免信号量 permit 泄漏导致池容量收缩。
+                error!(
+                    "tokio runtime unavailable, isolated browser context cannot be disposed; context may leak until browser exits"
+                );
+                Some(instance)
+            }
+        }
+    }
 }
 
 impl Drop for PooledPage {
@@ -202,42 +248,17 @@ impl Drop for PooledPage {
         if let Some(page) = self.page.take() {
             if let Some(tab_pool) = self.tab_pool.clone() {
                 // 尝试在当前 runtime spawn 归还 task
-                match tokio::runtime::Handle::try_current() {
-                    Ok(handle) => {
-                        handle.spawn(async move {
-                            tab_pool.release(page).await;
-                        });
-                    }
-                    Err(_) => {
-                        // runtime 不可用（如 shutdown 中），Page 直接 drop（关闭 tab）
-                        debug!("tokio runtime unavailable, dropping Page directly");
-                    }
-                }
+                Self::spawn_tab_return(tab_pool, page);
             }
         }
         // 2. 隔离页：Drop 无法 await dispose——spawn 清理 task 先销毁 context
         // 再归还 Browser，保证早退/panic/超时路径不泄漏 context
         if let Some(context_id) = self.context_id.take() {
             if let Some(instance) = self.browser_instance.take() {
-                match tokio::runtime::Handle::try_current() {
-                    Ok(handle) => {
-                        handle.spawn(async move {
-                            let browser = instance.browser().clone();
-                            if let Err(e) = browser.dispose_browser_context(context_id).await {
-                                error!("Failed to dispose browser context on drop: {}", e);
-                            }
-                            instance.release().await;
-                        });
-                    }
-                    Err(_) => {
-                        // runtime 不可用：context 销毁只能放弃（浏览器进程退出时回收）。
-                        // BrowserInstance 放回字段走自身 Drop 经 return channel 归还，
-                        // 避免信号量 permit 泄漏导致池容量收缩。
-                        error!(
-                            "tokio runtime unavailable, isolated browser context cannot be disposed; context may leak until browser exits"
-                        );
-                        self.browser_instance = Some(instance);
-                    }
+                // runtime 不可用时 helper 把 instance 交回，放回字段由其自身 Drop
+                // 经 return channel 归还
+                if let Some(instance) = Self::spawn_context_cleanup(context_id, instance) {
+                    self.browser_instance = Some(instance);
                 }
             }
         }

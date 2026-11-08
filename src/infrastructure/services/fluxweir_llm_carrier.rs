@@ -90,6 +90,60 @@ impl FluxweirLlmCarrier {
             response.usage.total_tokens,
         )
     }
+
+    /// 分块提取：对单个块发 SDK 请求并解析结果
+    /// （供 `extract_data_chunked` 的 'static 闭包转发）。
+    async fn extract_one_chunk(
+        client: &fluxweir::sdk::FluxweirClient,
+        model: &str,
+        templates: &HashMap<String, String>,
+        schema_json: &str,
+        format: &str,
+        chunk_text: &str,
+    ) -> Result<(Value, TokenUsage)> {
+        let template = templates
+            .get(format)
+            .ok_or_else(|| anyhow!("no prompt template registered for format \"{format}\""))?;
+        let prompt = build_prompt(
+            template,
+            chunk_text,
+            &serde_json::from_str::<Value>(schema_json)?,
+        )?;
+        let response = client
+            .chat(&fluxweir::sdk::ChatRequest::new(model, &prompt))
+            .await
+            .map_err(|e| anyhow!("fluxweir chat request failed: {e}"))?;
+        parse_chat_payload(
+            &response.content,
+            format,
+            response.usage.prompt_tokens,
+            response.usage.completion_tokens,
+            response.usage.total_tokens,
+        )
+    }
+
+    /// 分块提取：合并多块结果
+    /// （供 `extract_data_chunked` 的 'static 闭包转发）。
+    async fn merge_chunk_results(
+        client: &fluxweir::sdk::FluxweirClient,
+        model: &str,
+        schema_json: &str,
+        format: &str,
+        merge_json: &str,
+    ) -> Result<(Value, TokenUsage)> {
+        let prompt = merge_prompt(merge_json, schema_json);
+        let response = client
+            .chat(&fluxweir::sdk::ChatRequest::new(model, &prompt))
+            .await
+            .map_err(|e| anyhow!("fluxweir merge request failed: {e}"))?;
+        parse_chat_payload(
+            &response.content,
+            format,
+            response.usage.prompt_tokens,
+            response.usage.completion_tokens,
+            response.usage.total_tokens,
+        )
+    }
 }
 
 /// SDK 响应 → 提取结果与 usage 的纯映射（独立函数承载单测：
@@ -165,25 +219,15 @@ impl LLMServiceTrait for FluxweirLlmCarrier {
             let schema_json = extract_schema.clone();
             let format = extract_format.clone();
             async move {
-                let template = templates.get(&format).ok_or_else(|| {
-                    anyhow!("no prompt template registered for format \"{format}\"")
-                })?;
-                let prompt = build_prompt(
-                    template,
-                    &chunk_text,
-                    &serde_json::from_str::<Value>(&schema_json)?,
-                )?;
-                let response = client
-                    .chat(&fluxweir::sdk::ChatRequest::new(&model, &prompt))
-                    .await
-                    .map_err(|e| anyhow!("fluxweir chat request failed: {e}"))?;
-                parse_chat_payload(
-                    &response.content,
+                Self::extract_one_chunk(
+                    &client,
+                    &model,
+                    &templates,
+                    &schema_json,
                     &format,
-                    response.usage.prompt_tokens,
-                    response.usage.completion_tokens,
-                    response.usage.total_tokens,
+                    &chunk_text,
                 )
+                .await
             }
         };
 
@@ -197,18 +241,7 @@ impl LLMServiceTrait for FluxweirLlmCarrier {
             let schema_json = merge_schema.clone();
             let format = merge_format.clone();
             async move {
-                let prompt = merge_prompt(&merge_json, &schema_json);
-                let response = client
-                    .chat(&fluxweir::sdk::ChatRequest::new(&model, &prompt))
-                    .await
-                    .map_err(|e| anyhow!("fluxweir merge request failed: {e}"))?;
-                parse_chat_payload(
-                    &response.content,
-                    &format,
-                    response.usage.prompt_tokens,
-                    response.usage.completion_tokens,
-                    response.usage.total_tokens,
-                )
+                Self::merge_chunk_results(&client, &model, &schema_json, &format, &merge_json).await
             }
         };
 

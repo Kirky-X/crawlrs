@@ -235,16 +235,7 @@ impl RedirectValidator {
             .to_lowercase();
 
         // Same-host validation
-        if let RedirectPolicy::SameHostOnly { .. } = self.policy {
-            if let Some(ref original) = self.original_host {
-                if &redirect_host != original {
-                    return Err(SsrfError::ValidationFailed(format!(
-                        "Cross-host redirect not allowed: {} -> {}",
-                        original, redirect_host
-                    )));
-                }
-            }
-        }
+        self.ensure_same_host(&redirect_host)?;
 
         // Redirect loop detection
         if self.redirect_chain.contains(&redirect_url.to_string()) {
@@ -258,6 +249,21 @@ impl RedirectValidator {
         self.visited_hosts.insert(redirect_host.clone());
         self.redirect_chain.push(redirect_url.to_string());
 
+        Ok(())
+    }
+
+    /// `SameHostOnly` 策略下的同主机校验（自 [`Self::validate`] 提取）。
+    fn ensure_same_host(&self, redirect_host: &str) -> Result<(), SsrfError> {
+        if let RedirectPolicy::SameHostOnly { .. } = self.policy {
+            if let Some(ref original) = self.original_host {
+                if original.as_str() != redirect_host {
+                    return Err(SsrfError::ValidationFailed(format!(
+                        "Cross-host redirect not allowed: {} -> {}",
+                        original, redirect_host
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 

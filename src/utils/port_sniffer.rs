@@ -69,28 +69,42 @@ impl PortSniffer {
 
         // 如果未启用检测功能，直接检查起始端口
         if !enable_detection {
-            if Self::is_port_in_use(start_port) {
-                logs.push(format!(
-                    "Port {} is in use and auto-sniffing is not enabled",
-                    start_port
-                ));
-                warn!(
-                    "Port {} is in use and auto-sniffing is not enabled",
-                    start_port
-                );
-                return Ok(PortSnifferResult {
-                    success: true,
-                    port: start_port,
-                    logs,
-                });
-            }
-            return Ok(PortSnifferResult {
+            return Ok(Self::resolve_fixed_port(start_port, logs));
+        }
+
+        Self::scan_ports(start_port, max_attempts, logs)
+    }
+
+    /// 未启用自动嗅探时直接使用起始端口（自 [`PortSniffer::find_available_port`] 提取）。
+    fn resolve_fixed_port(start_port: u16, mut logs: Vec<String>) -> PortSnifferResult {
+        if Self::is_port_in_use(start_port) {
+            logs.push(format!(
+                "Port {} is in use and auto-sniffing is not enabled",
+                start_port
+            ));
+            warn!(
+                "Port {} is in use and auto-sniffing is not enabled",
+                start_port
+            );
+            return PortSnifferResult {
                 success: true,
                 port: start_port,
                 logs,
-            });
+            };
         }
+        PortSnifferResult {
+            success: true,
+            port: start_port,
+            logs,
+        }
+    }
 
+    /// 从起始端口向后扫描可用端口（自 [`PortSniffer::find_available_port`] 提取）。
+    fn scan_ports(
+        start_port: u16,
+        max_attempts: u16,
+        mut logs: Vec<String>,
+    ) -> Result<PortSnifferResult, PortSnifferError> {
         let mut current_port = start_port;
         let mut attempts = 0;
 

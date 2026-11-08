@@ -151,8 +151,42 @@ pub async fn readiness_check(
     use axum::http::StatusCode;
 
     let mut details = serde_json::Map::new();
-    let mut all_ready = true;
 
+    let (db_ready, db_status) = check_database(&db_pool).await;
+    details.insert("database".to_string(), db_status);
+
+    let (cache_ready, cache_status) = check_cache(&cache_service).await;
+    details.insert("cache".to_string(), cache_status);
+
+    // 连接池结构化健康快照（吸收自研 dbnexus `health-check`）
+    //
+    // `SELECT 1` 验证真实连通性；快照补充池视角（容量/空闲/等待等），
+    // 仅作诊断信息附加，不影响就绪判定（快照失败不阻断响应）。
+    details.insert(
+        "database_pool".to_string(),
+        database_pool_snapshot(&db_pool).await,
+    );
+
+    let all_ready = db_ready && cache_ready;
+    let status = if all_ready { "ready" } else { "not_ready" };
+    let status_code = if all_ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        status_code,
+        Json(json!({
+            "status": status,
+            "checks": details,
+            "version": env!("CARGO_PKG_VERSION"),
+        })),
+    )
+}
+
+/// PostgreSQL 就绪检查（`SELECT 1`，3 秒超时；自 [`readiness_check`] 提取）。
+async fn check_database(db_pool: &Arc<DbPool>) -> (bool, serde_json::Value) {
     let db_check = async {
         let session = db_pool
             .get_session("system")
@@ -165,21 +199,23 @@ pub async fn readiness_check(
         Ok::<_, String>(())
     };
 
-    let db_status = match tokio::time::timeout(Duration::from_secs(3), db_check).await {
-        Ok(Ok(())) => json!({"status": "up"}),
+    match tokio::time::timeout(Duration::from_secs(3), db_check).await {
+        Ok(Ok(())) => (true, json!({"status": "up"})),
         Ok(Err(e)) => {
-            all_ready = false;
             log::warn!("Readiness check: PostgreSQL down - {e}");
-            json!({"status": "down", "error": e})
+            (false, json!({"status": "down", "error": e}))
         }
         Err(_) => {
-            all_ready = false;
             log::warn!("Readiness check: PostgreSQL timeout (3s)");
-            json!({"status": "down", "error": "timeout"})
+            (false, json!({"status": "down", "error": "timeout"}))
         }
-    };
-    details.insert("database".to_string(), db_status);
+    }
+}
 
+/// 缓存就绪检查（`get("__readiness_probe__")`，1 秒超时；自 [`readiness_check`] 提取）。
+async fn check_cache(
+    cache_service: &Arc<dyn crate::infrastructure::oxcache::CacheService>,
+) -> (bool, serde_json::Value) {
     let cache_check = async {
         cache_service
             .get("__readiness_probe__")
@@ -188,25 +224,21 @@ pub async fn readiness_check(
         Ok::<_, String>(())
     };
 
-    let cache_status = match tokio::time::timeout(Duration::from_secs(1), cache_check).await {
-        Ok(Ok(())) => json!({"status": "up"}),
+    match tokio::time::timeout(Duration::from_secs(1), cache_check).await {
+        Ok(Ok(())) => (true, json!({"status": "up"})),
         Ok(Err(e)) => {
-            all_ready = false;
             log::warn!("Readiness check: cache down - {e}");
-            json!({"status": "down", "error": e})
+            (false, json!({"status": "down", "error": e}))
         }
         Err(_) => {
-            all_ready = false;
             log::warn!("Readiness check: cache timeout (1s)");
-            json!({"status": "down", "error": "timeout"})
+            (false, json!({"status": "down", "error": "timeout"}))
         }
-    };
-    details.insert("cache".to_string(), cache_status);
+    }
+}
 
-    // 连接池结构化健康快照（吸收自研 dbnexus `health-check`）
-    //
-    // `SELECT 1` 验证真实连通性；快照补充池视角（容量/空闲/等待等），
-    // 仅作诊断信息附加，不影响就绪判定（快照失败不阻断响应）。
+/// 连接池结构化健康快照 + prepare-cache 统计（自 [`readiness_check`] 提取）。
+async fn database_pool_snapshot(db_pool: &Arc<DbPool>) -> serde_json::Value {
     let mut pool_snapshot =
         match tokio::time::timeout(Duration::from_secs(1), db_pool.health_snapshot()).await {
             Ok(snapshot) => snapshot,
@@ -224,23 +256,7 @@ pub async fn readiness_check(
             "evictions": stats.evictions,
         });
     }
-    details.insert("database_pool".to_string(), pool_snapshot);
-
-    let status = if all_ready { "ready" } else { "not_ready" };
-    let status_code = if all_ready {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
-
-    (
-        status_code,
-        Json(json!({
-            "status": status,
-            "checks": details,
-            "version": env!("CARGO_PKG_VERSION"),
-        })),
-    )
+    pool_snapshot
 }
 
 #[cfg(test)]

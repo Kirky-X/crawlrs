@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
+use super::extraction_billing::{ExtractionSettlement, ExtractionSpec};
 use super::*;
 use crate::domain::models::{CrawlStatus, ScrapeResult, TaskType};
 use crate::engines::EngineError;
@@ -2513,6 +2514,102 @@ async fn test_deduct_feature_and_token_credits_are_independent_per_task() {
         deductions.len(),
         2,
         "feature (Scrape) and token (Extract) charges are independent, got {:?}",
+        deductions
+    );
+}
+
+// dispatch_extraction settlement tests
+//
+// 结算策略锁定三路径既有扣费时机：Deferred 只记录用量（内存 + pending），
+// 不扣费；Immediate 在提取成功后立即扣费。
+#[tokio::test]
+async fn test_dispatch_extraction_deferred_records_usage_without_deducting() {
+    let credits_repo = Arc::new(MockCreditsRepo::default());
+    let deducted_log = credits_repo.deducted.clone();
+    let worker = build_worker_for_success_tests(
+        Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
+        Arc::new(EngineClient::new()),
+        credits_repo as Arc<dyn CreditsRepository>,
+        Arc::new(MockExtractionServiceWithTokens) as Arc<dyn ExtractionServiceTrait>,
+    )
+    .await;
+    let task = make_task(json!({}));
+
+    let mut pending = Vec::new();
+    let data = worker
+        .dispatch_extraction(
+            &task,
+            "<html><body><h1>Title</h1></body></html>",
+            &task.url,
+            &ExtractionSpec::Prompt("extract the title"),
+            ExtractionSettlement::Deferred {
+                usage_acc: &mut pending,
+            },
+        )
+        .await
+        .expect("deferred dispatch should succeed");
+
+    assert_eq!(data, json!({"title": "Extracted Title"}));
+    assert_eq!(
+        pending.len(),
+        1,
+        "deferred settlement must queue the usage for post-guard deduction"
+    );
+    assert_eq!(pending[0].total_tokens, 150);
+    assert!(
+        deducted_log
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty(),
+        "Deferred settlement must not hit the credits repository"
+    );
+    let in_memory = worker
+        .token_usage
+        .get(&task.team_id)
+        .map(|v| v.load(Ordering::Relaxed))
+        .unwrap_or(0);
+    assert_eq!(
+        in_memory, 150,
+        "deferred path must keep real-time in-memory accounting"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_extraction_immediate_deducts_at_extraction_point() {
+    let credits_repo = Arc::new(MockCreditsRepo::default());
+    let deducted_log = credits_repo.deducted.clone();
+    let worker = build_worker_for_success_tests(
+        Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
+        Arc::new(EngineClient::new()),
+        credits_repo as Arc<dyn CreditsRepository>,
+        Arc::new(MockExtractionServiceWithTokens) as Arc<dyn ExtractionServiceTrait>,
+    )
+    .await;
+    let task = make_task(json!({}));
+
+    let data = worker
+        .dispatch_extraction(
+            &task,
+            "<html><body><h1>Title</h1></body></html>",
+            &task.url,
+            &ExtractionSpec::Prompt("extract the title"),
+            ExtractionSettlement::Immediate {
+                description: "Tokens used for test extraction",
+            },
+        )
+        .await
+        .expect("immediate dispatch should succeed");
+
+    assert_eq!(data, json!({"title": "Extracted Title"}));
+    let deductions = deducted_log.lock().unwrap_or_else(|e| e.into_inner());
+    assert_eq!(
+        deductions.len(),
+        1,
+        "Immediate settlement must deduct exactly once"
+    );
+    assert_eq!(
+        deductions[0].1, 2,
+        "150 tokens → ceil(150*10/1000) = 2 credits, got {:?}",
         deductions
     );
 }

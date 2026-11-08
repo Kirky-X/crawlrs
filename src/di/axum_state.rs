@@ -222,42 +222,7 @@ impl CrawlRsState {
         let id_service = kit.require::<IdModule>()?;
 
         let search_client = Arc::new(SearchClient::new(engines.engine_client.clone()));
-
-        // 加载 i18n 翻译 bundle
-        let supported: Vec<&str> = settings
-            .i18n
-            .supported_locales
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        // 启动 default_locale 决议：配置未显式指定（仍为内置默认 en-US）时走
-        // 系统检测链；检测结果不在 supported 内（检测失败）时回退配置值——
-        // 即 default.toml 的 i18n.default_locale 语义 = 检测失败时的回退。
-        // 配置显式指定（≠ en-US）仍优先。Accept-Language 每请求协商不受影响。
-        let default_locale =
-            crate::i18n::resolve_startup_default_locale(&settings.i18n.default_locale, &supported);
-        if default_locale.to_string() != settings.i18n.default_locale {
-            log::info!(
-                "i18n default_locale resolved to '{}' (configured '{}')",
-                default_locale,
-                settings.i18n.default_locale
-            );
-        }
-        let i18n_bundle = Arc::new(
-            I18nBundle::load(
-                &default_locale.to_string(),
-                &supported,
-                &settings.i18n.locales_dir,
-            )
-            .map_err(|e| {
-                ModuleBuildError::SettingsNotConfigured(format!("i18n load failed: {e}"))
-            })?,
-        );
-        // 启动时验证 key 一致性（warn on mismatches）
-        let warnings = i18n_bundle.validate_key_consistency();
-        for w in &warnings {
-            log::warn!("i18n key consistency: {w}");
-        }
+        let i18n_bundle = load_i18n_bundle(&settings)?;
 
         Ok(CrawlRsState {
             db_pool: infra.db.inner().clone(),
@@ -307,6 +272,47 @@ impl CrawlRsState {
             map_use_case: services.map_use_case.clone(),
         })
     }
+}
+
+/// 加载 i18n 翻译 bundle 并校验各 locale 的 key 一致性。
+///
+/// 启动 default_locale 决议：配置未显式指定（仍为内置默认 en-US）时走
+/// 系统检测链；检测结果不在 supported 内（检测失败）时回退配置值——
+/// 即 default.toml 的 i18n.default_locale 语义 = 检测失败时的回退。
+/// 配置显式指定（≠ en-US）仍优先。Accept-Language 每请求协商不受影响。
+fn load_i18n_bundle(
+    settings: &crate::config::settings::Settings,
+) -> Result<Arc<I18nBundle>, ModuleBuildError> {
+    // 加载 i18n 翻译 bundle
+    let supported: Vec<&str> = settings
+        .i18n
+        .supported_locales
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+    let default_locale =
+        crate::i18n::resolve_startup_default_locale(&settings.i18n.default_locale, &supported);
+    if default_locale.to_string() != settings.i18n.default_locale {
+        log::info!(
+            "i18n default_locale resolved to '{}' (configured '{}')",
+            default_locale,
+            settings.i18n.default_locale
+        );
+    }
+    let i18n_bundle = Arc::new(
+        I18nBundle::load(
+            &default_locale.to_string(),
+            &supported,
+            &settings.i18n.locales_dir,
+        )
+        .map_err(|e| ModuleBuildError::SettingsNotConfigured(format!("i18n load failed: {e}")))?,
+    );
+    // 启动时验证 key 一致性（warn on mismatches）
+    let warnings = i18n_bundle.validate_key_consistency();
+    for w in &warnings {
+        log::warn!("i18n key consistency: {w}");
+    }
+    Ok(i18n_bundle)
 }
 
 /// Trait for extracting dependencies from CrawlRsState

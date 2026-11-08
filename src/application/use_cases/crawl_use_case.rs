@@ -189,6 +189,42 @@ impl CrawlUseCase {
             return Err(CrawlUseCaseError::ValidationError(reason));
         }
 
+        // 2. 检查地理限制（teams-off 时降级为默认限制）与种子 URL 域名黑名单
+        let restrictions = self
+            .check_request_restrictions(team_id, client_ip, &dto.url)
+            .await?;
+
+        let crawl_id = crate::domain::id::Id::generate();
+        let now = Utc::now();
+
+        let crawl = build_crawl_entity(crawl_id, team_id, &dto, now);
+
+        self.crawl_repo.create(&crawl).await?;
+
+        let initial_task = build_initial_crawl_task(
+            team_id,
+            api_key_id,
+            crawl_id,
+            &dto,
+            restrictions.domain_blacklist.unwrap_or_default(),
+            now,
+        );
+
+        self.task_repo.create(&initial_task).await?;
+
+        Ok(crawl)
+    }
+
+    /// 解析本请求生效的团队限制并校验种子 URL（自 [`Self::create_crawl`] 提取）。
+    ///
+    /// teams-off 时使用 `TeamGeoRestrictions::default` 占位，保证下游 payload
+    /// 中的 `restrictions.domain_blacklist` 字段类型一致。
+    async fn check_request_restrictions(
+        &self,
+        team_id: crate::domain::id::Id,
+        client_ip: &str,
+        seed_url: &str,
+    ) -> Result<crate::domain::services::team_service::TeamGeoRestrictions, CrawlUseCaseError> {
         // 2. 检查地理限制
         //
         // teams feature 关闭时跳过整个地理限制块。
@@ -260,7 +296,7 @@ impl CrawlUseCase {
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         // 避免 unused variable warning（client_ip 在 teams-off 时不被使用）
         #[cfg(not(feature = "teams"))]
-        let _ = client_ip;
+        let _ = (team_id, client_ip, seed_url);
 
         // 种子 URL 必须过团队 domain_blacklist（与链接提取侧过滤对齐，
         // 阻止直接 crawl 黑名单域名的种子入口）
@@ -268,13 +304,13 @@ impl CrawlUseCase {
         {
             match self
                 .team_service
-                .validate_domain_blacklist(&dto.url, &restrictions)
+                .validate_domain_blacklist(seed_url, &restrictions)
             {
                 Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {}
                 Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
                     error!(
                         "Crawl seed URL {} denied by domain blacklist: {}",
-                        dto.url, reason
+                        seed_url, reason
                     );
                     return Err(CrawlUseCaseError::ValidationError(reason));
                 }
@@ -288,25 +324,7 @@ impl CrawlUseCase {
             }
         }
 
-        let crawl_id = crate::domain::id::Id::generate();
-        let now = Utc::now();
-
-        let crawl = build_crawl_entity(crawl_id, team_id, &dto, now);
-
-        self.crawl_repo.create(&crawl).await?;
-
-        let initial_task = build_initial_crawl_task(
-            team_id,
-            api_key_id,
-            crawl_id,
-            &dto,
-            restrictions.domain_blacklist.unwrap_or_default(),
-            now,
-        );
-
-        self.task_repo.create(&initial_task).await?;
-
-        Ok(crawl)
+        Ok(restrictions)
     }
 
     /// 获取爬取任务详情

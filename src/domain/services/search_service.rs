@@ -287,36 +287,8 @@ impl SearchService {
     ) -> Result<Vec<SearchResult>, SearchServiceError> {
         // P12：路由决策——engine 为 None 或 "smart" 时走 SmartSearchEngine
         // （多引擎 fan-out + RRF 聚合）；显式引擎名走 SearchClient 单引擎路径。
-        let use_smart = engine.is_none() || engine == Some("smart");
-        if use_smart {
-            if let Some(smart) = &self.smart_engine {
-                let request =
-                    crate::search::engine_trait::SearchRequest::new(query).with_limit(limit);
-                let response = smart
-                    .search(&request)
-                    .await
-                    .map_err(|e| SearchServiceError::SmartSearchFailed(e.to_string()))?;
-                let results: Vec<SearchResult> = response
-                    .items
-                    .into_iter()
-                    .take(limit as usize)
-                    .map(|item| SearchResult {
-                        title: item.title,
-                        url: item.url,
-                        description: Some(item.description),
-                        engine: item.engine.name().to_string(),
-                        score: None,
-                    })
-                    .collect();
-                // 与单引擎路径同款语义重排（数量不变，仅调序）
-                return Ok(self.reranker.rerank_results(query, results).await);
-            }
-            // 未注入 smart engine（agent-lib / 测试面）：
-            // engine=None 真降级到单引擎；engine="smart" 将在下方被
-            // from_name 解析后因 SearchClient 未注册 Smart 引擎而显性报错
-            if engine.is_none() {
-                log::warn!("{}", crate::i18n::tr_log("search-smart-not-injected"));
-            }
+        if let Some(results) = self.try_smart_search(query, limit, engine).await? {
+            return Ok(results);
         }
 
         // 显式引擎名必须可解析——此前未知引擎名会静默替换为默认 bing
@@ -344,13 +316,7 @@ impl SearchService {
             .items
             .into_iter()
             .take(limit as usize)
-            .map(|item| SearchResult {
-                title: item.title,
-                url: item.url,
-                description: Some(item.description),
-                engine: item.engine.name().to_string(),
-                score: None,
-            })
+            .map(into_search_result)
             .collect();
 
         // 语义重排（精准推荐）：RRF/启发式融合之后补 query-doc 相关性。
@@ -359,6 +325,55 @@ impl SearchService {
         let filtered_results = self.reranker.rerank_results(query, filtered_results).await;
 
         Ok(filtered_results)
+    }
+
+    /// smart 聚合路径（自 [`SearchService::perform_search`] 提取）：
+    /// 返回 `Some` 表示已由 smart 引擎处理（含重排），`None` 表示需单引擎回退。
+    async fn try_smart_search(
+        &self,
+        query: &str,
+        limit: u32,
+        engine: Option<&str>,
+    ) -> Result<Option<Vec<SearchResult>>, SearchServiceError> {
+        let use_smart = engine.is_none() || engine == Some("smart");
+        if !use_smart {
+            return Ok(None);
+        }
+
+        if let Some(smart) = &self.smart_engine {
+            let request = crate::search::engine_trait::SearchRequest::new(query).with_limit(limit);
+            let response = smart
+                .search(&request)
+                .await
+                .map_err(|e| SearchServiceError::SmartSearchFailed(e.to_string()))?;
+            let results: Vec<SearchResult> = response
+                .items
+                .into_iter()
+                .take(limit as usize)
+                .map(into_search_result)
+                .collect();
+            // 与单引擎路径同款语义重排（数量不变，仅调序）
+            return Ok(Some(self.reranker.rerank_results(query, results).await));
+        }
+
+        // 未注入 smart engine（agent-lib / 测试面）：
+        // engine=None 真降级到单引擎；engine="smart" 将在下方被
+        // from_name 解析后因 SearchClient 未注册 Smart 引擎而显性报错
+        if engine.is_none() {
+            log::warn!("{}", crate::i18n::tr_log("search-smart-not-injected"));
+        }
+        Ok(None)
+    }
+}
+
+/// 搜索响应条目 → 领域搜索结果（smart 与单引擎路径共用）。
+fn into_search_result(item: crate::search::response::ResponseItem) -> SearchResult {
+    SearchResult {
+        title: item.title,
+        url: item.url,
+        description: Some(item.description),
+        engine: item.engine.name().to_string(),
+        score: None,
     }
 }
 

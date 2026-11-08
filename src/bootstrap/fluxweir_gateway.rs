@@ -89,76 +89,93 @@ pub async fn init_fluxweir_gateway(
             .map_err(|e| anyhow!("fluxweir config invalid: {e}"))?;
 
         if fw.mode == "external" {
-            let base_url = fw
-                .external_base_url
-                .trim()
-                .trim_end_matches('/')
-                .to_string();
-            // 外部实例可用性不阻塞装配（spec R-gateway-lifecycle-001：
-            // external 不起服、SDK 直连；连通性由首次请求的熔断/重试承载）
-            log::info!("fluxweir gateway mode=external, base_url={base_url}");
-            return Ok(FluxweirGatewayHandle {
-                base_url: Some(base_url),
-                handle: None,
-            });
+            return Ok(external_gateway_handle(fw));
         }
 
-        // ---- embedded：单池共享起服 ----
-        let pool = shared_pool.ok_or_else(|| {
-            anyhow!(
-                "fluxweir.mode=embedded requires the crawlrs database pool (single-pool sharing)"
-            )
-        })?;
-        // DI kit 池（inklog 存储面）按此 URL 真实建连——占位/空值一律 fail-fast，
-        // 不留假绿（共享池只覆盖 Repository 面，kit 池独立建连）
-        let db_url = db_url.trim().to_string();
-        if db_url.is_empty() {
-            return Err(anyhow!(
-                "fluxweir.mode=embedded requires a real database URL \
-                 (fluxweir DI kit connects via it; the shared pool only covers the repository face)"
-            ));
-        }
-
-        let (host, port) = parse_listen_addr(&fw.listen_addr)?;
-        // 非 loopback 绑定留下审计痕迹：数据面有摘要鉴权兜底，但暴露面
-        // 由运维显式选择（0.0.0.0 为文档化逃生口）
-        if !host.is_loopback() {
-            log::warn!(
-                "fluxweir gateway binding non-loopback address {host}:{port} — \
-                 the gateway is reachable beyond this host"
-            );
-        }
-        let config_manager = build_config_manager(fw, &db_url, host, port)?;
-
-        log::info!(
-            "starting embedded fluxweir gateway at {} (shared pool, db_url redacted: {})",
-            fw.listen_addr,
-            fluxweir::database::redact_db_url(&db_url)
-        );
-
-        let (router, handle) =
-            fluxweir::server::build_app_with_pool(config_manager, (*pool).clone()).await?;
-
-        let addr = std::net::SocketAddr::from((host, port));
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
-            .map_err(|e| anyhow!("failed to bind fluxweir gateway on {addr}: {e}"))?;
-        let base_url = format!("http://{addr}");
-
-        tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, router).await {
-                log::error!("fluxweir gateway serve terminated with error: {e:#}");
-            }
-        });
-
-        wait_for_ready(&base_url).await?;
-        log::info!("fluxweir gateway ready at {base_url}");
-
-        Ok(FluxweirGatewayHandle {
-            base_url: Some(base_url),
-            handle: Some(Arc::new(handle)),
-        })
+        start_embedded_gateway(fw, shared_pool, db_url).await
     }
+}
+
+/// external 形态：不起服，仅承载 SDK 直连 base_url。
+///
+/// 外部实例可用性不阻塞装配（spec R-gateway-lifecycle-001：external 不起服、
+/// SDK 直连；连通性由首次请求的熔断/重试承载）。
+#[cfg(feature = "gateway")]
+fn external_gateway_handle(
+    fw: &crate::config::settings::FluxweirSettings,
+) -> FluxweirGatewayHandle {
+    let base_url = fw
+        .external_base_url
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    log::info!("fluxweir gateway mode=external, base_url={base_url}");
+    FluxweirGatewayHandle {
+        base_url: Some(base_url),
+        handle: None,
+    }
+}
+
+/// embedded 形态：单池共享起服 → readyz 探活 → 返回停机句柄。
+#[cfg(feature = "gateway")]
+async fn start_embedded_gateway(
+    fw: &crate::config::settings::FluxweirSettings,
+    shared_pool: Option<Arc<dbnexus::DbPool>>,
+    db_url: &str,
+) -> Result<FluxweirGatewayHandle> {
+    // ---- embedded：单池共享起服 ----
+    let pool = shared_pool.ok_or_else(|| {
+        anyhow!("fluxweir.mode=embedded requires the crawlrs database pool (single-pool sharing)")
+    })?;
+    // DI kit 池（inklog 存储面）按此 URL 真实建连——占位/空值一律 fail-fast，
+    // 不留假绿（共享池只覆盖 Repository 面，kit 池独立建连）
+    let db_url = db_url.trim().to_string();
+    if db_url.is_empty() {
+        return Err(anyhow!(
+            "fluxweir.mode=embedded requires a real database URL \
+             (fluxweir DI kit connects via it; the shared pool only covers the repository face)"
+        ));
+    }
+
+    let (host, port) = parse_listen_addr(&fw.listen_addr)?;
+    // 非 loopback 绑定留下审计痕迹：数据面有摘要鉴权兜底，但暴露面
+    // 由运维显式选择（0.0.0.0 为文档化逃生口）
+    if !host.is_loopback() {
+        log::warn!(
+            "fluxweir gateway binding non-loopback address {host}:{port} — \
+             the gateway is reachable beyond this host"
+        );
+    }
+    let config_manager = build_config_manager(fw, &db_url, host, port)?;
+
+    log::info!(
+        "starting embedded fluxweir gateway at {} (shared pool, db_url redacted: {})",
+        fw.listen_addr,
+        fluxweir::database::redact_db_url(&db_url)
+    );
+
+    let (router, handle) =
+        fluxweir::server::build_app_with_pool(config_manager, (*pool).clone()).await?;
+
+    let addr = std::net::SocketAddr::from((host, port));
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| anyhow!("failed to bind fluxweir gateway on {addr}: {e}"))?;
+    let base_url = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, router).await {
+            log::error!("fluxweir gateway serve terminated with error: {e:#}");
+        }
+    });
+
+    wait_for_ready(&base_url).await?;
+    log::info!("fluxweir gateway ready at {base_url}");
+
+    Ok(FluxweirGatewayHandle {
+        base_url: Some(base_url),
+        handle: Some(Arc::new(handle)),
+    })
 }
 
 /// 解析 `host:port` 监听地址（embedded 必需；`validate` 已保证非空）

@@ -83,61 +83,14 @@ impl EngineRouter {
         // [`apply_ua_profile_headers`] 文档。
         let mut headers = request.headers.clone();
         let mut attempt_proxy = request.proxy.clone();
-        let session_identity: Option<Arc<SessionIdentity>> = if self.session.is_enabled() {
-            let host_key = host.unwrap_or("");
-            if directive.rotate_ua || self.host_discipline.is_stalled(host_key) {
-                // 身份升级：强制退休当前亲和身份，本次 acquire 换新
-                self.session.retire(host_key, request.session_id.as_deref());
-            }
-            let identity =
-                self.session
-                    .acquire(host_key, request.session_id.as_deref(), request.mobile);
-            let profile = identity.ua_profile(self.session.ua_pool());
-            apply_ua_profile_headers(&mut headers, profile);
-            if let Some(cookie) = self.session.cookie_header(&identity, host_key) {
-                headers.insert("Cookie".to_string(), cookie);
-            }
-            attempt_proxy = identity.proxy_url.clone().or(request.proxy.clone());
-            debug!(
-                "Attempt {}: session identity #{} (proxy={}, ua={}, AL={}, sec-ch-ua={})",
-                total_attempts,
-                identity.id,
-                identity
-                    .proxy_url
-                    .as_deref()
-                    .map(crate::utils::proxy::redact_proxy_url)
-                    .unwrap_or_else(|| "<none>".to_string()),
-                profile.ua,
-                profile.accept_language,
-                if profile.sec_ch_ua.is_empty() {
-                    "<none>"
-                } else {
-                    profile.sec_ch_ua
-                }
-            );
-            Some(identity)
-        } else if directive.rotate_ua {
-            let profile = self
-                .ua_pool
-                .pick_seeded((total_attempts - 1) as u64, request.mobile);
-            apply_ua_profile_headers(&mut headers, profile);
-            debug!(
-                "Attempt {}: rotated UA via pick_seeded(seed={}) -> {} ({}, AL={}, sec-ch-ua={})",
-                total_attempts,
-                total_attempts - 1,
-                profile.ua,
-                if profile.mobile { "mobile" } else { "desktop" },
-                profile.accept_language,
-                if profile.sec_ch_ua.is_empty() {
-                    "<none>"
-                } else {
-                    profile.sec_ch_ua
-                }
-            );
-            None
-        } else {
-            None
-        };
+        let session_identity = self.resolve_attempt_identity(
+            request,
+            host,
+            directive,
+            total_attempts,
+            &mut headers,
+            &mut attempt_proxy,
+        );
         let attempt_request = InternalScrapeRequest {
             url: request.url.clone(),
             method: request.method,
@@ -163,6 +116,76 @@ impl EngineRouter {
             needs_mllm: request.needs_mllm,
         };
         (attempt_request, session_identity)
+    }
+
+    /// F2 Session 亲和 / 现状盲轮换二选一解析本次 attempt 的身份。
+    ///
+    /// 向 `headers` 写入 UA profile 三件 header，并向 `attempt_proxy` 回填
+    /// 身份代理（请求显式代理兜底）。
+    fn resolve_attempt_identity(
+        &self,
+        request: &InternalScrapeRequest,
+        host: Option<&str>,
+        directive: RetryDirective,
+        total_attempts: usize,
+        headers: &mut HashMap<String, String>,
+        attempt_proxy: &mut Option<String>,
+    ) -> Option<Arc<SessionIdentity>> {
+        if self.session.is_enabled() {
+            let host_key = host.unwrap_or("");
+            if directive.rotate_ua || self.host_discipline.is_stalled(host_key) {
+                // 身份升级：强制退休当前亲和身份，本次 acquire 换新
+                self.session.retire(host_key, request.session_id.as_deref());
+            }
+            let identity =
+                self.session
+                    .acquire(host_key, request.session_id.as_deref(), request.mobile);
+            let profile = identity.ua_profile(self.session.ua_pool());
+            apply_ua_profile_headers(headers, profile);
+            if let Some(cookie) = self.session.cookie_header(&identity, host_key) {
+                headers.insert("Cookie".to_string(), cookie);
+            }
+            *attempt_proxy = identity.proxy_url.clone().or(request.proxy.clone());
+            debug!(
+                "Attempt {}: session identity #{} (proxy={}, ua={}, AL={}, sec-ch-ua={})",
+                total_attempts,
+                identity.id,
+                identity
+                    .proxy_url
+                    .as_deref()
+                    .map(crate::utils::proxy::redact_proxy_url)
+                    .unwrap_or_else(|| "<none>".to_string()),
+                profile.ua,
+                profile.accept_language,
+                if profile.sec_ch_ua.is_empty() {
+                    "<none>"
+                } else {
+                    profile.sec_ch_ua
+                }
+            );
+            Some(identity)
+        } else if directive.rotate_ua {
+            let profile = self
+                .ua_pool
+                .pick_seeded((total_attempts - 1) as u64, request.mobile);
+            apply_ua_profile_headers(headers, profile);
+            debug!(
+                "Attempt {}: rotated UA via pick_seeded(seed={}) -> {} ({}, AL={}, sec-ch-ua={})",
+                total_attempts,
+                total_attempts - 1,
+                profile.ua,
+                if profile.mobile { "mobile" } else { "desktop" },
+                profile.accept_language,
+                if profile.sec_ch_ua.is_empty() {
+                    "<none>"
+                } else {
+                    profile.sec_ch_ua
+                }
+            );
+            None
+        } else {
+            None
+        }
     }
 }
 

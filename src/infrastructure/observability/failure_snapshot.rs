@@ -126,21 +126,9 @@ impl FailureSnapshotter {
         let key = Self::signature_key(input.url, input.status_code, input.reason);
         // 命中计数先于磁盘判断：内存表达 [`MAX_TRACKED_KEYS`] 上限，
         // 超限后新键仅计指标（含 URL 的键不无限驻留内存）
-        let count = match self.counts.get_mut(&key) {
-            Some(mut c) => {
-                *c += 1;
-                *c
-            }
-            None => {
-                if self.counts.len() >= MAX_TRACKED_KEYS {
-                    counter!("crawlrs_failure_snapshot_total").increment(1);
-                    return;
-                }
-                self.counts.insert(key.clone(), 1);
-                1
-            }
+        let Some(count) = self.track_hit(&key) else {
+            return;
         };
-        counter!("crawlrs_failure_snapshot_total").increment(1);
 
         // meta.json 每次命中都刷新（小文件）：count 反映累计命中次数；
         // 刷新同时续期 mtime，滚动删除时活跃键的 meta 不会被优先淘汰
@@ -162,32 +150,25 @@ impl FailureSnapshotter {
         let persist_lock = self.persist_lock.clone();
 
         let outcome = tokio::task::spawn_blocking(move || {
-            // 重复命中只刷新 meta.json，不使用截图：count > 1 时跳过解码（省 CPU）
-            let screenshot = if count == 1 {
-                screenshot_b64
-                    .as_deref()
-                    .map(|s| BASE64.decode(s))
-                    .transpose()
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
-            // 仅首写（count == 1）需要互斥：它做目录扫描与逐出；重复命中只刷新
-            // meta.json，不碰逐出游标，无需加锁。
-            let _guard = (count == 1).then(|| persist_lock.lock());
-            persist_snapshot(
-                &dir,
-                &key_closure,
+            Self::persist_hit(
+                dir,
+                key_closure,
                 count,
-                &content,
-                screenshot.as_deref(),
-                &meta,
+                content,
+                screenshot_b64,
+                meta,
                 max_total,
+                persist_lock,
             )
         })
         .await;
 
+        self.record_persist_outcome(outcome);
+    }
+
+    /// 应用落盘结果：写入/逐出 delta 以单次 CAS 计入 `total_written`；
+    /// `spawn_blocking` join 失败按旁路观测记录 debug 日志。
+    fn record_persist_outcome(&self, outcome: Result<(u64, u64), tokio::task::JoinError>) {
         match outcome {
             Ok((written, evicted)) => {
                 if written > 0 || evicted > 0 {
@@ -209,6 +190,65 @@ impl FailureSnapshotter {
                 )
             ),
         }
+    }
+
+    /// 命中计数与容量上限检查。
+    ///
+    /// 返回 `None` 表示签名键表已满，调用方直接返回（仅计指标）。
+    fn track_hit(&self, key: &str) -> Option<u64> {
+        let count = match self.counts.get_mut(key) {
+            Some(mut c) => {
+                *c += 1;
+                *c
+            }
+            None => {
+                if self.counts.len() >= MAX_TRACKED_KEYS {
+                    counter!("crawlrs_failure_snapshot_total").increment(1);
+                    return None;
+                }
+                self.counts.insert(key.to_string(), 1);
+                1
+            }
+        };
+        counter!("crawlrs_failure_snapshot_total").increment(1);
+        Some(count)
+    }
+
+    /// 阻塞落盘：重复命中只刷新 meta.json；首写持锁做目录扫描与滚动逐出。
+    #[allow(clippy::too_many_arguments)]
+    fn persist_hit(
+        dir: PathBuf,
+        key: String,
+        count: u64,
+        content: String,
+        screenshot_b64: Option<String>,
+        meta: serde_json::Value,
+        max_total: usize,
+        persist_lock: Arc<parking_lot::Mutex<()>>,
+    ) -> (u64, u64) {
+        // 重复命中只刷新 meta.json，不使用截图：count > 1 时跳过解码（省 CPU）
+        let screenshot = if count == 1 {
+            screenshot_b64
+                .as_deref()
+                .map(|s| BASE64.decode(s))
+                .transpose()
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+        // 仅首写（count == 1）需要互斥：它做目录扫描与逐出；重复命中只刷新
+        // meta.json，不碰逐出游标，无需加锁。
+        let _guard = (count == 1).then(|| persist_lock.lock());
+        persist_snapshot(
+            &dir,
+            &key,
+            count,
+            &content,
+            screenshot.as_deref(),
+            &meta,
+            max_total,
+        )
     }
 
     /// 错误签名键 = sha256(url|status|reason) 前 30 hex + 消毒 reason 前 30 字符

@@ -323,6 +323,12 @@ fn lcs_match(src: &[Token], ex: &[Token]) -> Vec<usize> {
         return Vec::new();
     }
     let w = m + 1;
+    let dp = lcs_length_table(src, ex, n, m, w);
+    backtrack_lcs(src, ex, n, m, w, &dp)
+}
+
+/// 填充 LCS 长度表（行主序 `(n+1) x (m+1)`，步长 `w = m + 1`）
+fn lcs_length_table(src: &[Token], ex: &[Token], n: usize, m: usize, w: usize) -> Vec<u32> {
     let mut dp = vec![0u32; (n + 1) * w];
     for i in 1..=n {
         for j in 1..=m {
@@ -333,9 +339,19 @@ fn lcs_match(src: &[Token], ex: &[Token]) -> Vec<usize> {
             };
         }
     }
+    dp
+}
+
+/// 从长度表确定性回溯匹配下标（按 excerpt 顺序返回）
+fn backtrack_lcs(
+    src: &[Token],
+    ex: &[Token],
+    mut i: usize,
+    mut j: usize,
+    w: usize,
+    dp: &[u32],
+) -> Vec<usize> {
     let mut res = Vec::new();
-    let mut i = n;
-    let mut j = m;
     while i > 0 && j > 0 {
         if src[i - 1].lower == ex[j - 1].lower {
             res.push(i - 1);
@@ -412,18 +428,30 @@ fn collect_provenance(
             } else {
                 path
             };
-            let entry = match align_tokens(src_tokens, &tokenize_tokens(s), source, s, min_coverage)
-            {
-                Some(m) => json!({
-                    "start": m.interval.start,
-                    "end": m.interval.end,
-                    "coverage": m.coverage,
-                }),
-                None => Value::Null,
-            };
+            let entry = string_leaf_entry(src_tokens, source, s, min_coverage);
             out.insert(key, entry);
         }
         _ => {}
+    }
+}
+
+/// 字符串叶子对齐与条目构造（自 [`collect_provenance`] 提取）。
+///
+/// 对齐失败返回 `Value::Null`（调用方过滤）。
+fn string_leaf_entry(src_tokens: &[Token], source: &str, leaf: &str, min_coverage: f64) -> Value {
+    match align_tokens(
+        src_tokens,
+        &tokenize_tokens(leaf),
+        source,
+        leaf,
+        min_coverage,
+    ) {
+        Some(m) => json!({
+            "start": m.interval.start,
+            "end": m.interval.end,
+            "coverage": m.coverage,
+        }),
+        None => Value::Null,
     }
 }
 

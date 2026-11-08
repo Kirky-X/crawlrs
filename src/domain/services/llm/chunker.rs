@@ -141,9 +141,7 @@ pub fn plan_chunks(text: &str, cfg: &ChunkingConfig) -> Vec<Range<usize>> {
                 chunks.push(chunk_start..seg.start);
                 chunk_chars = 0;
             }
-            for sub in split_oversized_segment(&text[seg.clone()], budget) {
-                chunks.push(seg.start + sub.start..seg.start + sub.end);
-            }
+            emit_oversized_segment(&mut chunks, text, &seg, budget);
             chunk_start = seg.end;
             continue;
         }
@@ -163,6 +161,18 @@ pub fn plan_chunks(text: &str, cfg: &ChunkingConfig) -> Vec<Range<usize>> {
         chunks.push(chunk_start..text.len());
     }
     chunks
+}
+
+/// 超预算段落的子块输出（自 [`plan_chunks`] 提取）：段内 tiling 区间映射回全文偏移。
+fn emit_oversized_segment(
+    chunks: &mut Vec<Range<usize>>,
+    text: &str,
+    seg: &Range<usize>,
+    budget: usize,
+) {
+    for sub in split_oversized_segment(&text[seg.clone()], budget) {
+        chunks.push(seg.start + sub.start..seg.start + sub.end);
+    }
 }
 
 /// 段落切分（tiling）：`\n\n` / `\r\n\r\n` 为界，分隔符归前段

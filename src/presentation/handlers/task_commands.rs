@@ -41,24 +41,8 @@ pub async fn cancel_tasks<T: TaskRepository>(
 ) -> Result<Json<ApiResponse<TaskCancelDataDto>>, CrawlRsError> {
     // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
     // 绕过 ApiResponse 契约（结构错误 422 / 语法错误 400）
-    let Json(request) = match payload {
-        Ok(parsed) => parsed,
-        Err(rej) => return Err(json_rejection_error(rej)),
-    };
+    let request = parse_cancel_request(payload)?;
     let team_id = auth_state.team_id;
-
-    if let Err(errors) = request.validate() {
-        return Err(CrawlRsError::from(anyhow::anyhow!(
-            "Validation error: {:?}",
-            errors
-        )));
-    }
-
-    if request.task_ids.is_empty() {
-        return Err(CrawlRsError::Validation(
-            "Task IDs cannot be empty".to_string(),
-        ));
-    }
 
     let force = request.force.unwrap_or(false);
     let sync_wait_ms = request.sync_wait_ms.unwrap_or(5000);
@@ -84,6 +68,41 @@ pub async fn cancel_tasks<T: TaskRepository>(
         .await?;
     }
 
+    Ok(build_cancel_response(cancelled_task_ids, failed_tasks))
+}
+
+/// 解析并校验取消请求：提取器拒绝、DTO 校验与空 ID 列表统一映射为 `CrawlRsError`。
+fn parse_cancel_request(
+    payload: Result<Json<TaskCancelRequestDto>, axum::extract::rejection::JsonRejection>,
+) -> Result<TaskCancelRequestDto, CrawlRsError> {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
+    // 绕过 ApiResponse 契约（结构错误 422 / 语法错误 400）
+    let Json(request) = match payload {
+        Ok(parsed) => parsed,
+        Err(rej) => return Err(json_rejection_error(rej)),
+    };
+
+    if let Err(errors) = request.validate() {
+        return Err(CrawlRsError::from(anyhow::anyhow!(
+            "Validation error: {:?}",
+            errors
+        )));
+    }
+
+    if request.task_ids.is_empty() {
+        return Err(CrawlRsError::Validation(
+            "Task IDs cannot be empty".to_string(),
+        ));
+    }
+
+    Ok(request)
+}
+
+/// 组装批量取消响应（成功取消项 + 失败项）。
+fn build_cancel_response(
+    cancelled_task_ids: Vec<crate::domain::id::Id>,
+    failed_tasks: Vec<(crate::domain::id::Id, String)>,
+) -> Json<ApiResponse<TaskCancelDataDto>> {
     let cancelled_tasks: Vec<CancelledTaskInfoDto> = cancelled_task_ids
         .into_iter()
         .map(|task_id| CancelledTaskInfoDto {
@@ -101,10 +120,10 @@ pub async fn cancel_tasks<T: TaskRepository>(
     let total_cancelled = cancelled_tasks.len() as u64;
     let total_failed = failed_tasks_info.len() as u64;
 
-    Ok(Json(ApiResponse::success(TaskCancelDataDto {
+    Json(ApiResponse::success(TaskCancelDataDto {
         cancelled_tasks,
         failed_tasks: failed_tasks_info,
         total_cancelled,
         total_failed,
-    })))
+    }))
 }

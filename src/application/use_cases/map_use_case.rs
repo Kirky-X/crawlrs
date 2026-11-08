@@ -232,23 +232,16 @@ async fn stream_loc_events(xml: String, tx: tokio::sync::mpsc::Sender<String>) {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
-                let name = e.name().local_name();
-                if name.as_ref().eq_ignore_ascii_case("loc") {
+                if is_loc_name(e.name().local_name().as_ref()) {
                     in_loc = true;
                     loc_text.clear();
                 }
             }
-            Ok(Event::Text(t)) if in_loc => match quick_xml::escape::unescape(&t.xml10_content()) {
-                Ok(unescaped) => loc_text.push_str(&unescaped),
-                Err(e) => {
-                    log::warn!("sitemap loc entity unescape failed: {e}");
-                }
-            },
+            Ok(Event::Text(t)) if in_loc => push_loc_text(&mut loc_text, &t),
             Ok(Event::End(e)) => {
-                if in_loc && e.name().local_name().as_ref().eq_ignore_ascii_case("loc") {
+                if in_loc && is_loc_name(e.name().local_name().as_ref()) {
                     in_loc = false;
-                    let loc = loc_text.trim();
-                    if !loc.is_empty() && tx.send(loc.to_string()).await.is_err() {
+                    if emit_completed_loc(&tx, &loc_text).await {
                         // 消费端已关闭：停止解析
                         break;
                     }
@@ -264,6 +257,30 @@ async fn stream_loc_events(xml: String, tx: tokio::sync::mpsc::Sender<String>) {
             }
         }
     }
+}
+
+/// `<loc>` 元素名判定（大小写不敏感）。
+#[cfg(feature = "sitemap")]
+fn is_loc_name(local_name: &str) -> bool {
+    local_name.eq_ignore_ascii_case("loc")
+}
+
+/// 解码并追加 `<loc>` 文本；实体解码失败记 warn 并跳过该片段。
+#[cfg(feature = "sitemap")]
+fn push_loc_text(loc_text: &mut String, t: &quick_xml::events::BytesText<'_>) {
+    match quick_xml::escape::unescape(&t.xml10_content()) {
+        Ok(unescaped) => loc_text.push_str(&unescaped),
+        Err(e) => {
+            log::warn!("sitemap loc entity unescape failed: {e}");
+        }
+    }
+}
+
+/// 收尾一个 `<loc>`：空 loc 跳过；返回 `true` 表示消费端已关闭、应停止解析。
+#[cfg(feature = "sitemap")]
+async fn emit_completed_loc(tx: &tokio::sync::mpsc::Sender<String>, loc_text: &str) -> bool {
+    let loc = loc_text.trim();
+    !loc.is_empty() && tx.send(loc.to_string()).await.is_err()
 }
 
 /// `/v1/map` 结果
@@ -406,57 +423,84 @@ impl MapUseCase {
             let tx = tx.clone();
             let semaphore = semaphore.clone();
             let sent = sent.clone();
-            set.spawn(async move {
-                let _permit = semaphore
-                    .acquire_owned()
-                    .await
-                    .expect("semaphore has capacity");
-                // 连接级瞬态错误 / ≥400 状态各重试一次，仍失败放弃该子 sitemap
-                // （ok 语义，对齐 execute 的子 sitemap 处理）
-                let stream = match fetcher
-                    .fetch_streaming(&child, options.channel_capacity)
-                    .await
-                {
-                    Ok(s) => Some(s),
-                    Err(MapError::TargetUnreachable(_)) | Err(MapError::SitemapStatus(_)) => {
-                        fetcher
-                            .fetch_streaming(&child, options.channel_capacity)
-                            .await
-                            .ok()
-                    }
-                    Err(_) => None,
-                };
-                if let Some(stream) = stream {
-                    let mut rx = stream.rx;
-                    while let Some(loc) = rx.recv().await {
-                        // 消费上限护栏：check 与 increment 非原子，
-                        // 并发下最多超发 ≤ 并发数条——护栏安全方向
-                        if sent.load(std::sync::atomic::Ordering::Relaxed) >= options.max_urls {
-                            return;
-                        }
-                        if tx.send(loc).await.is_err() {
-                            return;
-                        }
-                        sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-            });
+            set.spawn(forward_child_sitemap(
+                fetcher, child, options, tx, semaphore, sent,
+            ));
         }
         drop(tx);
         // 全部子任务结束后 tx 归零，rx 端 recv 返回 None。
         // 子任务 panic 不让它静默消失：记 warn 后继续等待其余子任务。
-        tokio::spawn(async move {
-            while let Some(res) = set.join_next().await {
-                if let Err(e) = res {
-                    log::warn!("sitemap child task failed: {e}");
-                }
-            }
-        });
+        spawn_child_task_monitor(set);
         SitemapStream {
             kind: SitemapKind::SitemapIndex,
             rx,
         }
     }
+}
+
+/// 子 sitemap 转发任务体（自 [`MapUseCase::expand_index_stream`] 提取）：
+/// 限流 permit → 抓取（一次重试）→ 有界通道转发（消费上限护栏）。
+#[cfg(feature = "sitemap")]
+async fn forward_child_sitemap(
+    fetcher: Arc<dyn SitemapFetcher>,
+    child: String,
+    options: SitemapStreamOptions,
+    tx: tokio::sync::mpsc::Sender<String>,
+    semaphore: Arc<tokio::sync::Semaphore>,
+    sent: Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let _permit = semaphore
+        .acquire_owned()
+        .await
+        .expect("semaphore has capacity");
+    // 连接级瞬态错误 / ≥400 状态各重试一次，仍失败放弃该子 sitemap
+    // （ok 语义，对齐 execute 的子 sitemap 处理）
+    let Some(stream) =
+        fetch_child_stream_with_retry(&fetcher, &child, options.channel_capacity).await
+    else {
+        return;
+    };
+    let mut rx = stream.rx;
+    while let Some(loc) = rx.recv().await {
+        // 消费上限护栏：check 与 increment 非原子，
+        // 并发下最多超发 ≤ 并发数条——护栏安全方向
+        if sent.load(std::sync::atomic::Ordering::Relaxed) >= options.max_urls {
+            return;
+        }
+        if tx.send(loc).await.is_err() {
+            return;
+        }
+        sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// 子 sitemap 流抓取（自 [`MapUseCase::expand_index_stream`] 提取）：
+/// 连接级瞬态错误 / ≥400 状态各重试一次，仍失败返回 `None`。
+#[cfg(feature = "sitemap")]
+async fn fetch_child_stream_with_retry(
+    fetcher: &Arc<dyn SitemapFetcher>,
+    child: &str,
+    channel_capacity: usize,
+) -> Option<SitemapStream> {
+    match fetcher.fetch_streaming(child, channel_capacity).await {
+        Ok(s) => Some(s),
+        Err(MapError::TargetUnreachable(_)) | Err(MapError::SitemapStatus(_)) => {
+            fetcher.fetch_streaming(child, channel_capacity).await.ok()
+        }
+        Err(_) => None,
+    }
+}
+
+/// 等待全部子 sitemap 任务结束；panic 记 warn 后继续等待其余任务。
+#[cfg(feature = "sitemap")]
+fn spawn_child_task_monitor(mut set: tokio::task::JoinSet<()>) {
+    tokio::spawn(async move {
+        while let Some(res) = set.join_next().await {
+            if let Err(e) = res {
+                log::warn!("sitemap child task failed: {e}");
+            }
+        }
+    });
 }
 
 /// 从根 index 流中收集前 [`MAX_SUB_SITEMAPS`] 个子 sitemap URL（流尽即止）

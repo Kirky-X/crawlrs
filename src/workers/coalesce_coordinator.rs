@@ -136,109 +136,119 @@ impl CoalesceCoordinator {
 
         match self.request_coalescer.try_start(key, task.id) {
             CoalesceResult::Proceed(g) => Ok(Some(g)),
-            CoalesceResult::Wait(mut rx, leader_task_id) => {
-                info!(
-                    "URL {} (team {}) already in-flight (leader task {}), task {} waiting for coalesce",
-                    redact_url_for_log(key.url()),
-                    key.team_id(),
-                    leader_task_id,
-                    task.id
-                );
-                // 等待首个 worker（leader）完成，加 timeout 防止活锁。
-                //
-                // 45s 选择依据：
-                // - 大于浏览器引擎 MRT（30s）+ 缓冲，留足 leader 完成时间
-                // - 短于 RequestCoalescer::STALE_TIMEOUT（120s），超时后由 purge_stale
-                // 兜底清理 in-flight 条目并广播 Purged
-                //
-                // 信号语义
-                // - Completed { success: true } → 按 leader task_id 查询落库结果
-                // - Completed { success: false } → leader 失败/取消，不查结果，直接重排
-                // - Purged → leader 僵死被清理，不视为完成，走自身重排
-                // - recv Closed / Lagged → leader 异常，不 mark_failed，走自身重排
-                // - timeout → leader 仍可能在跑，不无条件 purge 全表，走自身重排
-                const COALESCE_RECV_TIMEOUT_SECS: u64 = 45;
+            CoalesceResult::Wait(rx, leader_task_id) => {
+                self.wait_for_leader(key, task, worker_id, rx, leader_task_id)
+                    .await
+            }
+        }
+    }
 
-                let signal = match recv_leader_signal(&mut rx, COALESCE_RECV_TIMEOUT_SECS).await {
-                    LeaderSignal::Signal(sig) => sig,
-                    LeaderSignal::TimedOut => {
-                        // 超时：leader 未在窗口内完成，可能仍在跑或已 panic/死锁。
-                        // 超时路径不得无条件 purge 全表，也不 mark_failed
-                        // leader 的任务；走等待方自身重排（超上限后才 mark_failed 自身）。
-                        error!(
-                            "Coalesce wait for task {} timed out after {}s (leader task {}); \
+    /// 等待 leader 完成并处理 `Completed` / `Purged` / 超时 / 通道异常路径
+    /// （自 [`Self::try_coalesce`] 提取）。
+    async fn wait_for_leader(
+        &self,
+        key: &CoalesceKey,
+        task: &Task,
+        worker_id: crate::domain::id::Id,
+        mut rx: tokio::sync::broadcast::Receiver<CoalesceSignal>,
+        leader_task_id: crate::domain::id::Id,
+    ) -> Result<Option<CoalesceGuard>> {
+        info!(
+            "URL {} (team {}) already in-flight (leader task {}), task {} waiting for coalesce",
+            redact_url_for_log(key.url()),
+            key.team_id(),
+            leader_task_id,
+            task.id
+        );
+        // 等待首个 worker（leader）完成，加 timeout 防止活锁。
+        //
+        // 45s 选择依据：
+        // - 大于浏览器引擎 MRT（30s）+ 缓冲，留足 leader 完成时间
+        // - 短于 RequestCoalescer::STALE_TIMEOUT（120s），超时后由 purge_stale
+        // 兜底清理 in-flight 条目并广播 Purged
+        //
+        // 信号语义
+        // - Completed { success: true } → 按 leader task_id 查询落库结果
+        // - Completed { success: false } → leader 失败/取消，不查结果，直接重排
+        // - Purged → leader 僵死被清理，不视为完成，走自身重排
+        // - recv Closed / Lagged → leader 异常，不 mark_failed，走自身重排
+        // - timeout → leader 仍可能在跑，不无条件 purge 全表，走自身重排
+        const COALESCE_RECV_TIMEOUT_SECS: u64 = 45;
+
+        let signal = match recv_leader_signal(&mut rx, COALESCE_RECV_TIMEOUT_SECS).await {
+            LeaderSignal::Signal(sig) => sig,
+            LeaderSignal::TimedOut => {
+                // 超时：leader 未在窗口内完成，可能仍在跑或已 panic/死锁。
+                // 超时路径不得无条件 purge 全表，也不 mark_failed
+                // leader 的任务；走等待方自身重排（超上限后才 mark_failed 自身）。
+                error!(
+                    "Coalesce wait for task {} timed out after {}s (leader task {}); \
                                  rescheduling self instead of failing leader",
-                            task.id, COALESCE_RECV_TIMEOUT_SECS, leader_task_id
-                        );
-                        return self
-                            .reschedule_or_fail(task, worker_id, "coalesce wait timeout")
-                            .await;
-                    }
-                    LeaderSignal::Closed => {
-                        // recv Closed：leader 的 sender 全部 drop 却未广播完成
-                        // （panic / 异常终止）。视为 leader 异常，不 mark_failed，走自身重排。
-                        warn!(
-                                "Coalesce channel closed for task {} (leader task {} likely panicked); \
+                    task.id, COALESCE_RECV_TIMEOUT_SECS, leader_task_id
+                );
+                return self
+                    .reschedule_or_fail(task, worker_id, "coalesce wait timeout")
+                    .await;
+            }
+            LeaderSignal::Closed => {
+                // recv Closed：leader 的 sender 全部 drop 却未广播完成
+                // （panic / 异常终止）。视为 leader 异常，不 mark_failed，走自身重排。
+                warn!(
+                    "Coalesce channel closed for task {} (leader task {} likely panicked); \
                                  rescheduling self",
-                                task.id, leader_task_id
-                            );
-                        return self
-                            .reschedule_or_fail(task, worker_id, "coalesce channel closed")
-                            .await;
-                    }
-                    LeaderSignal::Lagged(n) => {
-                        // Lagged：等待方消费过慢丢失信号（容量 1 理论不应发生）。保守重排。
-                        warn!(
-                                "Coalesce receiver for task {} lagged by {} messages; rescheduling self",
-                                task.id, n
-                            );
-                        return self
-                            .reschedule_or_fail(task, worker_id, "coalesce receiver lagged")
-                            .await;
-                    }
-                };
+                    task.id, leader_task_id
+                );
+                return self
+                    .reschedule_or_fail(task, worker_id, "coalesce channel closed")
+                    .await;
+            }
+            LeaderSignal::Lagged(n) => {
+                // Lagged：等待方消费过慢丢失信号（容量 1 理论不应发生）。保守重排。
+                warn!(
+                    "Coalesce receiver for task {} lagged by {} messages; rescheduling self",
+                    task.id, n
+                );
+                return self
+                    .reschedule_or_fail(task, worker_id, "coalesce receiver lagged")
+                    .await;
+            }
+        };
 
-                match signal {
-                    CoalesceSignal::Purged => {
-                        // purge_stale 清理僵死条目：不视为完成，不查询结果，走自身重排。
-                        warn!(
-                            "Coalesce entry for task {} purged as stale (leader task {}); \
+        match signal {
+            CoalesceSignal::Purged => {
+                // purge_stale 清理僵死条目：不视为完成，不查询结果，走自身重排。
+                warn!(
+                    "Coalesce entry for task {} purged as stale (leader task {}); \
                              rescheduling self without result lookup",
-                            task.id, leader_task_id
-                        );
-                        self.reschedule_or_fail(task, worker_id, "coalesce entry purged")
-                            .await
-                    }
-                    CoalesceSignal::Completed { success: false } => {
-                        // leader 失败/取消（结果未落库）：不查询结果，走自身重排。
-                        // 这是 M2 修复点：旧实现统一按 Completed 查询，失败路径
-                        // 必然白烧一次 `find_by_task_id`。
-                        warn!(
-                            "Coalesce leader task {} reported failure for waiter task {}; \
+                    task.id, leader_task_id
+                );
+                self.reschedule_or_fail(task, worker_id, "coalesce entry purged")
+                    .await
+            }
+            CoalesceSignal::Completed { success: false } => {
+                // leader 失败/取消（结果未落库）：不查询结果，走自身重排。
+                // 这是 M2 修复点：旧实现统一按 Completed 查询，失败路径
+                // 必然白烧一次 `find_by_task_id`。
+                warn!(
+                    "Coalesce leader task {} reported failure for waiter task {}; \
                              rescheduling self without result lookup",
-                            leader_task_id, task.id
-                        );
-                        self.reschedule_or_fail(task, worker_id, "leader reported failure")
-                            .await
-                    }
-                    CoalesceSignal::Completed { success: true } => {
-                        // leader 正常完成：按 leader task_id 查询落库结果
-                        // （结果落在 leader 名下，非等待方自身 task_id）。
-                        if self
-                            .adopt_leader_result(task, leader_task_id, worker_id)
-                            .await?
-                        {
-                            Ok(None)
-                        } else {
-                            // leader 已完成但结果尚未落库/不可见——延后重排
-                            self.reschedule_or_fail(
-                                task,
-                                worker_id,
-                                "leader result not yet available",
-                            )
-                            .await
-                        }
-                    }
+                    leader_task_id, task.id
+                );
+                self.reschedule_or_fail(task, worker_id, "leader reported failure")
+                    .await
+            }
+            CoalesceSignal::Completed { success: true } => {
+                // leader 正常完成：按 leader task_id 查询落库结果
+                // （结果落在 leader 名下，非等待方自身 task_id）。
+                if self
+                    .adopt_leader_result(task, leader_task_id, worker_id)
+                    .await?
+                {
+                    Ok(None)
+                } else {
+                    // leader 已完成但结果尚未落库/不可见——延后重排
+                    self.reschedule_or_fail(task, worker_id, "leader result not yet available")
+                        .await
                 }
             }
         }

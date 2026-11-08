@@ -50,6 +50,31 @@ enum BacklogOutcome {
     Skipped,
 }
 
+/// 积压处理分类计数（按 `BacklogOutcome` 独立统计）。
+#[derive(Default)]
+struct BacklogCounts {
+    reactivated: usize,
+    expired: usize,
+    retry_exhausted: usize,
+    denied: usize,
+    queued: usize,
+    skipped: usize,
+    failed: usize,
+}
+
+impl BacklogCounts {
+    /// 合并另一批计数。
+    fn add(&mut self, other: Self) {
+        self.reactivated += other.reactivated;
+        self.expired += other.expired;
+        self.retry_exhausted += other.retry_exhausted;
+        self.denied += other.denied;
+        self.queued += other.queued;
+        self.skipped += other.skipped;
+        self.failed += other.failed;
+    }
+}
+
 impl BacklogWorker {
     pub fn new(
         tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
@@ -94,104 +119,68 @@ impl BacklogWorker {
             )
         );
 
+        // 2. 按团队分组处理任务
+        let backlogs_by_team = group_backlogs_by_team(pending_backlogs);
+
         // 分类计数：Ok(false) 曾把 expired/denied/queued/
         // 重试耗尽全部混为"过期"，现按 BacklogOutcome 独立计数并分类输出。
-        let mut reactivated_count = 0;
-        let mut expired_count = 0;
-        let mut retry_exhausted_count = 0;
-        let mut denied_count = 0;
-        let mut queued_count = 0;
-        let mut skipped_count = 0;
-        let mut failed_count = 0;
-
-        // 2. 按团队分组处理任务
-        let mut backlogs_by_team: std::collections::HashMap<crate::domain::id::Id, Vec<_>> =
-            std::collections::HashMap::with_capacity(32);
-        for backlog in pending_backlogs {
-            backlogs_by_team
-                .entry(backlog.team_id)
-                .or_default()
-                .push(backlog);
-        }
+        let mut counts = BacklogCounts::default();
 
         for (team_id, team_backlogs) in backlogs_by_team {
-            info!(
-                "{}",
-                tr_log_args(
-                    "backlog-team-processing",
-                    &[
-                        (
-                            "team_id",
-                            fluent_bundle::FluentValue::from(team_id.to_string())
-                        ),
-                        (
-                            "count",
-                            fluent_bundle::FluentValue::from(team_backlogs.len().to_string())
-                        ),
-                    ],
-                )
-            );
-
-            for backlog in team_backlogs {
-                match self.process_single_backlog(backlog).await {
-                    Ok(BacklogOutcome::Reactivated) => reactivated_count += 1,
-                    Ok(BacklogOutcome::Expired) => expired_count += 1,
-                    Ok(BacklogOutcome::RetryExhausted) => retry_exhausted_count += 1,
-                    Ok(BacklogOutcome::Denied) => denied_count += 1,
-                    Ok(BacklogOutcome::Queued) => queued_count += 1,
-                    Ok(BacklogOutcome::Skipped) => skipped_count += 1,
-                    Err(e) => {
-                        error!(
-                            "{}",
-                            tr_log_args(
-                                "backlog-processing-failed",
-                                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                            )
-                        );
-                        failed_count += 1;
-                    }
-                }
-            }
+            counts.add(self.process_team_backlogs(team_id, team_backlogs).await);
         }
 
+        log_backlog_summary(&counts);
+
+        Ok(())
+    }
+
+    /// 处理单个团队的积压任务，返回按 `BacklogOutcome` 分类的计数。
+    async fn process_team_backlogs(
+        &self,
+        team_id: crate::domain::id::Id,
+        team_backlogs: Vec<TasksBacklog>,
+    ) -> BacklogCounts {
         info!(
             "{}",
             tr_log_args(
-                "backlog-processing-summary",
+                "backlog-team-processing",
                 &[
                     (
-                        "reactivated",
-                        fluent_bundle::FluentValue::from(reactivated_count.to_string())
+                        "team_id",
+                        fluent_bundle::FluentValue::from(team_id.to_string())
                     ),
                     (
-                        "expired",
-                        fluent_bundle::FluentValue::from(expired_count.to_string())
-                    ),
-                    (
-                        "retry_exhausted",
-                        fluent_bundle::FluentValue::from(retry_exhausted_count.to_string())
-                    ),
-                    (
-                        "denied",
-                        fluent_bundle::FluentValue::from(denied_count.to_string())
-                    ),
-                    (
-                        "queued",
-                        fluent_bundle::FluentValue::from(queued_count.to_string())
-                    ),
-                    (
-                        "skipped",
-                        fluent_bundle::FluentValue::from(skipped_count.to_string())
-                    ),
-                    (
-                        "failed",
-                        fluent_bundle::FluentValue::from(failed_count.to_string())
+                        "count",
+                        fluent_bundle::FluentValue::from(team_backlogs.len().to_string())
                     ),
                 ],
             )
         );
 
-        Ok(())
+        let mut counts = BacklogCounts::default();
+        for backlog in team_backlogs {
+            match self.process_single_backlog(backlog).await {
+                Ok(BacklogOutcome::Reactivated) => counts.reactivated += 1,
+                Ok(BacklogOutcome::Expired) => counts.expired += 1,
+                Ok(BacklogOutcome::RetryExhausted) => counts.retry_exhausted += 1,
+                Ok(BacklogOutcome::Denied) => counts.denied += 1,
+                Ok(BacklogOutcome::Queued) => counts.queued += 1,
+                Ok(BacklogOutcome::Skipped) => counts.skipped += 1,
+                Err(e) => {
+                    error!(
+                        "{}",
+                        tr_log_args(
+                            "backlog-processing-failed",
+                            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                        )
+                    );
+                    counts.failed += 1;
+                }
+            }
+        }
+
+        counts
     }
 
     /// 处理单个积压任务
@@ -431,35 +420,7 @@ impl BacklogWorker {
             .ok_or_else(|| WorkerError::NotFound(format!("Task {} not found", backlog.task_id)))?;
 
         if task.status != TaskStatus::Queued {
-            info!(
-                "{}",
-                tr_log_args(
-                    "backlog-task-status-not-activatable",
-                    &[
-                        (
-                            "task_id",
-                            fluent_bundle::FluentValue::from(task.id.to_string())
-                        ),
-                        (
-                            "status",
-                            fluent_bundle::FluentValue::from(task.status.to_string())
-                        ),
-                    ],
-                )
-            );
-
-            // 标记积压任务为已完成
-            let mut completed_backlog = backlog.clone();
-            completed_backlog
-                .mark_completed()
-                .map_err(|e| WorkerError::DomainError(e.to_string()))?;
-
-            self.tasks_backlog_repository
-                .update(&completed_backlog)
-                .await
-                .repo_err()?;
-
-            return Ok(());
+            return self.complete_inactive_backlog(&task, backlog).await;
         }
 
         // 3. 更新任务状态为queued，准备重新执行
@@ -473,15 +434,7 @@ impl BacklogWorker {
             .repo_err()?;
 
         // 4. 标记积压任务为已完成
-        let mut completed_backlog = backlog.clone();
-        completed_backlog
-            .mark_completed()
-            .map_err(WorkerError::DomainError)?;
-
-        self.tasks_backlog_repository
-            .update(&completed_backlog)
-            .await
-            .repo_err()?;
+        Self::mark_backlog_completed(self.tasks_backlog_repository.as_ref(), backlog).await?;
 
         info!(
             "{}",
@@ -493,6 +446,46 @@ impl BacklogWorker {
                 )],
             )
         );
+        Ok(())
+    }
+
+    /// 任务已非 Queued（不可重新激活）：记录日志并把积压项标记完成
+    /// （自 [`Self::reactivate_task`] 提取）。
+    async fn complete_inactive_backlog(
+        &self,
+        task: &crate::domain::models::Task,
+        backlog: crate::domain::repositories::tasks_backlog_repository::TasksBacklog,
+    ) -> Result<(), WorkerError> {
+        info!(
+            "{}",
+            tr_log_args(
+                "backlog-task-status-not-activatable",
+                &[
+                    (
+                        "task_id",
+                        fluent_bundle::FluentValue::from(task.id.to_string())
+                    ),
+                    (
+                        "status",
+                        fluent_bundle::FluentValue::from(task.status.to_string())
+                    ),
+                ],
+            )
+        );
+
+        Self::mark_backlog_completed(self.tasks_backlog_repository.as_ref(), backlog).await
+    }
+
+    /// 把积压项标记完成并持久化（自 [`Self::reactivate_task`] 提取）。
+    async fn mark_backlog_completed(
+        repository: &dyn crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository,
+        mut backlog: crate::domain::repositories::tasks_backlog_repository::TasksBacklog,
+    ) -> Result<(), WorkerError> {
+        backlog
+            .mark_completed()
+            .map_err(|e| WorkerError::DomainError(e.to_string()))?;
+
+        repository.update(&backlog).await.repo_err()?;
         Ok(())
     }
 
@@ -599,6 +592,61 @@ impl BacklogWorker {
 
         Ok(())
     }
+}
+
+/// 按团队分组积压项（容量预分配 32）。
+fn group_backlogs_by_team(
+    pending_backlogs: Vec<TasksBacklog>,
+) -> std::collections::HashMap<crate::domain::id::Id, Vec<TasksBacklog>> {
+    let mut backlogs_by_team: std::collections::HashMap<crate::domain::id::Id, Vec<TasksBacklog>> =
+        std::collections::HashMap::with_capacity(32);
+    for backlog in pending_backlogs {
+        backlogs_by_team
+            .entry(backlog.team_id)
+            .or_default()
+            .push(backlog);
+    }
+    backlogs_by_team
+}
+
+/// 输出积压处理汇总（各分类计数）。
+fn log_backlog_summary(counts: &BacklogCounts) {
+    info!(
+        "{}",
+        tr_log_args(
+            "backlog-processing-summary",
+            &[
+                (
+                    "reactivated",
+                    fluent_bundle::FluentValue::from(counts.reactivated.to_string())
+                ),
+                (
+                    "expired",
+                    fluent_bundle::FluentValue::from(counts.expired.to_string())
+                ),
+                (
+                    "retry_exhausted",
+                    fluent_bundle::FluentValue::from(counts.retry_exhausted.to_string())
+                ),
+                (
+                    "denied",
+                    fluent_bundle::FluentValue::from(counts.denied.to_string())
+                ),
+                (
+                    "queued",
+                    fluent_bundle::FluentValue::from(counts.queued.to_string())
+                ),
+                (
+                    "skipped",
+                    fluent_bundle::FluentValue::from(counts.skipped.to_string())
+                ),
+                (
+                    "failed",
+                    fluent_bundle::FluentValue::from(counts.failed.to_string())
+                ),
+            ],
+        )
+    );
 }
 
 #[async_trait]

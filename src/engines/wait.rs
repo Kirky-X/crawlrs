@@ -85,7 +85,6 @@ impl WaitFor {
             EnableParams as NetworkEnableParams, EventLoadingFailed, EventLoadingFinished,
             EventRequestWillBeSent,
         };
-        use futures::StreamExt;
 
         // 事件流订阅是异步的，任何失败都 fail-open 到固定 sleep
         let setup = async {
@@ -134,6 +133,40 @@ impl WaitFor {
 
         // 统一出口：等待结束时 best-effort Network.disable——tab 池复用下
         // Network domain 常开会让浏览器为页面剩余生命周期持续分发网络事件
+        let result = Self::wait_idle_events(
+            &mut started,
+            &mut finished,
+            &mut failed,
+            &mut tracker,
+            quiet_window,
+            deadline,
+        )
+        .await;
+
+        let _ = page
+            .execute(chromiumoxide::cdp::browser_protocol::network::DisableParams::default())
+            .await;
+        result
+    }
+
+    /// 网络事件循环（自 [`Self::wait_network_idle`] 提取）：维护 in-flight
+    /// 计数直到 `quiet_window` 空闲或到达 deadline。
+    async fn wait_idle_events(
+        started: &mut chromiumoxide::listeners::EventStream<
+            chromiumoxide::cdp::browser_protocol::network::EventRequestWillBeSent,
+        >,
+        finished: &mut chromiumoxide::listeners::EventStream<
+            chromiumoxide::cdp::browser_protocol::network::EventLoadingFinished,
+        >,
+        failed: &mut chromiumoxide::listeners::EventStream<
+            chromiumoxide::cdp::browser_protocol::network::EventLoadingFailed,
+        >,
+        tracker: &mut NetworkIdleTracker,
+        quiet_window: Duration,
+        deadline: Instant,
+    ) -> Result<(), EngineError> {
+        use futures::StreamExt;
+
         let result: Result<(), EngineError> = loop {
             tracker.tick(Instant::now());
             if tracker.is_idle_for(Instant::now(), quiet_window) {
@@ -160,10 +193,6 @@ impl WaitFor {
                 _ = tokio::time::sleep(NETWORK_EVENT_POLL_INTERVAL) => {}
             }
         };
-
-        let _ = page
-            .execute(chromiumoxide::cdp::browser_protocol::network::DisableParams::default())
-            .await;
         result
     }
 

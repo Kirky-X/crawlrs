@@ -81,85 +81,105 @@ impl SogouSearchEngine {
         html_content: &str,
     ) -> Result<Vec<ResponseItem>, SearchError> {
         let document = Html::parse_document(html_content);
-        let result_selector =
-            safe_parse_selector(".vrwrap, .rb").expect("Failed to parse Sogou result selector");
-        let title_selector =
-            safe_parse_selector("h3").expect("Failed to parse Sogou title selector");
-        let link_selector =
-            safe_parse_selector("h3 a").expect("Failed to parse Sogou link selector");
-        // 搜狗中转链接的真实 URL 存在 data-url 属性里（参考 searxng _extract_url）。
-        let data_url_selector =
-            safe_parse_selector("[data-url]").expect("Failed to parse Sogou data-url selector");
-        // 摘要选择器（按优先级回退）：text-layout > ft > 裸 p
-        // 保持原 smart 端 parse_sogou_results 行为（等价）。
-        let snippet_selector = safe_parse_selector("div.text-layout p, div.ft p, p")
-            .expect("Failed to parse Sogou snippet selector");
-
+        let selectors = SogouSelectors::new();
         let mut results = Vec::with_capacity(10);
 
-        for element in document.select(&result_selector) {
-            // 过滤特殊内容容器（广告/推荐等），参考 SearXNG XPath:
-            // `vrwrap and not(.//div[contains(@class, "special-wrap")])`
-            if element
-                .select(&safe_parse_selector("div.special-wrap").expect("special-wrap selector"))
-                .next()
-                .is_some()
-            {
-                continue;
-            }
-
-            // 提取标题 - 获取纯文本并清理空白
-            let title_node = element.select(&title_selector).next();
-            let raw_title = match title_node {
-                Some(node) => node.text().collect::<String>(),
-                None => continue,
-            };
-            let title = escape_html_text(raw_title.trim());
-
-            if title.is_empty() {
-                continue;
-            }
-
-            // 提取链接
-            let url_node = element.select(&link_selector).next();
-            let raw_url = match url_node {
-                Some(node) => node.value().attr("href").unwrap_or("").to_string(),
-                None => continue,
-            };
-
-            // 搜狗中转链接 `/link?url=XXX` 里的 XXX 是内部 ID（非 URL 编码的真实 URL），
-            // 无法直接解码。真实 URL 在同一 vrwrap 块的 `data-url` 属性里。
-            // 参考 searxng/searx/engines/sogou.py 的 `_extract_url`。
-            let resolved_url = if raw_url.starts_with("/link?url=") {
-                element
-                    .select(&data_url_selector)
-                    .next()
-                    .and_then(|n| n.value().attr("data-url"))
-                    .map(|s| s.to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_default()
-            } else {
-                self.resolve_url(&raw_url)
-            };
-
-            if !resolved_url.is_empty() {
-                // 提取摘要 - 按选择器优先级回退，找到第一个非空文本
-                let description = element
-                    .select(&snippet_selector)
-                    .next()
-                    .map(|node| escape_html_text(&node.text().collect::<String>()))
-                    .unwrap_or_default();
-
-                results.push(ResponseItem {
-                    title,
-                    url: resolved_url,
-                    description,
-                    engine: SearchEngineType::Sogou,
-                });
+        for element in document.select(&selectors.result) {
+            if let Some(item) = self.parse_result_element(element, &selectors) {
+                results.push(item);
             }
         }
 
         Ok(results)
+    }
+
+    /// 解析单个结果容器：广告/推荐容器、缺标题、缺链接、空 URL 均跳过
+    /// （`None`），成功时产出补齐标题/URL/摘要的结果项。
+    fn parse_result_element(
+        &self,
+        element: scraper::ElementRef<'_>,
+        selectors: &SogouSelectors,
+    ) -> Option<ResponseItem> {
+        // 过滤特殊内容容器（广告/推荐等），参考 SearXNG XPath:
+        // `vrwrap and not(.//div[contains(@class, "special-wrap")])`
+        if element.select(&selectors.special_wrap).next().is_some() {
+            return None;
+        }
+
+        // 提取标题 - 获取纯文本并清理空白
+        let title_node = element.select(&selectors.title).next()?;
+        let raw_title = title_node.text().collect::<String>();
+        let title = escape_html_text(raw_title.trim());
+
+        if title.is_empty() {
+            return None;
+        }
+
+        // 提取链接
+        let url_node = element.select(&selectors.link).next()?;
+        let raw_url = url_node.value().attr("href").unwrap_or("").to_string();
+
+        // 搜狗中转链接 `/link?url=XXX` 里的 XXX 是内部 ID（非 URL 编码的真实 URL），
+        // 无法直接解码。真实 URL 在同一 vrwrap 块的 `data-url` 属性里。
+        // 参考 searxng/searx/engines/sogou.py 的 `_extract_url`。
+        let resolved_url = if raw_url.starts_with("/link?url=") {
+            element
+                .select(&selectors.data_url)
+                .next()
+                .and_then(|n| n.value().attr("data-url"))
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_default()
+        } else {
+            self.resolve_url(&raw_url)
+        };
+
+        if resolved_url.is_empty() {
+            return None;
+        }
+
+        // 提取摘要 - 按选择器优先级回退，找到第一个非空文本
+        let description = element
+            .select(&selectors.snippet)
+            .next()
+            .map(|node| escape_html_text(&node.text().collect::<String>()))
+            .unwrap_or_default();
+
+        Some(ResponseItem {
+            title,
+            url: resolved_url,
+            description,
+            engine: SearchEngineType::Sogou,
+        })
+    }
+}
+
+/// Sogou 结果解析所需的 CSS 选择器集合（构造失败即 panic，与原就地解析语义一致）
+struct SogouSelectors {
+    result: scraper::Selector,
+    title: scraper::Selector,
+    link: scraper::Selector,
+    data_url: scraper::Selector,
+    snippet: scraper::Selector,
+    special_wrap: scraper::Selector,
+}
+
+impl SogouSelectors {
+    fn new() -> Self {
+        Self {
+            result: safe_parse_selector(".vrwrap, .rb")
+                .expect("Failed to parse Sogou result selector"),
+            title: safe_parse_selector("h3").expect("Failed to parse Sogou title selector"),
+            link: safe_parse_selector("h3 a").expect("Failed to parse Sogou link selector"),
+            // 搜狗中转链接的真实 URL 存在 data-url 属性里（参考 searxng _extract_url）。
+            data_url: safe_parse_selector("[data-url]")
+                .expect("Failed to parse Sogou data-url selector"),
+            // 摘要选择器（按优先级回退）：text-layout > ft > 裸 p
+            // 保持原 smart 端 parse_sogou_results 行为（等价）。
+            snippet: safe_parse_selector("div.text-layout p, div.ft p, p")
+                .expect("Failed to parse Sogou snippet selector"),
+            special_wrap: safe_parse_selector("div.special-wrap").expect("special-wrap selector"),
+        }
     }
 }
 
@@ -184,49 +204,7 @@ impl SearchEngine for SogouSearchEngine {
             }
         }
 
-        let base_url = "https://www.sogou.com/web";
-
-        // 分页支持（参考 SearXNG sogou.py `page` 参数）
-        let page = if request.offset > 0 {
-            (request.offset / request.limit.max(1)) + 1
-        } else {
-            1
-        };
-
-        let full_url = format!(
-            "{}?query={}&page={}",
-            base_url,
-            urlencoding::encode(&request.query),
-            page,
-        );
-
-        // 构建请求头（参考 SearXNG + 完整浏览器指纹）
-        let mut headers = HashMap::with_capacity(6);
-        headers.insert(
-            "Accept".to_string(),
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-                .to_string(),
-        );
-        headers.insert(
-            "Accept-Language".to_string(),
-            "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
-        );
-        headers.insert("DNT".to_string(), "1".to_string());
-        headers.insert("Connection".to_string(), "keep-alive".to_string());
-        headers.insert("Sec-GPC".to_string(), "1".to_string());
-        headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
-
-        // 使用 EngineClient 进行请求
-        let options = ScrapeOptions {
-            headers,
-            timeout: std::time::Duration::from_secs(30),
-            ..Default::default()
-        };
-
-        let engine_request = EngineScrapeRequest {
-            url: full_url,
-            options,
-        };
+        let engine_request = build_engine_request(request);
 
         let scrape_response = self
             .engine_client
@@ -243,12 +221,7 @@ impl SearchEngine for SogouSearchEngine {
 
         let html_content = scrape_response.content;
 
-        // 反爬检测：Sogou 302 重定向到 antispider 页面
-        // （参考 SearXNG sogou.py response：resp.next_request.url starts with antispider）
-        // 由于 EngineClient 自动跟随重定向，最终 content 会是 antispider 页面内容
-        if html_content.contains("www.sogou.com/antispider")
-            || html_content.contains("antispider") && html_content.contains("验证")
-        {
+        if is_antispider_page(&html_content) {
             return Err(SearchError::Captcha("Sogou".to_string()));
         }
         let items = self.parse_search_results(&html_content)?;
@@ -260,6 +233,65 @@ impl SearchEngine for SogouSearchEngine {
             engine: SearchEngineType::Sogou,
         })
     }
+}
+
+/// offset/limit 推导 1-based 页码（limit 0 防除零取 1）
+fn page_from_offset(offset: u32, limit: u32) -> u32 {
+    if offset > 0 {
+        (offset / limit.max(1)) + 1
+    } else {
+        1
+    }
+}
+
+/// 构建请求头（参考 SearXNG + 完整浏览器指纹）
+fn build_search_headers() -> HashMap<String, String> {
+    let mut headers = HashMap::with_capacity(6);
+    headers.insert(
+        "Accept".to_string(),
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string(),
+    );
+    headers.insert(
+        "Accept-Language".to_string(),
+        "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
+    );
+    headers.insert("DNT".to_string(), "1".to_string());
+    headers.insert("Connection".to_string(), "keep-alive".to_string());
+    headers.insert("Sec-GPC".to_string(), "1".to_string());
+    headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
+    headers
+}
+
+/// 组装 EngineClient 请求：query 编码 + 分页参数
+fn build_engine_request(request: &SearchRequest) -> EngineScrapeRequest {
+    let base_url = "https://www.sogou.com/web";
+
+    // 分页支持（参考 SearXNG sogou.py `page` 参数）
+    let page = page_from_offset(request.offset, request.limit);
+
+    let full_url = format!(
+        "{}?query={}&page={}",
+        base_url,
+        urlencoding::encode(&request.query),
+        page,
+    );
+
+    EngineScrapeRequest {
+        url: full_url,
+        options: ScrapeOptions {
+            headers: build_search_headers(),
+            timeout: std::time::Duration::from_secs(30),
+            ..Default::default()
+        },
+    }
+}
+
+/// 反爬检测：Sogou 302 重定向到 antispider 页面
+/// （参考 SearXNG sogou.py response：resp.next_request.url starts with antispider）
+/// 由于 EngineClient 自动跟随重定向，最终 content 会是 antispider 页面内容
+fn is_antispider_page(html_content: &str) -> bool {
+    html_content.contains("www.sogou.com/antispider")
+        || html_content.contains("antispider") && html_content.contains("验证")
 }
 
 /// 仅测试构建可用的固定结果旁路：`SOGOU_TEST_RESULTS=true` 时返回确定性结果。

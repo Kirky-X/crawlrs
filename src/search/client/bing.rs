@@ -231,24 +231,7 @@ impl SearchEngine for BingSearchEngine {
         // 构建请求头
         // 参考 searxng/searx/engines/bing.py fetch_traits：
         // 完整的浏览器指纹 headers 降低反爬检测概率
-        let mut headers = HashMap::with_capacity(8);
-        headers.insert(
-            "Accept".to_string(),
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-                .to_string(),
-        );
-        // 根据请求的 language/country 动志化 Accept-Language（参考 searxng override_accept_language）
-        let accept_lang = match (&request.lang, &request.country) {
-            (Some(lang), Some(country)) => format!("{}-{},{};q=0.9,en;q=0.5", lang, country, lang),
-            (Some(lang), None) => format!("{},{};q=0.9,en;q=0.5", lang, lang),
-            _ => "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
-        };
-        headers.insert("Accept-Language".to_string(), accept_lang);
-        headers.insert("DNT".to_string(), "1".to_string());
-        headers.insert("Connection".to_string(), "keep-alive".to_string());
-        headers.insert("Upgrade-Insecure-Requests".to_string(), "1".to_string());
-        headers.insert("Sec-GPC".to_string(), "1".to_string());
-        headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
+        let headers = build_bing_headers(request.lang.as_deref(), request.country.as_deref());
 
         // 使用 EngineClient 进行请求
         let options = ScrapeOptions {
@@ -282,6 +265,31 @@ impl SearchEngine for BingSearchEngine {
             engine: SearchEngineType::Bing,
         })
     }
+}
+
+/// 构建 Bing 搜索请求头（完整浏览器指纹，降低反爬检测概率）。
+///
+/// Accept-Language 按请求 language/country 动态生成
+/// （参考 searxng override_accept_language）。
+fn build_bing_headers(lang: Option<&str>, country: Option<&str>) -> HashMap<String, String> {
+    let mut headers = HashMap::with_capacity(8);
+    headers.insert(
+        "Accept".to_string(),
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string(),
+    );
+    // 根据请求的 language/country 动志化 Accept-Language（参考 searxng override_accept_language）
+    let accept_lang = match (lang, country) {
+        (Some(lang), Some(country)) => format!("{}-{},{};q=0.9,en;q=0.5", lang, country, lang),
+        (Some(lang), None) => format!("{},{};q=0.9,en;q=0.5", lang, lang),
+        _ => "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
+    };
+    headers.insert("Accept-Language".to_string(), accept_lang);
+    headers.insert("DNT".to_string(), "1".to_string());
+    headers.insert("Connection".to_string(), "keep-alive".to_string());
+    headers.insert("Upgrade-Insecure-Requests".to_string(), "1".to_string());
+    headers.insert("Sec-GPC".to_string(), "1".to_string());
+    headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
+    headers
 }
 
 /// 仅测试构建可用的固定结果旁路：`BING_TEST_RESULTS=true` 时返回确定性结果。

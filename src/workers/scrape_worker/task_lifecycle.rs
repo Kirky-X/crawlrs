@@ -3,16 +3,17 @@
 
 //! `ScrapeWorker` 任务准入与结果提取辅助（从 `mod.rs` 拆分的 partial impl block）
 
+use super::extraction_billing::{ExtractionSettlement, ExtractionSpec};
 use super::ScrapeWorker;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::domain::models::Task;
+use crate::domain::services::llm::TokenUsage;
 #[cfg(feature = "metrics")]
 use crate::workers::scheduler::memory_scheduler::{Admission, MemoryState};
 use anyhow::Result;
 use chrono::Utc;
-use log::{error, warn};
+use log::warn;
 use serde_json::Value;
-use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::OwnedSemaphorePermit;
 
 impl ScrapeWorker {
@@ -135,7 +136,9 @@ impl ScrapeWorker {
     /// 提取阶段（自 [`ScrapeWorker::handle_scrape_success`] 提取）：解析
     /// ScrapeRequest 以检查是否有提取规则，按优先级依次尝试
     /// extraction_rules → extraction_prompt（空串视为未设置）→ extraction_schema，
-    /// 命中即执行并记录 token 用量。返回 (提取结果, 待守卫胜利后扣除的用量)。
+    /// 命中即经共享 [`ScrapeWorker::dispatch_extraction`] 执行（Deferred 结算：
+    /// 只记录 token 用量，扣费延后至守卫胜利后）。返回
+    /// (提取结果, 待守卫胜利后扣除的用量)。
     ///
     /// 提取失败仅 error 留痕不阻断（markdown 同策略），错误文案逐字保留。
     pub(super) async fn run_extraction_stage(
@@ -143,120 +146,37 @@ impl ScrapeWorker {
         task: &Task,
         parsed_req: Option<&ScrapeRequestDto>,
         content: &str,
-    ) -> (Option<Value>, Vec<crate::domain::services::llm::TokenUsage>) {
-        let mut pending_token_usages: Vec<crate::domain::services::llm::TokenUsage> = Vec::new();
+    ) -> (Option<Value>, Vec<TokenUsage>) {
+        let mut pending_token_usages: Vec<TokenUsage> = Vec::new();
         let mut extracted_data = None;
         if let Some(req) = parsed_req {
-            if let Some(rules) = &req.extraction_rules {
-                extracted_data = self
-                    .try_rule_extraction(task, content, rules, &mut pending_token_usages)
-                    .await;
+            let spec = if let Some(rules) = &req.extraction_rules {
+                Some(ExtractionSpec::Rules(rules))
             } else if let Some(prompt) = &req.extraction_prompt {
                 // extraction_prompt 为空字符串时视为未设置
-                if !prompt.is_empty() {
-                    extracted_data = self
-                        .try_prompt_extraction(task, content, prompt, &mut pending_token_usages)
-                        .await;
+                (!prompt.is_empty()).then_some(ExtractionSpec::Prompt(prompt.as_str()))
+            } else {
+                req.extraction_schema.as_ref().map(ExtractionSpec::Schema)
+            };
+
+            if let Some(spec) = spec {
+                match self
+                    .dispatch_extraction(
+                        task,
+                        content,
+                        &task.url,
+                        &spec,
+                        ExtractionSettlement::Deferred {
+                            usage_acc: &mut pending_token_usages,
+                        },
+                    )
+                    .await
+                {
+                    Ok(data) => extracted_data = Some(data),
+                    Err(e) => spec.log_failure(&task.url, &e),
                 }
-            } else if let Some(schema) = &req.extraction_schema {
-                extracted_data = self
-                    .try_schema_extraction(task, content, schema, &mut pending_token_usages)
-                    .await;
             }
         }
         (extracted_data, pending_token_usages)
-    }
-
-    /// extraction_rules 路径（自 [`ScrapeWorker::run_extraction_stage`] 提取）
-    async fn try_rule_extraction(
-        &self,
-        task: &Task,
-        content: &str,
-        rules: &std::collections::HashMap<
-            String,
-            crate::domain::services::extraction_service::ExtractionRule,
-        >,
-        pending_token_usages: &mut Vec<crate::domain::services::llm::TokenUsage>,
-    ) -> Option<Value> {
-        let mut extracted_data = None;
-        match self
-            .extraction_service
-            .extract(content, rules, Some(&task.url))
-            .await
-        {
-            Ok((data, usage)) => {
-                extracted_data = Some(data);
-                // Record usage (PRD-334: Tokens Billing) — 扣费延后至守卫胜利后
-                self.record_extraction_usage(task, usage, pending_token_usages);
-            }
-            Err(e) => {
-                error!("Extraction failed for url {}: {}", task.url, e);
-            }
-        }
-        extracted_data
-    }
-
-    /// extraction_prompt 路径（自 [`ScrapeWorker::run_extraction_stage`] 提取）
-    async fn try_prompt_extraction(
-        &self,
-        task: &Task,
-        content: &str,
-        prompt: &str,
-        pending_token_usages: &mut Vec<crate::domain::services::llm::TokenUsage>,
-    ) -> Option<Value> {
-        let mut extracted_data = None;
-        match self.extract_with_prompt(content, prompt, &task.url).await {
-            Ok((data, usage)) => {
-                extracted_data = Some(data);
-                self.record_extraction_usage(task, usage, pending_token_usages);
-            }
-            Err(e) => {
-                error!("Prompt extraction failed for url {}: {}", task.url, e);
-            }
-        }
-        extracted_data
-    }
-
-    /// extraction_schema 路径（自 [`ScrapeWorker::run_extraction_stage`] 提取）
-    async fn try_schema_extraction(
-        &self,
-        task: &Task,
-        content: &str,
-        schema: &Value,
-        pending_token_usages: &mut Vec<crate::domain::services::llm::TokenUsage>,
-    ) -> Option<Value> {
-        let mut extracted_data = None;
-        match self.extract_with_schema(content, schema).await {
-            Ok((data, usage)) => {
-                extracted_data = Some(data);
-                self.record_extraction_usage(task, usage, pending_token_usages);
-            }
-            Err(e) => {
-                error!("Schema extraction failed for url {}: {}", task.url, e);
-            }
-        }
-        extracted_data
-    }
-
-    /// 记录单次提取的 token 用量（自 [`ScrapeWorker::handle_scrape_success`] 提取）
-    ///
-    /// 1. Record in-memory for real-time tracking
-    /// 2. Defer DB deduction until the completion guard is won
-    pub(super) fn record_extraction_usage(
-        &self,
-        task: &Task,
-        usage: crate::domain::services::llm::TokenUsage,
-        pending_token_usages: &mut Vec<crate::domain::services::llm::TokenUsage>,
-    ) {
-        if usage.total_tokens > 0 {
-            // 1. Record in-memory for real-time tracking
-            self.token_usage
-                .entry(task.team_id)
-                .or_insert_with(|| AtomicI64::new(0))
-                .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
-
-            // 2. Defer DB deduction until the completion guard is won
-            pending_token_usages.push(usage);
-        }
     }
 }

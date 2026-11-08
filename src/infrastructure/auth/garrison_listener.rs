@@ -78,7 +78,7 @@ use crate::domain::services::audit_log_builder::AuditLogBuilder;
 use crate::domain::services::audit_service::AuditServiceTrait;
 use async_trait::async_trait;
 use garrison::context::tenant::current_tenant_id_strict;
-use garrison::error::GarrisonResult;
+use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::listener::{GarrisonEvent, GarrisonListener, RequestContext};
 use parking_lot::RwLock;
 use std::net::IpAddr;
@@ -482,366 +482,470 @@ impl GarrisonListener for CrawlrsAuditListener {
 /// - `Ok(AuditLogEntry)` — 转换成功
 /// - `Err(GarrisonError)` — 内部错误（理论上不可达，所有变体都被覆盖）
 fn event_to_audit_entry(event: &GarrisonEvent) -> GarrisonResult<AuditLogEntry> {
-    let (action, decision, denial_reason, login_id): (
-        &str,
-        AuditDecision,
-        Option<String>,
-        Option<&str>,
-    ) = match event {
-        GarrisonEvent::Login { login_id, .. } => (
+    if let Some(entry) = entry_with_metadata(event) {
+        return Ok(entry);
+    }
+
+    // 通用路径（无特殊 metadata 处理的变体）
+    let (action, decision, denial_reason, login_id) = basic_event_fields(event)
+        .ok_or_else(|| GarrisonError::Internal("unsupported garrison event".to_string()))?;
+    let entry = build_entry(action, decision, denial_reason, login_id, event);
+    Ok(entry.build())
+}
+
+/// 无特殊 metadata 处理的变体字段（自 [`event_to_audit_entry`] 提取）。
+///
+/// 返回 `(action, decision, denial_reason, login_id)`；带特殊 metadata 的
+/// 变体返回 `None`，由 [`entry_with_metadata`] 处理。
+fn basic_event_fields(
+    event: &GarrisonEvent,
+) -> Option<(&'static str, AuditDecision, Option<String>, Option<&str>)> {
+    match event {
+        GarrisonEvent::Login { login_id, .. } => Some((
             "auth.login",
             AuditDecision::Allow,
             None,
             Some(login_id.as_str()),
-        ),
-        GarrisonEvent::Logout { login_id, .. } => (
+        )),
+        GarrisonEvent::Logout { login_id, .. } => Some((
             "auth.logout",
             AuditDecision::Allow,
             None,
             Some(login_id.as_str()),
-        ),
+        )),
         GarrisonEvent::LoginFailure {
             login_id, reason, ..
-        } => (
+        } => Some((
             "auth.login",
             AuditDecision::Deny,
             Some(truncate_string(reason, MAX_DENIAL_REASON_LEN)),
             Some(login_id.as_str()),
-        ),
+        )),
         GarrisonEvent::Kickout {
             login_id, reason, ..
-        } => (
+        } => Some((
             "auth.kickout",
             AuditDecision::Deny,
             Some(truncate_string(reason, MAX_DENIAL_REASON_LEN)),
             Some(login_id.as_str()),
-        ),
+        )),
+        GarrisonEvent::TokenExpired { .. } => {
+            Some(("auth.token_expired", AuditDecision::Deny, None, None))
+        }
+        GarrisonEvent::SessionTimeout { login_id, .. } => Some((
+            "auth.session_timeout",
+            AuditDecision::Deny,
+            None,
+            Some(login_id.as_str()),
+        )),
+        GarrisonEvent::AccountLocked {
+            login_id, reason, ..
+        } => Some((
+            "auth.account_locked",
+            AuditDecision::Deny,
+            Some(truncate_string(reason, MAX_DENIAL_REASON_LEN)),
+            Some(login_id.as_str()),
+        )),
+        GarrisonEvent::FirewallBlock {
+            login_id, reason, ..
+        } => Some((
+            "auth.firewall_block",
+            AuditDecision::Deny,
+            Some(truncate_string(reason, MAX_DENIAL_REASON_LEN)),
+            Some(login_id.as_str()),
+        )),
+        GarrisonEvent::Replaced {
+            login_id, reason, ..
+        } => Some((
+            "auth.replaced",
+            AuditDecision::Deny,
+            Some(truncate_string(reason, MAX_DENIAL_REASON_LEN)),
+            Some(login_id.as_str()),
+        )),
+        // rc.3 新增事件：重哈希与扫码登录，与同类 auth.* 事件同构处理（携 request_context）。
+        // PasswordRehashed 无特殊 metadata，走下方通用路径；携 login_id。
+        GarrisonEvent::PasswordRehashed { login_id, .. } => Some((
+            "auth.password_rehashed",
+            AuditDecision::Allow,
+            None,
+            Some(login_id.as_str()),
+        )),
+        // 以下变体各自构造带 metadata 的条目，见 [`entry_with_metadata`]。
+        GarrisonEvent::PermissionCheck { .. }
+        | GarrisonEvent::RoleCheck { .. }
+        | GarrisonEvent::TokenRefresh { .. }
+        | GarrisonEvent::RevokeToken { .. }
+        | GarrisonEvent::TokenRotate { .. }
+        | GarrisonEvent::TempCredentialConsumed { .. }
+        | GarrisonEvent::SocialLogin { .. }
+        | GarrisonEvent::TenantSwitch { .. }
+        | GarrisonEvent::DeviceBlock { .. }
+        | GarrisonEvent::DeviceUnblock { .. }
+        | GarrisonEvent::ConfigReload { .. }
+        | GarrisonEvent::InvitationCreated { .. }
+        | GarrisonEvent::InvitationRevoked { .. }
+        | GarrisonEvent::InvitationRedeemed { .. }
+        | GarrisonEvent::QrLoginCreated { .. }
+        | GarrisonEvent::QrLoginScanned { .. }
+        | GarrisonEvent::QrLoginConfirmed { .. }
+        | GarrisonEvent::QrLoginCancelled { .. } => None,
+    }
+}
+
+/// 构造带特殊 metadata 的审计条目（自 [`event_to_audit_entry`] 提取）。
+///
+/// 返回 `None` 表示该变体走通用路径（无特殊 metadata）。
+fn entry_with_metadata(event: &GarrisonEvent) -> Option<AuditLogEntry> {
+    match event {
         GarrisonEvent::PermissionCheck {
             login_id,
             permission,
             ..
-        } => {
-            let entry = build_entry(
-                "auth.permission_check",
-                AuditDecision::Allow,
-                None,
-                Some(login_id),
-                event,
-            )
-            .with_metadata(
-                "permission",
-                serde_json::Value::String(truncate_string(permission, MAX_PERMISSION_LEN)),
-            );
-            return Ok(entry.build());
-        }
+        } => Some(permission_check_entry(
+            login_id.as_str(),
+            permission.as_str(),
+            event,
+        )),
         GarrisonEvent::RoleCheck { login_id, role, .. } => {
-            let entry = build_entry(
-                "auth.role_check",
-                AuditDecision::Allow,
-                None,
-                Some(login_id),
-                event,
-            )
-            .with_metadata(
-                "role",
-                serde_json::Value::String(truncate_string(role, MAX_ROLE_LEN)),
-            );
-            return Ok(entry.build());
-        }
-        GarrisonEvent::TokenExpired { .. } => {
-            ("auth.token_expired", AuditDecision::Deny, None, None)
+            Some(role_check_entry(login_id.as_str(), role.as_str(), event))
         }
         GarrisonEvent::TokenRefresh {
             login_id,
             old_token,
             new_token,
             ..
-        } => {
-            let entry = build_entry(
-                "auth.token_refresh",
-                AuditDecision::Allow,
-                None,
-                Some(login_id),
-                event,
-            )
-            .with_metadata(
-                "old_token_prefix",
-                serde_json::Value::String(mask_token(old_token)),
-            )
-            .with_metadata(
-                "new_token_prefix",
-                serde_json::Value::String(mask_token(new_token)),
-            );
-            return Ok(entry.build());
-        }
-        GarrisonEvent::RevokeToken { token, .. } => {
-            let entry = build_entry("auth.revoke_token", AuditDecision::Allow, None, None, event)
-                .with_metadata("token_prefix", serde_json::Value::String(mask_token(token)));
-            return Ok(entry.build());
-        }
-        GarrisonEvent::SessionTimeout { login_id, .. } => (
-            "auth.session_timeout",
-            AuditDecision::Deny,
-            None,
-            Some(login_id.as_str()),
-        ),
-        GarrisonEvent::AccountLocked {
-            login_id, reason, ..
-        } => (
-            "auth.account_locked",
-            AuditDecision::Deny,
-            Some(truncate_string(reason, MAX_DENIAL_REASON_LEN)),
-            Some(login_id.as_str()),
-        ),
-        GarrisonEvent::FirewallBlock {
-            login_id, reason, ..
-        } => (
-            "auth.firewall_block",
-            AuditDecision::Deny,
-            Some(truncate_string(reason, MAX_DENIAL_REASON_LEN)),
-            Some(login_id.as_str()),
-        ),
+        } => Some(token_refresh_entry(
+            login_id.as_str(),
+            old_token.as_str(),
+            new_token.as_str(),
+            event,
+        )),
+        GarrisonEvent::RevokeToken { token, .. } => Some(revoke_token_entry(token.as_str(), event)),
         GarrisonEvent::TokenRotate {
             old_key, new_key, ..
-        } => {
-            let entry = build_entry("auth.token_rotate", AuditDecision::Allow, None, None, event)
-                .with_metadata(
-                    "old_key_prefix",
-                    serde_json::Value::String(mask_token(old_key)),
-                )
-                .with_metadata(
-                    "new_key_prefix",
-                    serde_json::Value::String(mask_token(new_key)),
-                );
-            return Ok(entry.build());
-        }
-        GarrisonEvent::TempCredentialConsumed { key, value, .. } => {
-            // (CWE-532): 凭据 value 不落审计，仅记长度（防下游未消费时重放）
-            let value_len = value.len();
-            let entry = build_entry(
-                "auth.temp_credential_consumed",
-                AuditDecision::Allow,
-                None,
-                None,
-                event,
-            )
-            .with_metadata("key_prefix", serde_json::Value::String(mask_token(key)))
-            .with_metadata("value_len", serde_json::Value::Number(value_len.into()));
-            return Ok(entry.build());
-        }
+        } => Some(token_rotate_entry(
+            old_key.as_str(),
+            new_key.as_str(),
+            event,
+        )),
+        GarrisonEvent::TempCredentialConsumed { key, value, .. } => Some(
+            temp_credential_consumed_entry(key.as_str(), value.as_str(), event),
+        ),
         GarrisonEvent::SocialLogin {
             provider,
             user_id,
             login_id,
             ..
-        } => {
-            let entry = build_entry(
-                "auth.social_login",
-                AuditDecision::Allow,
-                None,
-                login_id.as_deref(),
-                event,
-            )
-            .with_metadata(
-                "provider",
-                serde_json::Value::String(truncate_string(provider, MAX_PROVIDER_LEN)),
-            )
-            .with_metadata(
-                "user_id",
-                serde_json::Value::String(truncate_string(user_id, MAX_USER_ID_LEN)),
-            );
-            return Ok(entry.build());
-        }
+        } => Some(social_login_entry(
+            provider.as_str(),
+            user_id.as_str(),
+            login_id.as_deref(),
+            event,
+        )),
         GarrisonEvent::TenantSwitch {
             login_id,
             from_tenant,
             to_tenant,
             ..
-        } => {
-            let entry = build_entry(
-                "auth.tenant_switch",
-                AuditDecision::Allow,
-                None,
-                Some(login_id),
-                event,
-            )
-            .with_metadata(
-                "from_tenant",
-                serde_json::Value::Number((*from_tenant).into()),
-            )
-            .with_metadata("to_tenant", serde_json::Value::Number((*to_tenant).into()));
-            return Ok(entry.build());
-        }
+        } => Some(tenant_switch_entry(
+            login_id.as_str(),
+            *from_tenant,
+            *to_tenant,
+            event,
+        )),
         GarrisonEvent::DeviceBlock {
             login_id, device, ..
-        } => {
-            let entry = build_entry(
-                "auth.device_block",
-                AuditDecision::Deny,
-                Some("device_blocked".to_string()),
-                Some(login_id),
-                event,
-            )
-            .with_metadata(
-                "device",
-                serde_json::Value::String(truncate_string(device, MAX_DEVICE_LEN)),
-            );
-            return Ok(entry.build());
-        }
+        } => Some(device_entry(
+            "auth.device_block",
+            AuditDecision::Deny,
+            Some("device_blocked".to_string()),
+            login_id.as_str(),
+            device.as_str(),
+            event,
+        )),
         GarrisonEvent::DeviceUnblock {
             login_id, device, ..
-        } => {
-            let entry = build_entry(
-                "auth.device_unblock",
-                AuditDecision::Allow,
-                None,
-                Some(login_id),
-                event,
-            )
-            .with_metadata(
-                "device",
-                serde_json::Value::String(truncate_string(device, MAX_DEVICE_LEN)),
-            );
-            return Ok(entry.build());
-        }
-        GarrisonEvent::ConfigReload { config_version, .. } => {
-            let entry = build_entry(
-                "auth.config_reload",
-                AuditDecision::Allow,
-                None,
-                None,
-                event,
-            )
-            .with_metadata(
-                "config_version",
-                serde_json::Value::Number((*config_version).into()),
-            );
-            return Ok(entry.build());
-        }
-        GarrisonEvent::Replaced {
-            login_id, reason, ..
-        } => (
-            "auth.replaced",
-            AuditDecision::Deny,
-            Some(truncate_string(reason, MAX_DENIAL_REASON_LEN)),
-            Some(login_id.as_str()),
-        ),
-        GarrisonEvent::InvitationCreated { code, issuer_id } => {
-            let entry = build_entry(
-                "invitation.created",
-                AuditDecision::Allow,
-                None,
-                Some(issuer_id.as_str()),
-                event,
-            )
-            .with_metadata("code", serde_json::Value::String(truncate_string(code, 64)));
-            return Ok(entry.build());
-        }
-        GarrisonEvent::InvitationRevoked { code, issuer_id } => {
-            let entry = build_entry(
-                "invitation.revoked",
-                AuditDecision::Allow,
-                None,
-                Some(issuer_id.as_str()),
-                event,
-            )
-            .with_metadata("code", serde_json::Value::String(truncate_string(code, 64)));
-            return Ok(entry.build());
-        }
-        GarrisonEvent::InvitationRedeemed { code, redeemer_id } => {
-            let entry = build_entry(
-                "invitation.redeemed",
-                AuditDecision::Allow,
-                None,
-                Some(redeemer_id.as_str()),
-                event,
-            )
-            .with_metadata("code", serde_json::Value::String(truncate_string(code, 64)));
-            return Ok(entry.build());
-        }
-        // rc.3 新增事件：重哈希与扫码登录，与同类 auth.* 事件同构处理（携 request_context）。
-        // PasswordRehashed 无特殊 metadata，走下方通用路径；携 login_id。
-        GarrisonEvent::PasswordRehashed { login_id, .. } => (
-            "auth.password_rehashed",
+        } => Some(device_entry(
+            "auth.device_unblock",
             AuditDecision::Allow,
             None,
-            Some(login_id.as_str()),
-        ),
+            login_id.as_str(),
+            device.as_str(),
+            event,
+        )),
+        GarrisonEvent::ConfigReload { config_version, .. } => {
+            Some(config_reload_entry(*config_version, event))
+        }
+        GarrisonEvent::InvitationCreated { code, issuer_id } => Some(invitation_entry(
+            "invitation.created",
+            Some(issuer_id.as_str()),
+            code.as_str(),
+            event,
+        )),
+        GarrisonEvent::InvitationRevoked { code, issuer_id } => Some(invitation_entry(
+            "invitation.revoked",
+            Some(issuer_id.as_str()),
+            code.as_str(),
+            event,
+        )),
+        GarrisonEvent::InvitationRedeemed { code, redeemer_id } => Some(invitation_entry(
+            "invitation.redeemed",
+            Some(redeemer_id.as_str()),
+            code.as_str(),
+            event,
+        )),
         // 扫码会话 ID 已由 garrison 构造点脱敏（前 8 字符 + ***），仍截断防溢出；
         // Created 无登录主体，login_id 置 None。
-        GarrisonEvent::QrLoginCreated { qr_id, .. } => {
-            let entry = build_entry(
-                "auth.qr_login_created",
-                AuditDecision::Allow,
-                None,
-                None,
-                event,
-            )
-            .with_metadata(
-                "qr_id",
-                serde_json::Value::String(truncate_string(qr_id, 64)),
-            );
-            return Ok(entry.build());
-        }
+        GarrisonEvent::QrLoginCreated { qr_id, .. } => Some(qr_login_entry(
+            "auth.qr_login_created",
+            None,
+            qr_id.as_str(),
+            event,
+        )),
         GarrisonEvent::QrLoginScanned {
             qr_id,
             app_login_id,
             ..
-        } => {
-            let entry = build_entry(
-                "auth.qr_login_scanned",
-                AuditDecision::Allow,
-                None,
-                Some(app_login_id.as_str()),
-                event,
-            )
-            .with_metadata(
-                "qr_id",
-                serde_json::Value::String(truncate_string(qr_id, 64)),
-            );
-            return Ok(entry.build());
-        }
+        } => Some(qr_login_entry(
+            "auth.qr_login_scanned",
+            Some(app_login_id.as_str()),
+            qr_id.as_str(),
+            event,
+        )),
         GarrisonEvent::QrLoginConfirmed {
             qr_id,
             app_login_id,
             ..
-        } => {
-            let entry = build_entry(
-                "auth.qr_login_confirmed",
-                AuditDecision::Allow,
-                None,
-                Some(app_login_id.as_str()),
-                event,
-            )
-            .with_metadata(
-                "qr_id",
-                serde_json::Value::String(truncate_string(qr_id, 64)),
-            );
-            return Ok(entry.build());
-        }
+        } => Some(qr_login_entry(
+            "auth.qr_login_confirmed",
+            Some(app_login_id.as_str()),
+            qr_id.as_str(),
+            event,
+        )),
         GarrisonEvent::QrLoginCancelled {
             qr_id,
             app_login_id,
             ..
-        } => {
-            let entry = build_entry(
-                "auth.qr_login_cancelled",
-                AuditDecision::Allow,
-                None,
-                Some(app_login_id.as_str()),
-                event,
-            )
-            .with_metadata(
-                "qr_id",
-                serde_json::Value::String(truncate_string(qr_id, 64)),
-            );
-            return Ok(entry.build());
-        }
-    };
+        } => Some(qr_login_entry(
+            "auth.qr_login_cancelled",
+            Some(app_login_id.as_str()),
+            qr_id.as_str(),
+            event,
+        )),
+        // 通用路径（无特殊 metadata 处理的变体）
+        GarrisonEvent::Login { .. }
+        | GarrisonEvent::Logout { .. }
+        | GarrisonEvent::LoginFailure { .. }
+        | GarrisonEvent::Kickout { .. }
+        | GarrisonEvent::TokenExpired { .. }
+        | GarrisonEvent::SessionTimeout { .. }
+        | GarrisonEvent::AccountLocked { .. }
+        | GarrisonEvent::FirewallBlock { .. }
+        | GarrisonEvent::Replaced { .. }
+        | GarrisonEvent::PasswordRehashed { .. } => None,
+    }
+}
 
-    // 通用路径（无特殊 metadata 处理的变体）
-    let entry = build_entry(action, decision, denial_reason, login_id, event);
-    Ok(entry.build())
+/// PermissionCheck 条目（自 [`event_to_audit_entry`] 提取）。
+fn permission_check_entry(
+    login_id: &str,
+    permission: &str,
+    event: &GarrisonEvent,
+) -> AuditLogEntry {
+    build_entry(
+        "auth.permission_check",
+        AuditDecision::Allow,
+        None,
+        Some(login_id),
+        event,
+    )
+    .with_metadata(
+        "permission",
+        serde_json::Value::String(truncate_string(permission, MAX_PERMISSION_LEN)),
+    )
+    .build()
+}
+
+/// RoleCheck 条目（自 [`event_to_audit_entry`] 提取）。
+fn role_check_entry(login_id: &str, role: &str, event: &GarrisonEvent) -> AuditLogEntry {
+    build_entry(
+        "auth.role_check",
+        AuditDecision::Allow,
+        None,
+        Some(login_id),
+        event,
+    )
+    .with_metadata(
+        "role",
+        serde_json::Value::String(truncate_string(role, MAX_ROLE_LEN)),
+    )
+    .build()
+}
+
+/// TokenRefresh 条目（自 [`event_to_audit_entry`] 提取）。
+fn token_refresh_entry(
+    login_id: &str,
+    old_token: &str,
+    new_token: &str,
+    event: &GarrisonEvent,
+) -> AuditLogEntry {
+    build_entry(
+        "auth.token_refresh",
+        AuditDecision::Allow,
+        None,
+        Some(login_id),
+        event,
+    )
+    .with_metadata(
+        "old_token_prefix",
+        serde_json::Value::String(mask_token(old_token)),
+    )
+    .with_metadata(
+        "new_token_prefix",
+        serde_json::Value::String(mask_token(new_token)),
+    )
+    .build()
+}
+
+/// RevokeToken 条目（自 [`event_to_audit_entry`] 提取）。
+fn revoke_token_entry(token: &str, event: &GarrisonEvent) -> AuditLogEntry {
+    build_entry("auth.revoke_token", AuditDecision::Allow, None, None, event)
+        .with_metadata("token_prefix", serde_json::Value::String(mask_token(token)))
+        .build()
+}
+
+/// TokenRotate 条目（自 [`event_to_audit_entry`] 提取）。
+fn token_rotate_entry(old_key: &str, new_key: &str, event: &GarrisonEvent) -> AuditLogEntry {
+    build_entry("auth.token_rotate", AuditDecision::Allow, None, None, event)
+        .with_metadata(
+            "old_key_prefix",
+            serde_json::Value::String(mask_token(old_key)),
+        )
+        .with_metadata(
+            "new_key_prefix",
+            serde_json::Value::String(mask_token(new_key)),
+        )
+        .build()
+}
+
+/// TempCredentialConsumed 条目（自 [`event_to_audit_entry`] 提取）。
+fn temp_credential_consumed_entry(key: &str, value: &str, event: &GarrisonEvent) -> AuditLogEntry {
+    // (CWE-532): 凭据 value 不落审计，仅记长度（防下游未消费时重放）
+    let value_len = value.len();
+    build_entry(
+        "auth.temp_credential_consumed",
+        AuditDecision::Allow,
+        None,
+        None,
+        event,
+    )
+    .with_metadata("key_prefix", serde_json::Value::String(mask_token(key)))
+    .with_metadata("value_len", serde_json::Value::Number(value_len.into()))
+    .build()
+}
+
+/// SocialLogin 条目（自 [`event_to_audit_entry`] 提取）。
+fn social_login_entry(
+    provider: &str,
+    user_id: &str,
+    login_id: Option<&str>,
+    event: &GarrisonEvent,
+) -> AuditLogEntry {
+    build_entry(
+        "auth.social_login",
+        AuditDecision::Allow,
+        None,
+        login_id,
+        event,
+    )
+    .with_metadata(
+        "provider",
+        serde_json::Value::String(truncate_string(provider, MAX_PROVIDER_LEN)),
+    )
+    .with_metadata(
+        "user_id",
+        serde_json::Value::String(truncate_string(user_id, MAX_USER_ID_LEN)),
+    )
+    .build()
+}
+
+/// TenantSwitch 条目（自 [`event_to_audit_entry`] 提取）。
+fn tenant_switch_entry(
+    login_id: &str,
+    from_tenant: i64,
+    to_tenant: i64,
+    event: &GarrisonEvent,
+) -> AuditLogEntry {
+    build_entry(
+        "auth.tenant_switch",
+        AuditDecision::Allow,
+        None,
+        Some(login_id),
+        event,
+    )
+    .with_metadata("from_tenant", serde_json::Value::Number(from_tenant.into()))
+    .with_metadata("to_tenant", serde_json::Value::Number(to_tenant.into()))
+    .build()
+}
+
+/// DeviceBlock / DeviceUnblock 条目（自 [`event_to_audit_entry`] 提取）。
+fn device_entry(
+    action: &str,
+    decision: AuditDecision,
+    denial_reason: Option<String>,
+    login_id: &str,
+    device: &str,
+    event: &GarrisonEvent,
+) -> AuditLogEntry {
+    build_entry(action, decision, denial_reason, Some(login_id), event)
+        .with_metadata(
+            "device",
+            serde_json::Value::String(truncate_string(device, MAX_DEVICE_LEN)),
+        )
+        .build()
+}
+
+/// ConfigReload 条目（自 [`event_to_audit_entry`] 提取）。
+fn config_reload_entry(config_version: u32, event: &GarrisonEvent) -> AuditLogEntry {
+    build_entry(
+        "auth.config_reload",
+        AuditDecision::Allow,
+        None,
+        None,
+        event,
+    )
+    .with_metadata(
+        "config_version",
+        serde_json::Value::Number(config_version.into()),
+    )
+    .build()
+}
+
+/// InvitationCreated / Revoked / Redeemed 条目（自 [`event_to_audit_entry`] 提取）。
+fn invitation_entry(
+    action: &str,
+    login_id: Option<&str>,
+    code: &str,
+    event: &GarrisonEvent,
+) -> AuditLogEntry {
+    build_entry(action, AuditDecision::Allow, None, login_id, event)
+        .with_metadata("code", serde_json::Value::String(truncate_string(code, 64)))
+        .build()
+}
+
+/// 扫码登录各阶段条目（自 [`event_to_audit_entry`] 提取）。
+fn qr_login_entry(
+    action: &str,
+    login_id: Option<&str>,
+    qr_id: &str,
+    event: &GarrisonEvent,
+) -> AuditLogEntry {
+    build_entry(action, AuditDecision::Allow, None, login_id, event)
+        .with_metadata(
+            "qr_id",
+            serde_json::Value::String(truncate_string(qr_id, 64)),
+        )
+        .build()
 }
 
 /// 构造 [`AuditLogBuilder`]，注入请求上下文（IP/User-Agent）、api_key_id 与 login_id metadata。

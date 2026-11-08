@@ -286,61 +286,85 @@ impl ReqwestEngine {
 
         match effective_proxy {
             Some(url) => {
-                match build_all_proxy(url) {
-                    Ok(proxy) => match builder.proxy(proxy).build() {
-                        Ok(client) => {
-                            // 安全：代理 URL 可能含 user:pass@host 凭据，日志输出必须脱敏
-                            // CWE-532 防护
-                            log::debug!(
-                                "Using HTTP proxy: {} (skip_tls={}, timeout={}s)",
-                                redact_proxy_url(url),
-                                skip_tls,
-                                timeout_seconds
-                            );
-                            (client, false)
-                        }
-                        Err(e) => {
-                            // warn → error（失败必须显性化）
-                            // 安全：url 脱敏后输出（CWE-532 防护）
-                            error!(
-                            "Failed to build proxy client (url={}, skip_tls={}, timeout={}s): {}, \
-                             falling back to injected http_client",
-                            redact_proxy_url(url), skip_tls, timeout_seconds, e
-                        );
-                            ((**fallback).clone(), true)
-                        }
-                    },
-                    Err(e) => {
-                        // warn → error
-                        // 安全：url 脱敏后输出（CWE-532 防护）
-                        error!(
-                        "Failed to configure HTTP proxy (url={}): {}, falling back to injected http_client",
-                        redact_proxy_url(url), e
-                    );
-                        ((**fallback).clone(), true)
-                    }
-                }
+                Self::build_proxy_client(builder, url, skip_tls, fallback, timeout_seconds)
             }
-            None => match builder.build() {
+            None => Self::build_direct_client(builder, skip_tls, fallback, timeout_seconds),
+        }
+    }
+
+    /// 代理分支：配置 proxy 后构建 client，失败时回退到注入的 http_client。
+    fn build_proxy_client(
+        builder: reqwest::ClientBuilder,
+        url: &str,
+        skip_tls: bool,
+        fallback: &Arc<reqwest::Client>,
+        timeout_seconds: u64,
+    ) -> (reqwest::Client, bool) {
+        match build_all_proxy(url) {
+            Ok(proxy) => match builder.proxy(proxy).build() {
                 Ok(client) => {
-                    if skip_tls {
-                        log::debug!(
-                            "Using client with skip_tls=true (no proxy, timeout={}s)",
-                            timeout_seconds
-                        );
-                    }
+                    // 安全：代理 URL 可能含 user:pass@host 凭据，日志输出必须脱敏
+                    // CWE-532 防护
+                    log::debug!(
+                        "Using HTTP proxy: {} (skip_tls={}, timeout={}s)",
+                        redact_proxy_url(url),
+                        skip_tls,
+                        timeout_seconds
+                    );
                     (client, false)
                 }
                 Err(e) => {
-                    // warn → error
+                    // warn → error（失败必须显性化）
+                    // 安全：url 脱敏后输出（CWE-532 防护）
                     error!(
-                        "Failed to build client (skip_tls={}, timeout={}s): {}, \
+                        "Failed to build proxy client (url={}, skip_tls={}, timeout={}s): {}, \
                          falling back to injected http_client",
-                        skip_tls, timeout_seconds, e
+                        redact_proxy_url(url),
+                        skip_tls,
+                        timeout_seconds,
+                        e
                     );
                     ((**fallback).clone(), true)
                 }
             },
+            Err(e) => {
+                // warn → error
+                // 安全：url 脱敏后输出（CWE-532 防护）
+                error!(
+                    "Failed to configure HTTP proxy (url={}): {}, falling back to injected http_client",
+                    redact_proxy_url(url), e
+                );
+                ((**fallback).clone(), true)
+            }
+        }
+    }
+
+    /// 无代理分支：直接构建 client，失败时回退到注入的 http_client。
+    fn build_direct_client(
+        builder: reqwest::ClientBuilder,
+        skip_tls: bool,
+        fallback: &Arc<reqwest::Client>,
+        timeout_seconds: u64,
+    ) -> (reqwest::Client, bool) {
+        match builder.build() {
+            Ok(client) => {
+                if skip_tls {
+                    log::debug!(
+                        "Using client with skip_tls=true (no proxy, timeout={}s)",
+                        timeout_seconds
+                    );
+                }
+                (client, false)
+            }
+            Err(e) => {
+                // warn → error
+                error!(
+                    "Failed to build client (skip_tls={}, timeout={}s): {}, \
+                     falling back to injected http_client",
+                    skip_tls, timeout_seconds, e
+                );
+                ((**fallback).clone(), true)
+            }
         }
     }
 
@@ -368,21 +392,7 @@ impl ReqwestEngine {
         // skip_tls_verification=true：构建临时 client with danger_accept_invalid_certs
         // 生产环境 ScrapeOptions::builder() 已拒绝该选项，这里只处理开发环境
         if skip_tls {
-            log::warn!(
-                "skip_tls_verification=true: TLS certificate validation disabled for this request"
-            );
-            let proxy_url = proxy.as_ref().map(|s| s.as_str());
-            let (client, is_fallback) =
-                Self::build_custom_client(proxy_url, true, &self.http_client, self.timeout_seconds);
-            let used = proxy.as_ref().and_then(|s| {
-                let t = s.trim();
-                if t.is_empty() {
-                    None
-                } else {
-                    Some(t.to_string())
-                }
-            });
-            return ClientHandle::new(client, used, is_fallback);
+            return self.build_skip_tls_handle(proxy);
         }
 
         // 请求级代理优先（覆盖提供者）
@@ -401,9 +411,47 @@ impl ReqwestEngine {
 
         // 从代理提供者按策略调度（H1：按 ProxyStrategy 路由 next / sticky）
         // 用 early return 拍平嵌套，避免 provider → match → if let 三层
+        let Some(url) = self.pick_proxy_url(session_id) else {
+            // 无代理提供者 / 池为空或全冷却 → 直接使用注入的 http_client
+            return ClientHandle::new(self.http_client.as_ref().clone(), None, false);
+        };
+
+        // proxy_provider 路径缓存 reqwest::Client
+        let (client, is_fallback) = self.cached_proxy_client(&url);
+        ClientHandle::new(client, Some(url), is_fallback)
+    }
+
+    /// skip_tls_verification=true 的临时 client 构建（自 [`Self::get_client`] 提取）。
+    ///
+    /// TLS 验证无法在已有 client 上关闭，必须构建临时 client 并显性 warn
+    /// （安全审计需要 — TLS 验证被显式跳过）。
+    fn build_skip_tls_handle(&self, proxy: &Option<String>) -> ClientHandle {
+        log::warn!(
+            "skip_tls_verification=true: TLS certificate validation disabled for this request"
+        );
+        let proxy_url = proxy.as_ref().map(|s| s.as_str());
+        let (client, is_fallback) =
+            Self::build_custom_client(proxy_url, true, &self.http_client, self.timeout_seconds);
+        let used = proxy.as_ref().and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        });
+        ClientHandle::new(client, used, is_fallback)
+    }
+
+    /// 按代理策略从代理提供者选取 URL（自 [`Self::get_client`] 提取）。
+    ///
+    /// 无提供者或池为空/全冷却时返回 `None`，调用方回退到注入的 http_client。
+    fn pick_proxy_url(&self, session_id: Option<&str>) -> Option<String> {
+        // 从代理提供者按策略调度（H1：按 ProxyStrategy 路由 next / sticky）
+        // 用 early return 拍平嵌套，避免 provider → match → if let 三层
         let Some(provider) = &self.proxy_provider else {
             // 无代理提供者 → 直接使用注入的 http_client
-            return ClientHandle::new(self.http_client.as_ref().clone(), None, false);
+            return None;
         };
 
         let picked = match self.proxy_strategy {
@@ -427,44 +475,44 @@ impl ReqwestEngine {
                 "proxy_provider returned None (empty pool or all proxies in cooldown), \
                  using injected http_client"
             );
-            return ClientHandle::new(self.http_client.as_ref().clone(), None, false);
+            return None;
         };
+        Some(url)
+    }
 
-        // proxy_provider 路径缓存 reqwest::Client
-        //
-        // 原实现每次请求都 build_custom_client，导致：
-        // - 每次请求都新建 reqwest::Client（含 cookie store + dns resolver + TLS context）
-        // - 连接池无法复用，每次都重新 TCP/TLS 握手
-        // - 在高并发爬取场景下严重影响吞吐量
-        //
-        // 修复后：按 proxy_url 缓存成功构建的 client，reqwest::Client::clone() 仅增加 Arc 引用计数
-        // 缓存大小有界（池中代理 URL 数量有限），不会无限增长。
-        //
-        // 仅缓存 is_fallback=false 的 client；fallback 路径直接用注入的 http_client（避免缓存 fallback）
-        let (client, is_fallback) = {
-            let mut cache = self.proxy_client_cache.lock();
-            if let Some(cached) = cache.get(&url) {
-                // 缓存命中：clone 即可（reqwest::Client::clone 内部 Arc 共享）
-                (cached.clone(), false)
-            } else {
-                drop(cache); // 释放锁后再构建 client
-                             // 缓存未命中：构建新 client
-                let (client, is_fallback) = Self::build_custom_client(
-                    Some(&url),
-                    false,
-                    &self.http_client,
-                    self.timeout_seconds,
-                );
-                // 仅缓存成功构建的 client（fallback 不缓存）
-                if !is_fallback {
-                    self.proxy_client_cache
-                        .lock()
-                        .put(url.clone(), client.clone());
-                }
-                (client, is_fallback)
+    /// proxy_provider 路径的 client 缓存（自 [`Self::get_client`] 提取）。
+    ///
+    /// 原实现每次请求都 build_custom_client，导致：
+    /// - 每次请求都新建 reqwest::Client（含 cookie store + dns resolver + TLS context）
+    /// - 连接池无法复用，每次都重新 TCP/TLS 握手
+    /// - 在高并发爬取场景下严重影响吞吐量
+    ///
+    /// 修复后：按 proxy_url 缓存成功构建的 client，reqwest::Client::clone() 仅增加 Arc 引用计数
+    /// 缓存大小有界（池中代理 URL 数量有限），不会无限增长。
+    ///
+    /// 仅缓存 is_fallback=false 的 client；fallback 路径直接用注入的 http_client（避免缓存 fallback）
+    fn cached_proxy_client(&self, url: &str) -> (reqwest::Client, bool) {
+        let mut cache = self.proxy_client_cache.lock();
+        if let Some(cached) = cache.get(url) {
+            // 缓存命中：clone 即可（reqwest::Client::clone 内部 Arc 共享）
+            (cached.clone(), false)
+        } else {
+            drop(cache); // 释放锁后再构建 client
+                         // 缓存未命中：构建新 client
+            let (client, is_fallback) = Self::build_custom_client(
+                Some(url),
+                false,
+                &self.http_client,
+                self.timeout_seconds,
+            );
+            // 仅缓存成功构建的 client（fallback 不缓存）
+            if !is_fallback {
+                self.proxy_client_cache
+                    .lock()
+                    .put(url.to_string(), client.clone());
             }
-        };
-        ClientHandle::new(client, Some(url), is_fallback)
+            (client, is_fallback)
+        }
     }
 
     /// 构建请求 builder：自定义 headers + UA profile + body/timeout
@@ -609,27 +657,17 @@ impl ReqwestEngine {
 
         (content_type, response_headers)
     }
-}
 
-#[async_trait]
-impl ScraperEngine for ReqwestEngine {
-    /// 执行HTTP抓取
+    /// SSRF 校验并把 hostname 钉到已验证 IP（自 [`ScraperEngine::scrape`] 提取）。
     ///
-    /// # 参数
-    ///
-    /// * `request` - 抓取请求
-    ///
-    /// # 返回值
-    ///
-    /// * `Ok(InternalScrapeResponse)` - 抓取响应
-    /// * `Err(EngineError)` - 抓取过程中出现的错误
-    async fn scrape(
-        &self,
-        request: &InternalScrapeRequest,
-    ) -> Result<InternalScrapeResponse, EngineError> {
+    /// 返回 `(host, parsed_url, resolve_addrs)`；`parsed_url` 保持原始 URL，
+    /// 以保留 TLS SNI 与虚拟主机路由。
+    async fn resolve_pinned_target(
+        url: &str,
+    ) -> Result<(String, reqwest::Url, Vec<std::net::SocketAddr>), EngineError> {
         let validator = validators::SsrfValidator::new();
         let validated_url = validator
-            .validate(&request.url)
+            .validate(url)
             .await
             .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
         let host = validated_url
@@ -648,6 +686,50 @@ impl ScraperEngine for ReqwestEngine {
         if resolve_addrs.is_empty() {
             return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
         }
+        Ok((host, validated_url.parsed_url, resolve_addrs))
+    }
+
+    /// 读取响应体并施加大小上限（自 [`ScraperEngine::scrape`] 提取）。
+    async fn read_body_with_limit(
+        response: reqwest::Response,
+        max_bytes: usize,
+        request_url: &str,
+    ) -> Result<String, EngineError> {
+        read_body_limited(response, max_bytes)
+            .await
+            .map_err(|e| match e {
+                BodyReadError::LimitExceeded { max_bytes } => {
+                    warn!(
+                        "Response body from {} exceeds {} byte limit, rejecting",
+                        request_url, max_bytes
+                    );
+                    EngineError::RequestFailed(format!(
+                        "response body exceeds {} byte limit",
+                        max_bytes
+                    ))
+                }
+                BodyReadError::Network(e) => EngineError::RequestFailed(e.to_string()),
+            })
+    }
+}
+
+#[async_trait]
+impl ScraperEngine for ReqwestEngine {
+    /// 执行HTTP抓取
+    ///
+    /// # 参数
+    ///
+    /// * `request` - 抓取请求
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(InternalScrapeResponse)` - 抓取响应
+    /// * `Err(EngineError)` - 抓取过程中出现的错误
+    async fn scrape(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        let (host, parsed_url, resolve_addrs) = Self::resolve_pinned_target(&request.url).await?;
         let mut handle = self.get_client(
             &request.proxy,
             request.skip_tls_verification,
@@ -657,7 +739,7 @@ impl ScraperEngine for ReqwestEngine {
             self.build_request_client(request, &mut handle, &host, &resolve_addrs)?;
         let effective_client = &ssrf_client;
 
-        let request_url = validated_url.parsed_url.as_str();
+        let request_url = parsed_url.as_str();
         let request_builder = self.build_request_builder(request, effective_client, request_url);
 
         let start = Instant::now();
@@ -677,21 +759,9 @@ impl ScraperEngine for ReqwestEngine {
 
         // 响应体大小上限：content_length 预检 + bytes_stream 累积读取，
         // 超限返回 EngineError 并 warn!，替代无界 `.text()`（防止超大响应 OOM）。
-        let content = read_body_limited(response, self.max_response_body_bytes)
-            .await
-            .map_err(|e| match e {
-                BodyReadError::LimitExceeded { max_bytes } => {
-                    warn!(
-                        "Response body from {} exceeds {} byte limit, rejecting",
-                        request.url, max_bytes
-                    );
-                    EngineError::RequestFailed(format!(
-                        "response body exceeds {} byte limit",
-                        max_bytes
-                    ))
-                }
-                BodyReadError::Network(e) => EngineError::RequestFailed(e.to_string()),
-            })?;
+        let content =
+            Self::read_body_with_limit(response, self.max_response_body_bytes, &request.url)
+                .await?;
 
         // 同步等待
         if request.sync_wait_ms > 0 {

@@ -19,6 +19,8 @@ use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
 use crate::search::types::{EngineHealth, SearchEngineType};
 
+mod text_fields;
+
 /// Exa MCP 端点默认 URL
 const DEFAULT_EXA_ENDPOINT: &str = "https://mcp.exa.ai/mcp";
 /// 请求超时（秒）
@@ -247,40 +249,41 @@ impl ExaSearchEngine {
                 continue;
             }
 
-            // 尝试解析为结构化 JSON（McpResult 格式）
-            if let Ok(mcp_result) = serde_json::from_str::<McpResult>(text) {
-                for item in &mcp_result.results {
-                    results.push(ExaSearchResult {
-                        title: item.title.clone(),
-                        url: item.url.clone(),
-                        description: item
-                            .text
-                            .as_deref()
-                            .or(item.description.as_deref())
-                            .or(item.snippet.as_deref())
-                            .unwrap_or("")
-                            .to_string(),
-                    });
-                }
-                continue;
-            }
-
-            if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(text) {
-                for item in &items {
-                    if let Some(result) = parse_generic_result_item(item) {
-                        results.push(result);
-                    }
-                }
-                continue;
-            }
-
-            // 解析文本格式（Exa MCP 实际返回格式）
-            // 每个结果由 "\n---\n" 分隔，包含 Title:/URL:/Highlights: 等字段
-            let text_results = Self::parse_text_results(text);
-            results.extend(text_results);
+            results.extend(Self::parse_content_results(text));
         }
 
         results
+    }
+
+    /// 解析单个 content 文本（自 [`Self::extract_results_from_response`] 提取）：
+    /// 依次尝试 McpResult 结构化 JSON → 通用 JSON 数组 → Exa 文本格式。
+    fn parse_content_results(text: &str) -> Vec<ExaSearchResult> {
+        // 尝试解析为结构化 JSON（McpResult 格式）
+        if let Ok(mcp_result) = serde_json::from_str::<McpResult>(text) {
+            return mcp_result
+                .results
+                .iter()
+                .map(|item| ExaSearchResult {
+                    title: item.title.clone(),
+                    url: item.url.clone(),
+                    description: item
+                        .text
+                        .as_deref()
+                        .or(item.description.as_deref())
+                        .or(item.snippet.as_deref())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect();
+        }
+
+        if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(text) {
+            return items.iter().filter_map(parse_generic_result_item).collect();
+        }
+
+        // 解析文本格式（Exa MCP 实际返回格式）
+        // 每个结果由 "\n---\n" 分隔，包含 Title:/URL:/Highlights: 等字段
+        Self::parse_text_results(text)
     }
 
     /// 解析 Exa MCP 文本格式的搜索结果
@@ -309,7 +312,7 @@ impl ExaSearchEngine {
             return None;
         }
 
-        let (title, url, description) = parse_text_fields(block);
+        let (title, url, description) = text_fields::parse_text_fields(block);
         if url.is_empty() {
             return None;
         }
@@ -335,44 +338,6 @@ impl ExaSearchEngine {
             }
         })
     }
-}
-
-/// 解析结果块内的字段行（Title:/URL:/Published:/Author:/Highlights:）与描述片段。
-fn parse_text_fields(block: &str) -> (String, String, String) {
-    let mut title = String::new();
-    let mut url = String::new();
-    let mut description = String::new();
-
-    for line in block.lines() {
-        let line = line.trim();
-        if let Some(t) = line.strip_prefix("Title: ") {
-            title = t.trim().to_string();
-        } else if let Some(u) = line.strip_prefix("URL: ") {
-            url = u.trim().to_string();
-        } else if line.starts_with("Highlights:") {
-            // Highlights 后面的行是描述内容的片段
-            // 收集非字段行作为描述
-            continue;
-        } else if !line.starts_with("Published:")
-            && !line.starts_with("Author:")
-            && !line.is_empty()
-            && !line.starts_with("...")
-        {
-            // 非元数据行，作为描述片段
-            if !description.is_empty() {
-                description.push(' ');
-            }
-            description.push_str(line);
-        }
-    }
-
-    // 截断描述到合理长度（char 边界安全，中文描述不 panic）
-    if description.chars().count() > 500 {
-        description = crate::common::text_slice::truncate_chars(&description, 500);
-        description.push_str("...");
-    }
-
-    (title, url, description)
 }
 
 #[async_trait]

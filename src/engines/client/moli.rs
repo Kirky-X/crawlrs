@@ -167,72 +167,80 @@ impl MoliEngine {
             EngineError::Other("moli new_page failed".to_string())
         })?;
         // 嵌套 outcome 块：任何 `?` 早退都会先落回本层，随后统一 page.close
-        let outcome = async {
-            // 导航分段超时（超时也走统一收尾，不泄漏 target）
-            tokio::time::timeout(config.scrape_timeout, page.goto(request.url.as_str()))
-                .await
-                .map_err(|_| {
-                    log::error!(
-                        target: "crawlrs::engine::moli",
-                        "moli navigation to {} timed out", request.url
-                    );
-                    EngineError::Timeout(config.scrape_timeout)
-                })?
-                .map_err(|e| {
-                    log::error!(
-                        target: "crawlrs::engine::moli",
-                        "moli navigation to {} failed: {}", request.url, e
-                    );
-                    EngineError::BrowserError("moli navigation failed".to_string())
-                })?;
-            engine.wait_for_ready(&page, &request.wait_for).await?;
-            let html = page
-                .evaluate("() => document.documentElement.outerHTML")
-                .await
-                .map_err(|e| {
-                    log::error!(target: "crawlrs::engine::moli", "moli outerHTML read failed: {}", e);
-                    EngineError::Other("moli outerHTML read failed".to_string())
-                })?
-                .into_value::<String>()
-                .map_err(|e| {
-                    log::error!(target: "crawlrs::engine::moli", "moli outerHTML decode failed: {}", e);
-                    EngineError::Other("moli outerHTML decode failed".to_string())
-                })?;
-            validate_html(&html)?;
-
-            let screenshot = if request.needs_screenshot {
-                let params = chromiumoxide::page::ScreenshotParams::builder()
-                    .format(chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat::Png)
-                    .build();
-                let bytes = page.screenshot(params).await.map_err(|e| {
-                    log::error!(
-                        target: "crawlrs::engine::moli",
-                        "moli screenshot failed (endpoint must run `moli serve --layout`): {}", e
-                    );
-                    EngineError::BrowserError("moli screenshot failed".to_string())
-                })?;
-                Some(BASE64.encode(bytes))
-            } else {
-                None
-            };
-
-            Ok::<InternalScrapeResponse, EngineError>(InternalScrapeResponse {
-                status_code: 200,
-                content: html,
-                screenshot,
-                content_type: "text/html".to_string(),
-                headers: std::collections::HashMap::new(),
-                response_time_ms: 0,
-                final_url: None,
-                captured_responses: Vec::new(),
-                js_degraded: false,
-            })
-        }
-        .await;
+        let outcome = Self::scrape_page_inner(engine, &page, config, request).await;
         // 全路径收尾（成功/错误 alike）：先关页面 target 再断连接。
         // 禁发 Browser.close（会终止 moli serve 进程）——只 page.close。
         let _ = page.close().await;
         outcome
+    }
+
+    /// 页面导航、就绪等待、HTML/截图读取（自 [`MoliEngine::scrape_page`] 提取）：
+    /// 任何 `?` 早退都先落回调用方，随后统一 page.close。
+    async fn scrape_page_inner(
+        engine: &MoliEngine,
+        page: &chromiumoxide::Page,
+        config: &MoliEngineConfig,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        // 导航分段超时（超时也走统一收尾，不泄漏 target）
+        tokio::time::timeout(config.scrape_timeout, page.goto(request.url.as_str()))
+            .await
+            .map_err(|_| {
+                log::error!(
+                    target: "crawlrs::engine::moli",
+                    "moli navigation to {} timed out", request.url
+                );
+                EngineError::Timeout(config.scrape_timeout)
+            })?
+            .map_err(|e| {
+                log::error!(
+                    target: "crawlrs::engine::moli",
+                    "moli navigation to {} failed: {}", request.url, e
+                );
+                EngineError::BrowserError("moli navigation failed".to_string())
+            })?;
+        engine.wait_for_ready(page, &request.wait_for).await?;
+        let html = page
+            .evaluate("() => document.documentElement.outerHTML")
+            .await
+            .map_err(|e| {
+                log::error!(target: "crawlrs::engine::moli", "moli outerHTML read failed: {}", e);
+                EngineError::Other("moli outerHTML read failed".to_string())
+            })?
+            .into_value::<String>()
+            .map_err(|e| {
+                log::error!(target: "crawlrs::engine::moli", "moli outerHTML decode failed: {}", e);
+                EngineError::Other("moli outerHTML decode failed".to_string())
+            })?;
+        validate_html(&html)?;
+
+        let screenshot = if request.needs_screenshot {
+            let params = chromiumoxide::page::ScreenshotParams::builder()
+                .format(chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat::Png)
+                .build();
+            let bytes = page.screenshot(params).await.map_err(|e| {
+                log::error!(
+                    target: "crawlrs::engine::moli",
+                    "moli screenshot failed (endpoint must run `moli serve --layout`): {}", e
+                );
+                EngineError::BrowserError("moli screenshot failed".to_string())
+            })?;
+            Some(BASE64.encode(bytes))
+        } else {
+            None
+        };
+
+        Ok::<InternalScrapeResponse, EngineError>(InternalScrapeResponse {
+            status_code: 200,
+            content: html,
+            screenshot,
+            content_type: "text/html".to_string(),
+            headers: std::collections::HashMap::new(),
+            response_time_ms: 0,
+            final_url: None,
+            captured_responses: Vec::new(),
+            js_degraded: false,
+        })
     }
 
     /// 按请求 `wait_for` 等待页面就绪（v1 近似语义，注释逐条说明）：

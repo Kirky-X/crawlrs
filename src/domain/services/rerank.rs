@@ -161,38 +161,51 @@ impl SearchReranker {
             }
         };
 
-        // index 越界/重复防御：只取合法下标，缺失者保持原位（排在有分者之后）
-        let mut valid: Vec<(usize, f32)> = scored
-            .into_iter()
-            .filter(|s| s.index < head_len)
-            .map(|s| (s.index, s.score))
-            .collect();
-        valid.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mut seen = vec![false; head_len];
-        let mut reranked: Vec<SearchResult> = Vec::with_capacity(results.len());
-        for (index, score) in &valid {
-            seen[*index] = true;
-            let mut item = results[*index].clone();
-            item.score = Some(*score as f64);
-            reranked.push(item);
-        }
-        for (position, mut item) in results.into_iter().enumerate() {
-            let scored_here = position < head_len && seen[position];
-            if !scored_here {
-                item.score = None;
-                reranked.push(item);
-            }
-        }
+        let (reranked, scored_count) = apply_rerank_scores(results, scored, head_len);
 
         log::info!(
             "search rerank applied: provider={} docs={head_len} scored={} elapsed_ms={}",
             provider.name(),
-            valid.len(),
+            scored_count,
             started.elapsed().as_millis()
         );
         reranked
     }
+}
+
+/// 应用重排分数：合法下标按 score 降序置顶，其余按原序追加（score 为 `None`）。
+///
+/// index 越界/重复防御：只取合法下标，缺失者保持原位（排在有分者之后）。
+/// 返回（重排后的结果, 有效评分数）。
+fn apply_rerank_scores(
+    results: Vec<SearchResult>,
+    scored: Vec<RerankScore>,
+    head_len: usize,
+) -> (Vec<SearchResult>, usize) {
+    let mut valid: Vec<(usize, f32)> = scored
+        .into_iter()
+        .filter(|s| s.index < head_len)
+        .map(|s| (s.index, s.score))
+        .collect();
+    valid.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut seen = vec![false; head_len];
+    let mut reranked: Vec<SearchResult> = Vec::with_capacity(results.len());
+    for (index, score) in &valid {
+        seen[*index] = true;
+        let mut item = results[*index].clone();
+        item.score = Some(*score as f64);
+        reranked.push(item);
+    }
+    for (position, mut item) in results.into_iter().enumerate() {
+        let scored_here = position < head_len && seen[position];
+        if !scored_here {
+            item.score = None;
+            reranked.push(item);
+        }
+    }
+
+    (reranked, valid.len())
 }
 
 /// 结果 → 重排文档文本：标题为主，description 有值时拼接（重排模型按全文理解）

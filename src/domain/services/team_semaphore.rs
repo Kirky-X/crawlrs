@@ -133,6 +133,22 @@ enum TeamEntry {
     },
 }
 
+impl TeamEntry {
+    /// 克隆内部 Arc 生成快照句柄（调用方随后释放 DashMap 锁）。
+    fn to_handle(&self) -> TeamHandle {
+        match self {
+            TeamEntry::Fixed(sem) => TeamHandle::Fixed(Arc::clone(sem)),
+            TeamEntry::Adaptive {
+                adaptive,
+                controller,
+            } => TeamHandle::Adaptive {
+                adaptive: Arc::clone(adaptive),
+                controller: Arc::clone(controller),
+            },
+        }
+    }
+}
+
 /// 每队信号量的快照句柄（owned clones of the inner Arcs）
 ///
 /// 从 DashMap 中克隆 Arc 出来，避免持有 Ref 跨 await（防止死锁）。
@@ -522,16 +538,7 @@ impl TeamSemaphore {
     /// 用于 `current_target`/`is_team_adaptive` 等无副作用查询。
     fn lookup(&self, team_id: crate::domain::id::Id) -> Option<TeamHandle> {
         let entry = self.semaphores.get(&team_id)?;
-        let handle = match entry.value() {
-            TeamEntry::Fixed(sem) => TeamHandle::Fixed(Arc::clone(sem)),
-            TeamEntry::Adaptive {
-                adaptive,
-                controller,
-            } => TeamHandle::Adaptive {
-                adaptive: Arc::clone(adaptive),
-                controller: Arc::clone(controller),
-            },
-        };
+        let handle = entry.value().to_handle();
         drop(entry);
         Some(handle)
     }
@@ -545,8 +552,6 @@ impl TeamSemaphore {
     ///
     /// * `team_id` - 团队的唯一标识符
     fn get_or_create(&self, team_id: crate::domain::id::Id) -> TeamHandle {
-        use dashmap::mapref::entry::Entry;
-
         // 先检查是否已存在（fast path，避免不必要的 evict 调用）
         //
         // 注意：不能在 `Entry::Vacant(v)` 中调用 `evict_one_for_new`，
@@ -565,55 +570,49 @@ impl TeamSemaphore {
             let _evicted = self.evict_one_for_new();
         }
 
+        self.insert_team_entry(team_id)
+    }
+
+    /// 插入或复用团队条目（TOCTOU race 下复用已插入的 entry）。
+    fn insert_team_entry(&self, team_id: crate::domain::id::Id) -> TeamHandle {
+        use dashmap::mapref::entry::Entry;
+
         match self.semaphores.entry(team_id) {
             Entry::Occupied(o) => {
                 // 已存在：克隆内部 Arc，返回 handle（drop o 释放 shard 锁）
-                let handle = match o.get() {
-                    TeamEntry::Fixed(sem) => TeamHandle::Fixed(Arc::clone(sem)),
-                    TeamEntry::Adaptive {
-                        adaptive,
-                        controller,
-                    } => TeamHandle::Adaptive {
-                        adaptive: Arc::clone(adaptive),
-                        controller: Arc::clone(controller),
-                    },
-                };
+                let handle = o.get().to_handle();
                 drop(o);
                 handle
             }
             Entry::Vacant(v) => {
                 // 不存在：按模式创建新条目
-                let new_entry = match &self.mode {
-                    SemaphoreMode::Fixed => {
-                        TeamEntry::Fixed(Arc::new(Semaphore::new(self.default_permits)))
-                    }
-                    SemaphoreMode::Adaptive(params) => {
-                        let controller = Arc::new(AIMDController::with_params(
-                            params.initial,
-                            params.min_limit,
-                            params.max_limit,
-                            params.increase_threshold,
-                        ));
-                        let adaptive = Arc::new(AdaptiveSemaphore::new(params.initial));
-                        TeamEntry::Adaptive {
-                            adaptive,
-                            controller,
-                        }
-                    }
-                };
+                let new_entry = self.new_team_entry();
                 // 插入前先克隆出 handle（避免再次 lookup）
-                let handle = match &new_entry {
-                    TeamEntry::Fixed(sem) => TeamHandle::Fixed(Arc::clone(sem)),
-                    TeamEntry::Adaptive {
-                        adaptive,
-                        controller,
-                    } => TeamHandle::Adaptive {
-                        adaptive: Arc::clone(adaptive),
-                        controller: Arc::clone(controller),
-                    },
-                };
+                let handle = new_entry.to_handle();
                 v.insert(new_entry);
                 handle
+            }
+        }
+    }
+
+    /// 按当前信号量模式创建新团队条目。
+    fn new_team_entry(&self) -> TeamEntry {
+        match &self.mode {
+            SemaphoreMode::Fixed => {
+                TeamEntry::Fixed(Arc::new(Semaphore::new(self.default_permits)))
+            }
+            SemaphoreMode::Adaptive(params) => {
+                let controller = Arc::new(AIMDController::with_params(
+                    params.initial,
+                    params.min_limit,
+                    params.max_limit,
+                    params.increase_threshold,
+                ));
+                let adaptive = Arc::new(AdaptiveSemaphore::new(params.initial));
+                TeamEntry::Adaptive {
+                    adaptive,
+                    controller,
+                }
             }
         }
     }

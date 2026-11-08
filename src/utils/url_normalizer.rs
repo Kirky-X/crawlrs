@@ -209,7 +209,19 @@ impl UrlNormalizer {
             return vec![url.to_string()];
         }
 
-        // 笛卡尔积上界：2 schemes × 2 hosts × 4 path_variants = 16
+        let mut variants = Self::expand_variants(&parsed);
+
+        // 去重（无堆分配：sort + dedup 比 HashSet 更快）
+        variants.sort_unstable();
+        variants.dedup();
+
+        variants
+    }
+
+    /// www/non-www × http/https × index 后缀的笛卡尔积变体。
+    ///
+    /// 笛卡尔积上界：2 schemes × 2 hosts × 4 path_variants = 16。
+    fn expand_variants(parsed: &Url) -> Vec<String> {
         let mut variants: Vec<String> = Vec::with_capacity(16);
         let host = parsed.host_str().unwrap_or("");
         let path = parsed.path();
@@ -240,10 +252,6 @@ impl UrlNormalizer {
                 }
             }
         }
-
-        // 去重（无堆分配：sort + dedup 比 HashSet 更快）
-        variants.sort_unstable();
-        variants.dedup();
 
         variants
     }

@@ -197,10 +197,7 @@ pub async fn query_tasks<T: TaskRepository>(
     payload: Result<Json<TaskQueryRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<ApiResponse<TaskQueryDataDto>>, CrawlRsError> {
     // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封（结构错误 422 / 语法错误 400）
-    let Json(request) = match payload {
-        Ok(parsed) => parsed,
-        Err(rej) => return Err(json_rejection_error(rej)),
-    };
+    let request = extract_query_request(payload)?;
     let team_id = auth_state.team_id;
     let start_time = Instant::now();
 
@@ -214,18 +211,17 @@ pub async fn query_tasks<T: TaskRepository>(
     let (mut tasks, total) =
         execute_task_query(task_repo.as_ref(), team_id, &request, limit, offset).await?;
 
-    let sync_mode = sync_wait_ms > 0 && !tasks.is_empty();
-    let _waited_time_ms;
-
-    if sync_mode {
-        _waited_time_ms =
-            handle_sync_wait(task_repo.as_ref(), &tasks, team_id, sync_wait_ms).await?;
-
-        // 重新查询任务状态
-        if _waited_time_ms > 0 {
-            (tasks, _) =
-                execute_task_query(task_repo.as_ref(), team_id, &request, limit, offset).await?;
-        }
+    if sync_wait_ms > 0 && !tasks.is_empty() {
+        tasks = sync_wait_and_refresh(
+            task_repo.as_ref(),
+            team_id,
+            &request,
+            tasks,
+            limit,
+            offset,
+            sync_wait_ms,
+        )
+        .await?;
     }
 
     // 获取抓取结果（如果需要）
@@ -244,6 +240,37 @@ pub async fn query_tasks<T: TaskRepository>(
         total,
         has_more,
     })))
+}
+
+/// 提取请求体（自 [`query_tasks`] 提取）：提取器级拒绝映射为统一包封
+/// （结构错误 422 / 语法错误 400）。
+fn extract_query_request(
+    payload: Result<Json<TaskQueryRequestDto>, axum::extract::rejection::JsonRejection>,
+) -> Result<TaskQueryRequestDto, CrawlRsError> {
+    match payload {
+        Ok(Json(request)) => Ok(request),
+        Err(rej) => Err(json_rejection_error(rej)),
+    }
+}
+
+/// 同步等待任务状态并在有进展时重查（自 [`query_tasks`] 提取）。
+async fn sync_wait_and_refresh<T: TaskRepository>(
+    task_repo: &T,
+    team_id: crate::domain::id::Id,
+    request: &TaskQueryRequestDto,
+    mut tasks: Vec<crate::domain::models::Task>,
+    limit: u32,
+    offset: u32,
+    sync_wait_ms: u32,
+) -> Result<Vec<crate::domain::models::Task>, CrawlRsError> {
+    let waited_time_ms = handle_sync_wait(task_repo, &tasks, team_id, sync_wait_ms).await?;
+
+    // 重新查询任务状态
+    if waited_time_ms > 0 {
+        (tasks, _) = execute_task_query(task_repo, team_id, request, limit, offset).await?;
+    }
+
+    Ok(tasks)
 }
 
 /// 验证请求参数

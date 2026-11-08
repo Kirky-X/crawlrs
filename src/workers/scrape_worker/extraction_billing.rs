@@ -3,90 +3,138 @@
 
 //! 提取与计费 — 从 `ScrapeWorker` 拆分的 partial impl block
 //!
-//! 包含规则/Prompt/Schema 提取与积分扣减；成功收尾与失败处理见
-//! [`super::success_finalization`]。
+//! 唯一提取调度：[`ScrapeWorker::dispatch_extraction`] 按 rules / prompt /
+//! schema 口径执行提取，并以显式结算策略（Immediate / Deferred）决定扣费
+//! 时机；成功收尾与失败处理见 [`super::success_finalization`]。
 
 use super::*;
 
+/// 单次提取的输入口径（三选一；候选优先级由调用方按各自既有语义决定）
+pub(super) enum ExtractionSpec<'a> {
+    /// 显式规则（`extraction_rules`）
+    Rules(&'a HashMap<String, crate::domain::services::extraction_service::ExtractionRule>),
+    /// Prompt（包装为单条 LLM 规则，`extraction_prompt`）
+    Prompt(&'a str),
+    /// Schema（LLM schema 抽取，经 RAG 自动增强入口，`extraction_schema`）
+    Schema(&'a Value),
+}
+
+/// 提取成功后的结算策略（显式化三种任务路径的既有扣费时机）
+pub(super) enum ExtractionSettlement<'a> {
+    /// 提取成功即扣费（crawl / extract 路径的既有扣费点）
+    Immediate { description: &'a str },
+    /// 仅记录 token 用量，扣费由调用方在守卫胜利后统一执行（scrape 路径）
+    Deferred {
+        /// 待扣费用量累积器（每条提取的用量独立入列）
+        usage_acc: &'a mut Vec<crate::domain::services::llm::TokenUsage>,
+    },
+}
+
+impl ExtractionSpec<'_> {
+    /// 提取失败日志；文案逐字沿用三条既有路径
+    pub(super) fn log_failure(&self, url: &str, err: &anyhow::Error) {
+        match self {
+            Self::Rules(_) => error!("Extraction failed for url {}: {}", url, err),
+            Self::Prompt(_) => error!("Prompt extraction failed for url {}: {}", url, err),
+            Self::Schema(_) => error!("Schema extraction failed for url {}: {}", url, err),
+        }
+    }
+}
+
 impl ScrapeWorker {
+    /// 唯一提取调度：按 `spec` 执行一次提取；成功后按 `settlement` 立即扣费
+    /// 或只记录用量（Deferred）。
+    ///
+    /// 提取失败时返回 `Err` 且不写日志，由调用方沿用既有语义处理：
+    /// - scrape / crawl：`ExtractionSpec::log_failure` 记 error 后降级为 `None`
+    /// - extract：`?` 向上传播
+    pub(super) async fn dispatch_extraction(
+        &self,
+        task: &Task,
+        content: &str,
+        base_url: &str,
+        spec: &ExtractionSpec<'_>,
+        settlement: ExtractionSettlement<'_>,
+    ) -> Result<Value> {
+        let (data, usage) = match spec {
+            ExtractionSpec::Rules(rules) => {
+                self.extraction_service
+                    .extract(content, rules, Some(base_url))
+                    .await
+            }
+            ExtractionSpec::Prompt(prompt) => {
+                self.extract_with_prompt(content, prompt, base_url).await
+            }
+            ExtractionSpec::Schema(schema) => self.extract_with_schema(content, schema).await,
+        }?;
+
+        match settlement {
+            // 立即结算：保持 crawl / extract 路径既有扣费点（提取成功后、
+            // 落库/守卫之前）
+            ExtractionSettlement::Immediate { description } => {
+                self.deduct_token_credits(task.team_id, task.id, &usage, description)
+                    .await;
+            }
+            // 仅记录用量；DB 扣费由调用方在守卫胜利后执行
+            ExtractionSettlement::Deferred { usage_acc } => {
+                self.record_extraction_usage(task, usage, usage_acc);
+            }
+        }
+
+        Ok(data)
+    }
+
     /// 使用配置的规则提取数据（支持 rules > prompt > schema 优先级）
+    ///
+    /// Crawl 路径：提取成功后立即扣费（Immediate 结算，保持既有扣费点），
+    /// 提取失败记 error 日志后返回 `None`。
     pub(super) async fn extract_data_with_rules(
         &self,
         task: &Task,
         response: &ScrapeResponse,
         config: &CrawlConfigDto,
     ) -> Option<Value> {
-        if let Some(rules) = &config.extraction_rules {
-            match self
-                .extraction_service
-                .extract(&response.content, rules, Some(&task.url))
-                .await
-            {
-                Ok((data, usage)) => {
-                    self.deduct_token_credits(
-                        task.team_id,
-                        task.id,
-                        &usage,
-                        "Tokens used for extraction",
-                    )
-                    .await;
-                    Some(data)
-                }
-                Err(e) => {
-                    error!("Extraction failed for url {}: {}", task.url, e);
-                    None
-                }
-            }
+        let (spec, description) = if let Some(rules) = &config.extraction_rules {
+            (ExtractionSpec::Rules(rules), "Tokens used for extraction")
         } else if let Some(prompt) = &config.extraction_prompt {
-            if !prompt.is_empty() {
-                match self
-                    .extract_with_prompt(&response.content, prompt, &task.url)
-                    .await
-                {
-                    Ok((data, usage)) => {
-                        self.deduct_token_credits(
-                            task.team_id,
-                            task.id,
-                            &usage,
-                            "Tokens used for prompt extraction",
-                        )
-                        .await;
-                        Some(data)
-                    }
-                    Err(e) => {
-                        error!("Prompt extraction failed for url {}: {}", task.url, e);
-                        None
-                    }
-                }
-            } else {
+            if prompt.is_empty() {
+                return None;
+            }
+            (
+                ExtractionSpec::Prompt(prompt.as_str()),
+                "Tokens used for prompt extraction",
+            )
+        } else if let Some(schema) = &config.extraction_schema {
+            (
+                ExtractionSpec::Schema(schema),
+                "Tokens used for schema extraction",
+            )
+        } else {
+            return None;
+        };
+
+        match self
+            .dispatch_extraction(
+                task,
+                &response.content,
+                &task.url,
+                &spec,
+                ExtractionSettlement::Immediate { description },
+            )
+            .await
+        {
+            Ok(data) => Some(data),
+            Err(e) => {
+                spec.log_failure(&task.url, &e);
                 None
             }
-        } else if let Some(schema) = &config.extraction_schema {
-            match self.extract_with_schema(&response.content, schema).await {
-                Ok((data, usage)) => {
-                    self.deduct_token_credits(
-                        task.team_id,
-                        task.id,
-                        &usage,
-                        "Tokens used for schema extraction",
-                    )
-                    .await;
-                    Some(data)
-                }
-                Err(e) => {
-                    error!("Schema extraction failed for url {}: {}", task.url, e);
-                    None
-                }
-            }
-        } else {
-            None
         }
     }
 
     /// 使用 Prompt 提取数据（共享辅助方法）
     ///
     /// 将 prompt 包装为 `ExtractionRule { use_llm: true }` 后调用 `extraction_service.extract()`。
-    /// 供 Scrape 路径（handle_scrape_success）和 Crawl 路径（extract_data_with_rules）共同调用。
+    /// 仅供 [`Self::dispatch_extraction`] 的 Prompt 口径调用。
     pub(super) async fn extract_with_prompt(
         &self,
         html: &str,
@@ -113,7 +161,7 @@ impl ScrapeWorker {
     /// 使用 Schema 提取数据（共享辅助方法）
     ///
     /// 直接调用 `extraction_service.extract_with_schema()`。
-    /// 供 Scrape 路径（handle_scrape_success）和 Crawl 路径（extract_data_with_rules）共同调用。
+    /// 仅供 [`Self::dispatch_extraction`] 的 Schema 口径调用。
     pub(super) async fn extract_with_schema(
         &self,
         html: &str,
@@ -124,6 +172,28 @@ impl ScrapeWorker {
         self.extraction_service
             .extract_with_rag_auto(html, None, schema)
             .await
+    }
+
+    /// 记录单次提取的 token 用量（Deferred 结算，自 `task_lifecycle` 迁移）
+    ///
+    /// 1. Record in-memory for real-time tracking
+    /// 2. Defer DB deduction until the completion guard is won
+    pub(super) fn record_extraction_usage(
+        &self,
+        task: &Task,
+        usage: crate::domain::services::llm::TokenUsage,
+        pending_token_usages: &mut Vec<crate::domain::services::llm::TokenUsage>,
+    ) {
+        if usage.total_tokens > 0 {
+            // 1. Record in-memory for real-time tracking
+            self.token_usage
+                .entry(task.team_id)
+                .or_insert_with(|| AtomicI64::new(0))
+                .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
+
+            // 2. Defer DB deduction until the completion guard is won
+            pending_token_usages.push(usage);
+        }
     }
 
     // handle_crawl_failure 已迁移至 `crawl_task.rs`

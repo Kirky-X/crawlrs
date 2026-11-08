@@ -149,60 +149,17 @@ pub async fn create_api_key(
     // 5. 映射 scopes 为 garrison 权限串（`"read"` → `"crawlrs:read"`，依此类推）
     let garrison_scopes = map_scopes_to_garrison_perms(&req.scopes);
 
-    // 6. 获取 garrison DAO（必须已注入）
-    let dao = match get_garrison_dao() {
-        Some(d) => d,
-        None => {
-            log::error!(
-                "garrison DAO not injected — call init_garrison_auth before serving requests"
-            );
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Authentication service unavailable",
-            );
-        }
-    };
-
-    // 7. 调用 garrison 签发 API Key（明文 key 仅此一次可见）
-    let handler = garrison::protocol::apikey::ApiKeyHandler::new(dao);
-    let plaintext_key = match handler
-        .generate_with_namespace(
-            api_key_id.to_string(),
-            GARRISON_NAMESPACE,
-            garrison_scopes,
-            expires_in_secs,
-        )
-        .await
+    // 6-7. 获取 garrison DAO 并签发 API Key（明文 key 仅此一次可见）
+    let plaintext_key = match issue_garrison_key(api_key_id, garrison_scopes, expires_in_secs).await
     {
-        Ok(k) => k,
-        Err(e) => {
-            log::error!(
-                "garrison ApiKeyHandler::generate_with_namespace failed: api_key_id={}, err={}",
-                api_key_id,
-                e
-            );
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to issue API key");
-        }
+        Ok(key) => key,
+        Err(response) => return response,
     };
 
     // 8. 严格解析 garrison 返回的 `key_id.key_secret` 提取 key_id（公开标识，可安全记录）
-    //
-    // 原 `unwrap_or_else(|| plaintext_key.clone)` 在 garrison 返回异常格式
-    // 时会把明文 secret 当作 key_id 写入 DB（CWE-916 违规）。改为严格校验：split_once 失败
-    // 返回 500 错误且不写入 DB，并记录原始错误供排查。
-    let garrison_key_id = match plaintext_key.split_once('.') {
-        Some((k_id, _)) => k_id.to_string(),
-        None => {
-            log::error!(
-                "garrison returned malformed key (no '.' separator): api_key_id={} (key length={})",
-                api_key_id,
-                plaintext_key.len()
-            );
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Authentication service returned malformed key",
-            );
-        }
+    let garrison_key_id = match parse_garrison_key_id(&plaintext_key, api_key_id) {
+        Ok(key_id) => key_id,
+        Err(response) => return response,
     };
 
     // 9. 写入 crawlrs api_keys 表（id/team_id 映射，key_hash 弃用）
@@ -215,17 +172,7 @@ pub async fn create_api_key(
                 scopes: req.scopes.clone(),
                 expires_at: expires_at.to_rfc3339(),
             };
-            // 响应含明文 API Key，必须禁用缓存（CWE-525）
-            // Cache-Control: no-store（HTTP/1.1）+ Pragma: no-cache（HTTP/1.0 兼容）+ Expires: 0
-            let mut resp =
-                (StatusCode::CREATED, Json(ApiResponse::success(response))).into_response();
-            resp.headers_mut()
-                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-            resp.headers_mut()
-                .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
-            resp.headers_mut()
-                .insert(header::EXPIRES, HeaderValue::from_static("0"));
-            resp
+            created_api_key_response(response)
         }
         Err(e) => {
             log::error!(
@@ -240,6 +187,92 @@ pub async fn create_api_key(
             )
         }
     }
+}
+
+/// 获取 garrison DAO 并签发 API Key。
+///
+/// DAO 未注入或签发失败时记录日志并返回已构建的 500 响应。
+#[allow(clippy::result_large_err)]
+async fn issue_garrison_key(
+    api_key_id: crate::domain::id::Id,
+    garrison_scopes: Vec<String>,
+    expires_in_secs: i64,
+) -> Result<String, Response> {
+    let dao = match get_garrison_dao() {
+        Some(d) => d,
+        None => {
+            log::error!(
+                "garrison DAO not injected — call init_garrison_auth before serving requests"
+            );
+            return Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Authentication service unavailable",
+            ));
+        }
+    };
+
+    let handler = garrison::protocol::apikey::ApiKeyHandler::new(dao);
+    match handler
+        .generate_with_namespace(
+            api_key_id.to_string(),
+            GARRISON_NAMESPACE,
+            garrison_scopes,
+            expires_in_secs,
+        )
+        .await
+    {
+        Ok(k) => Ok(k),
+        Err(e) => {
+            log::error!(
+                "garrison ApiKeyHandler::generate_with_namespace failed: api_key_id={}, err={}",
+                api_key_id,
+                e
+            );
+            Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to issue API key",
+            ))
+        }
+    }
+}
+
+/// 严格解析 garrison 返回的 `key_id.key_secret` 提取 `key_id`（公开标识，可安全记录）。
+///
+/// 原 `unwrap_or_else(|| plaintext_key.clone)` 在 garrison 返回异常格式
+/// 时会把明文 secret 当作 key_id 写入 DB（CWE-916 违规）。改为严格校验：split_once 失败
+/// 返回 500 错误且不写入 DB，并记录原始错误供排查。
+#[allow(clippy::result_large_err)]
+fn parse_garrison_key_id(
+    plaintext_key: &str,
+    api_key_id: crate::domain::id::Id,
+) -> Result<String, Response> {
+    match plaintext_key.split_once('.') {
+        Some((k_id, _)) => Ok(k_id.to_string()),
+        None => {
+            log::error!(
+                "garrison returned malformed key (no '.' separator): api_key_id={} (key length={})",
+                api_key_id,
+                plaintext_key.len()
+            );
+            Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Authentication service returned malformed key",
+            ))
+        }
+    }
+}
+
+/// 构造 201 响应：统一包封 + 禁用缓存头（响应含明文 API Key，CWE-525）。
+fn created_api_key_response(response: CreateApiKeyResponse) -> Response {
+    // Cache-Control: no-store（HTTP/1.1）+ Pragma: no-cache（HTTP/1.0 兼容）+ Expires: 0
+    let mut resp = (StatusCode::CREATED, Json(ApiResponse::success(response))).into_response();
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp.headers_mut()
+        .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    resp.headers_mut()
+        .insert(header::EXPIRES, HeaderValue::from_static("0"));
+    resp
 }
 
 /// 校验请求体。

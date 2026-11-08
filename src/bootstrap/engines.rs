@@ -92,13 +92,68 @@ pub fn init_engines(
     let wreq_proxy_provider = proxy_provider.clone();
 
     // ReqwestEngine 接入 ProxyProvider + 策略 + MRT
-    // - provider 为 Some 时 with_provider_strategy_timeout_and_mrt 注入
-    // - provider 为 None 时 new_with_timeout_and_mrt（无代理）
     #[allow(unused_mut)]
-    let mut engines: Vec<Arc<dyn ScraperEngine>> = match proxy_provider {
+    let mut engines = build_reqwest_engine(
+        http_client.clone(),
+        proxy_provider,
+        proxy_strategy,
+        timeout_seconds,
+        fetch_mrt,
+        max_response_body_bytes,
+    );
+
+    // PlaywrightEngine 注入 cdp_seconds 作为 MRT + XHR/Fetch 捕获配置（F6）
+    #[cfg(feature = "engine-playwright")]
+    push_playwright_engine(&mut engines, engine_config, cdp_mrt);
+
+    // FlareSolverrEngine 按模式注入对应 MRT
+    #[cfg(feature = "engine-flaresolverr")]
+    push_flaresolverr_engines(
+        &mut engines,
+        engine_config,
+        http_client.clone(),
+        proxy_url,
+        tls_mrt,
+        cdp_mrt,
+        flaresolverr_timeout,
+    );
+
+    // WreqEngine 接入 ProxyProvider + 策略 + MRT
+    #[cfg(feature = "engine-tls-fingerprint")]
+    push_wreq_engine(
+        &mut engines,
+        engine_config,
+        wreq_proxy_provider,
+        proxy_strategy,
+        tls_mrt,
+        max_response_body_bytes,
+    );
+
+    // MoliEngine 注册（engine-moli feature 门控 + engines.moli.enabled 开启）。
+    #[cfg(feature = "engine-moli")]
+    push_moli_engine(&mut engines, engine_config);
+
+    // MllmEngine 注册（engine-mllm feature 门控 + engines.mllm.enabled 开启）
+    #[cfg(feature = "engine-mllm")]
+    push_mllm_engine(&mut engines, engine_config, vision_adapter);
+
+    engines
+}
+
+/// 构造基座 ReqwestEngine：`provider` 为 Some 时注入代理提供者/策略/MRT，
+/// 为 None 时走无代理路径；两条路径均应用响应体上限。
+fn build_reqwest_engine(
+    http_client: Arc<reqwest::Client>,
+    proxy_provider: Option<Arc<dyn ProxyProvider>>,
+    proxy_strategy: ProxyStrategy,
+    timeout_seconds: u64,
+    fetch_mrt: std::time::Duration,
+    max_response_body_bytes: usize,
+) -> Vec<Arc<dyn ScraperEngine>> {
+    match proxy_provider {
         Some(provider) => vec![Arc::new(
             ReqwestEngine::with_provider_strategy_timeout_and_mrt(
-                http_client.clone(),
+                http_client,
                 provider,
                 proxy_strategy,
                 timeout_seconds,
@@ -107,57 +162,65 @@ pub fn init_engines(
             .with_max_response_body_bytes(max_response_body_bytes),
         )],
         None => vec![Arc::new(
-            ReqwestEngine::new_with_timeout_and_mrt(
-                http_client.clone(),
-                timeout_seconds,
-                fetch_mrt,
-            )
-            .with_max_response_body_bytes(max_response_body_bytes),
+            ReqwestEngine::new_with_timeout_and_mrt(http_client, timeout_seconds, fetch_mrt)
+                .with_max_response_body_bytes(max_response_body_bytes),
         )],
-    };
-
-    // PlaywrightEngine 注入 cdp_seconds 作为 MRT + XHR/Fetch 捕获配置（F6）
-    // capture_xhr=false 时保持 None，引擎全程无 Network 监听（零开销）
-    #[cfg(feature = "engine-playwright")]
-    {
-        let mut playwright_engine = PlaywrightEngine::with_mrt(cdp_mrt);
-        if engine_config.playwright.capture_xhr {
-            let s = &engine_config.playwright;
-            log::info!(
-                "{}",
-                crate::i18n::tr_log_args(
-                    "boot-playwright-capture-enabled",
-                    &[
-                        (
-                            "patterns",
-                            fluent_bundle::FluentValue::from(
-                                s.capture_xhr_url_patterns.len() as i64
-                            ),
-                        ),
-                        (
-                            "max_bytes",
-                            fluent_bundle::FluentValue::from(s.capture_xhr_max_bytes as i64),
-                        ),
-                        (
-                            "max_responses",
-                            fluent_bundle::FluentValue::from(s.capture_xhr_max_responses as i64),
-                        ),
-                    ],
-                )
-            );
-            playwright_engine = playwright_engine.with_xhr_capture(XhrCaptureConfig {
-                url_patterns: s.capture_xhr_url_patterns.clone(),
-                max_bytes: s.capture_xhr_max_bytes,
-                max_responses: s.capture_xhr_max_responses as usize,
-            });
-        }
-        engines.push(Arc::new(playwright_engine));
     }
+}
 
-    // FlareSolverrEngine 按模式注入对应 MRT
-    // - Tls 模式 → tls_seconds
-    // - Cdp / Full 模式 → cdp_seconds
-    #[cfg(feature = "engine-flaresolverr")]
+/// PlaywrightEngine 注册：XHR/Fetch 捕获配置仅在 `capture_xhr=true` 时注入
+/// （false 时保持 None，引擎全程无 Network 监听——零开销）。
+#[cfg(feature = "engine-playwright")]
+fn push_playwright_engine(
+    engines: &mut Vec<Arc<dyn ScraperEngine>>,
+    engine_config: &EngineSettings,
+    cdp_mrt: std::time::Duration,
+) {
+    let mut playwright_engine = PlaywrightEngine::with_mrt(cdp_mrt);
+    if engine_config.playwright.capture_xhr {
+        let s = &engine_config.playwright;
+        log::info!(
+            "{}",
+            crate::i18n::tr_log_args(
+                "boot-playwright-capture-enabled",
+                &[
+                    (
+                        "patterns",
+                        fluent_bundle::FluentValue::from(s.capture_xhr_url_patterns.len() as i64),
+                    ),
+                    (
+                        "max_bytes",
+                        fluent_bundle::FluentValue::from(s.capture_xhr_max_bytes as i64),
+                    ),
+                    (
+                        "max_responses",
+                        fluent_bundle::FluentValue::from(s.capture_xhr_max_responses as i64),
+                    ),
+                ],
+            )
+        );
+        playwright_engine = playwright_engine.with_xhr_capture(XhrCaptureConfig {
+            url_patterns: s.capture_xhr_url_patterns.clone(),
+            max_bytes: s.capture_xhr_max_bytes,
+            max_responses: s.capture_xhr_max_responses as usize,
+        });
+    }
+    engines.push(Arc::new(playwright_engine));
+}
+
+/// FlareSolverrEngine 按模式注册：
+/// - Tls 模式 → `tls_seconds`
+/// - Cdp / Full 模式 → `cdp_seconds`
+#[cfg(feature = "engine-flaresolverr")]
+fn push_flaresolverr_engines(
+    engines: &mut Vec<Arc<dyn ScraperEngine>>,
+    engine_config: &EngineSettings,
+    http_client: Arc<reqwest::Client>,
+    proxy_url: Option<&str>,
+    tls_mrt: std::time::Duration,
+    cdp_mrt: std::time::Duration,
+    flaresolverr_timeout: u64,
+) {
     if engine_config.flaresolverr_tls.enabled {
         log::info!(
             "FlareSolverr TLS enabled with URL: {}",
@@ -172,7 +235,6 @@ pub fn init_engines(
         )));
     }
 
-    #[cfg(feature = "engine-flaresolverr")]
     if engine_config.flaresolverr_cdp.enabled {
         log::info!(
             "FlareSolverr CDP enabled with URL: {}",
@@ -187,7 +249,6 @@ pub fn init_engines(
         )));
     }
 
-    #[cfg(feature = "engine-flaresolverr")]
     if engine_config.flaresolverr.enabled {
         log::info!(
             "FlareSolverr enabled with URL: {}",
@@ -200,12 +261,20 @@ pub fn init_engines(
             flaresolverr_timeout,
         )));
     }
+}
 
-    // - WreqEngine 接入 ProxyProvider + 策略 + MRT
-    // - enabled 经 [engines.tls_fingerprint].enabled 显式开启（默认 false）
-    // - timeout_seconds 注入自 tls_fingerprint.timeout_seconds（默认 15）
-    // - MRT 注入 tls_seconds（与 FlareSolverr Tls 模式同源）
-    #[cfg(feature = "engine-tls-fingerprint")]
+/// WreqEngine 注册：`enabled` 经 `[engines.tls_fingerprint].enabled` 显式开启
+/// （默认 false）；timeout 注入自 `tls_fingerprint.timeout_seconds`（默认 15），
+/// MRT 注入 `tls_seconds`（与 FlareSolverr Tls 模式同源）。
+#[cfg(feature = "engine-tls-fingerprint")]
+fn push_wreq_engine(
+    engines: &mut Vec<Arc<dyn ScraperEngine>>,
+    engine_config: &EngineSettings,
+    wreq_proxy_provider: Option<Arc<dyn ProxyProvider>>,
+    proxy_strategy: ProxyStrategy,
+    tls_mrt: std::time::Duration,
+    max_response_body_bytes: usize,
+) {
     if engine_config.tls_fingerprint.enabled {
         log::info!(
             "WreqEngine (TLS fingerprint) enabled with timeout={}s",
@@ -237,10 +306,12 @@ pub fn init_engines(
             },
         }
     }
+}
 
-    // MoliEngine 注册（engine-moli feature 门控 + engines.moli.enabled 开启）。
-    // 端点模式：进程生命周期归部署方（moli serve --layout），此处只注册客户端。
-    #[cfg(feature = "engine-moli")]
+/// MoliEngine 注册（`engines.moli.enabled`）。端点模式：进程生命周期归部署方
+/// （`moli serve --layout`），此处只注册客户端。
+#[cfg(feature = "engine-moli")]
+fn push_moli_engine(engines: &mut Vec<Arc<dyn ScraperEngine>>, engine_config: &EngineSettings) {
     if engine_config.moli.enabled {
         log::info!(
             "MoliEngine (moli CDP) enabled at {}",
@@ -250,9 +321,18 @@ pub fn init_engines(
             crate::engines::client::moli::MoliEngineConfig::from_settings(&engine_config.moli),
         )));
     }
+}
 
-    // MllmEngine 注册（engine-mllm feature 门控 + engines.mllm.enabled 开启）
-    #[cfg(feature = "engine-mllm")]
+/// MllmEngine 注册（`engines.mllm.enabled`）。vision 适配器缺位 = `[fluxweir]`
+/// 未启用 = 配置矛盾，装配期 fail-fast（engine-mllm 不存在无 gateway 的编译态）。
+#[cfg(feature = "engine-mllm")]
+fn push_mllm_engine(
+    engines: &mut Vec<Arc<dyn ScraperEngine>>,
+    engine_config: &EngineSettings,
+    vision_adapter: Option<
+        Arc<dyn crate::domain::services::llm::vision_adapter::VisionAdapterTrait>,
+    >,
+) {
     if engine_config.mllm.enabled {
         log::info!(
             "MllmEngine (MLLM autonomous navigation) enabled with model={}",
@@ -281,8 +361,6 @@ pub fn init_engines(
             mllm_config,
         )));
     }
-
-    engines
 }
 
 /// Initialize engine components including router and client.

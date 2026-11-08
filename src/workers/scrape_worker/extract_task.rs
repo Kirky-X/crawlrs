@@ -6,6 +6,7 @@
 //! 从 `ScrapeWorker` 提取的 extract 任务处理相关方法（partial impl block）。
 //! 包含任务分发、规则/Prompt/Schema 提取和结果保存。
 
+use super::extraction_billing::{ExtractionSettlement, ExtractionSpec};
 use super::ScrapeWorker;
 use super::{build_extract_request_fn, parse_extract_payload};
 use crate::domain::models::{ScrapeResult, Task, TaskStatus};
@@ -77,7 +78,7 @@ impl ScrapeWorker {
             .await
     }
 
-    /// 处理基于规则的提取
+    /// 处理基于规则的提取（Immediate 结算：提取成功即扣费，保持既有扣费点）
     pub(super) async fn handle_rules_extraction(
         &self,
         task: &mut Task,
@@ -87,24 +88,23 @@ impl ScrapeWorker {
     ) -> Result<()> {
         debug!("rules: {:?}", rules);
 
-        let (extracted_data, usage) = self
-            .extraction_service
-            .extract(&response.content, rules, Some(url))
+        let extracted_data = self
+            .dispatch_extraction(
+                task,
+                &response.content,
+                url,
+                &ExtractionSpec::Rules(rules),
+                ExtractionSettlement::Immediate {
+                    description: "Tokens used for extraction rules",
+                },
+            )
             .await?;
-
-        self.deduct_token_credits(
-            task.team_id,
-            task.id,
-            &usage,
-            "Tokens used for extraction rules",
-        )
-        .await;
 
         self.save_extract_result(task, response, Some(extracted_data), url)
             .await
     }
 
-    /// 处理基于 Prompt 的提取
+    /// 处理基于 Prompt 的提取（Immediate 结算：提取成功即扣费，保持既有扣费点）
     pub(super) async fn handle_prompt_extraction(
         &self,
         task: &mut Task,
@@ -112,32 +112,23 @@ impl ScrapeWorker {
         prompt: String,
         url: &str,
     ) -> Result<()> {
-        let mut rules = HashMap::with_capacity(1);
-        rules.insert(
-            "extracted_data".to_string(),
-            crate::domain::services::extraction_service::ExtractionRule {
-                selector: None,
-                attr: None,
-                is_array: false,
-                use_llm: Some(true),
-                llm_prompt: Some(prompt),
-                output_format: None,
-            },
-        );
-
-        let (extracted_data, usage) = self
-            .extraction_service
-            .extract(&response.content, &rules, Some(url))
+        let extracted_data = self
+            .dispatch_extraction(
+                task,
+                &response.content,
+                url,
+                &ExtractionSpec::Prompt(prompt.as_str()),
+                ExtractionSettlement::Immediate {
+                    description: "Tokens used for extraction",
+                },
+            )
             .await?;
-
-        self.deduct_token_credits(task.team_id, task.id, &usage, "Tokens used for extraction")
-            .await;
 
         self.save_extract_result(task, response, Some(extracted_data), url)
             .await
     }
 
-    /// 处理基于 Schema 的提取
+    /// 处理基于 Schema 的提取（Immediate 结算：提取成功即扣费，保持既有扣费点）
     pub(super) async fn handle_schema_extraction(
         &self,
         task: &mut Task,
@@ -145,20 +136,17 @@ impl ScrapeWorker {
         schema: &serde_json::Value,
         url: &str,
     ) -> Result<()> {
-        let (extracted_data, usage) = self
-            .extraction_service
-            // rag-auto 入口：rag 未注入时等价 extract_with_schema，注入后按
-            // schema 派生检索 query 压缩 LLM 输入（fail-open 回退全页）
-            .extract_with_rag_auto(&response.content, None, schema)
+        let extracted_data = self
+            .dispatch_extraction(
+                task,
+                &response.content,
+                url,
+                &ExtractionSpec::Schema(schema),
+                ExtractionSettlement::Immediate {
+                    description: "Tokens used for schema extraction",
+                },
+            )
             .await?;
-
-        self.deduct_token_credits(
-            task.team_id,
-            task.id,
-            &usage,
-            "Tokens used for schema extraction",
-        )
-        .await;
 
         self.save_extract_result(task, response, Some(extracted_data), url)
             .await

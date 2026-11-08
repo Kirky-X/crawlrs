@@ -165,24 +165,7 @@ impl ScrapeWorker {
             task.url, response.status_code
         );
 
-        let processed_content = match process_text_encoding(task, &response).await {
-            Ok(content) => content.into_owned(),
-            Err(e) => {
-                warn!(
-                    "{}",
-                    crate::i18n::tr_log_args(
-                        "scrape-task-encoding-fallback",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                    )
-                );
-                response.content.clone()
-            }
-        };
-
-        let processed_response = ScrapeResponse {
-            content: processed_content,
-            ..response
-        };
+        let processed_response = Self::process_crawl_response_text(task, response).await;
 
         // F11：软 404 指纹判定（响应级，抓取后；与 URL 级 FilterChain 互补）。
         // 404/410 学习空壳指纹；200 命中已学壳 → 不落结果，任务照常完成（防重试风暴）。
@@ -219,6 +202,58 @@ impl ScrapeWorker {
         }
 
         // 先提取并入队子链接，再评估自适应停止条件。
+        self.queue_crawl_children(task, &processed_response, crawl_id, depth, config)
+            .await?;
+
+        // 自适应停止条件检查（评估策略详见 [`apply_adaptive_stop`]）
+        self.evaluate_adaptive_stop(crawl_id, config).await;
+
+        self.deduct_feature_credits(
+            task.team_id,
+            task.id,
+            processed_response.screenshot.is_some(),
+            request.options.proxy.is_some(),
+        )
+        .await;
+
+        Ok(())
+    }
+
+    /// 处理文本编码并重建响应（自 [`Self::handle_crawl_success`] 提取）。
+    ///
+    /// 编码处理失败时按 i18n 日志显性降级为原始响应内容。
+    async fn process_crawl_response_text(task: &Task, response: ScrapeResponse) -> ScrapeResponse {
+        let processed_content = match process_text_encoding(task, &response).await {
+            Ok(content) => content.into_owned(),
+            Err(e) => {
+                warn!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "scrape-task-encoding-fallback",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
+                );
+                response.content.clone()
+            }
+        };
+
+        ScrapeResponse {
+            content: processed_content,
+            ..response
+        }
+    }
+
+    /// 提取并入队子链接，并按需喂入 sitemap 源（自
+    /// [`Self::handle_crawl_success`] 提取）。
+    async fn queue_crawl_children(
+        &self,
+        task: &Task,
+        processed_response: &ScrapeResponse,
+        crawl_id: crate::domain::id::Id,
+        depth: u32,
+        config: &CrawlConfigDto,
+    ) -> Result<()> {
+        // 先提取并入队子链接，再评估自适应停止条件。
         //
         // 顺序是正确性约束：`NoPendingLinks` 的语义是"已无待处理链接"。
         // 若在外链入队之前评估，种子页完成时 total=1/pending=0 恒成立，
@@ -231,7 +266,7 @@ impl ScrapeWorker {
         if depth < config.max_depth {
             extract_and_queue_links_fn(
                 task,
-                &processed_response,
+                processed_response,
                 crawl_id,
                 depth,
                 config,
@@ -252,7 +287,15 @@ impl ScrapeWorker {
             self.feed_sitemap_source(task, crawl_id, config).await;
         }
 
-        // 自适应停止条件检查（评估策略详见 [`apply_adaptive_stop`]）
+        Ok(())
+    }
+
+    /// 自适应停止条件检查（自 [`Self::handle_crawl_success`] 提取）。
+    async fn evaluate_adaptive_stop(
+        &self,
+        crawl_id: crate::domain::id::Id,
+        config: &CrawlConfigDto,
+    ) {
         if let Ok(Some(crawl_state)) = self.crawl_repository.find_by_id(crawl_id).await {
             let pages_crawled = crawl_state.completed_tasks() as usize;
             let total = crawl_state.total_tasks() as usize;
@@ -271,16 +314,6 @@ impl ScrapeWorker {
             // crawl 查询失败，回退到原流程（仅更新完成状态）
             update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
         }
-
-        self.deduct_feature_credits(
-            task.team_id,
-            task.id,
-            processed_response.screenshot.is_some(),
-            request.options.proxy.is_some(),
-        )
-        .await;
-
-        Ok(())
     }
 
     /// 落库 crawl 结果（自 [`ScrapeWorker::handle_crawl_success`] 提取）

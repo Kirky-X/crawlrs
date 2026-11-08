@@ -5,7 +5,7 @@
 //!
 //! Manages webhook endpoint registration and lifecycle.
 
-use crate::domain::models::{Webhook, WebhookEventType};
+use crate::domain::models::{Webhook, WebhookEvent, WebhookEventType};
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::webhook_event_builder::WebhookEventBuilder;
@@ -43,6 +43,73 @@ impl WebhookManagementServiceImpl {
             webhook_service,
         }
     }
+
+    /// 查询 webhook 端点；仓储错误与未找到均映射为 anyhow 错误。
+    async fn find_webhook_or_err(&self, webhook_id: crate::domain::id::Id) -> Result<Webhook> {
+        self.webhook_repository
+            .find_by_id(webhook_id)
+            .await
+            .map_err(|e| anyhow!("Failed to find webhook {}: {}", webhook_id, e))?
+            .ok_or_else(|| anyhow!("Webhook not found: {}", webhook_id))
+    }
+
+    /// 持久化 Processing 状态的内联发送事件。
+    async fn create_processing_event(&self, event: &WebhookEvent) -> Result<()> {
+        self.event_repository
+            .create(event)
+            .await
+            .map_err(|e| anyhow!("Failed to create webhook event: {}", e))?;
+        Ok(())
+    }
+
+    /// 内联发送事件并写回终态。
+    ///
+    /// 发送失败时交还 worker 按重试策略投递；发送成功时写回 Delivered，
+    /// 回写失败重试 1 次，仍失败则显式返回 Err（已发送但状态未知）。
+    async fn send_event_inline(&self, event: &mut WebhookEvent) -> Result<()> {
+        if let Err(e) = self.webhook_service.send_webhook(event).await {
+            error!("Failed to send webhook event {}: {}", event.id, e);
+            // 交还 worker 按重试策略投递
+            event.status = crate::domain::models::WebhookStatus::Failed;
+            event.next_retry_at = Some(chrono::Utc::now() + chrono::Duration::seconds(5));
+            if let Err(update_err) = self.event_repository.update(event).await {
+                error!(
+                    "Failed to schedule retry for webhook event {}: {}",
+                    event.id, update_err
+                );
+            }
+            return Err(e);
+        }
+
+        // 内联发送成功：终结事件（写回 Delivered）。
+        // 外发已成功但状态回写失败会造成"外部已投递、DB 仍停留 Processing"，
+        // 后续 retry_failed 经 claim_pending 可能重复认领并再次外发（客户可见的
+        // 重复投递事故）。故回写失败时重试 1 次，仍失败则显式返回 Err
+        // （语义：已发送但状态未知）；重复外发由 event msg_id 幂等兜底
+        event.status = crate::domain::models::WebhookStatus::Delivered;
+        event.delivered_at = Some(chrono::Utc::now());
+        if let Err(update_err) = self.event_repository.update(event).await {
+            error!(
+                "Failed to mark webhook event {} delivered (attempt 1/2), retrying: {}",
+                event.id, update_err
+            );
+            if let Err(retry_err) = self.event_repository.update(event).await {
+                error!(
+                    "CRITICAL: webhook event {} was delivered externally but status \
+                     write-back failed after retry: {}; returning Err \
+                     (sent-but-status-unknown, dedup relies on event msg_id idempotency)",
+                    event.id, retry_err
+                );
+                return Err(anyhow!(
+                    "webhook event {} delivered but status write-back failed: {}",
+                    event.id,
+                    retry_err
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// webhook feature 关闭时不编译此 impl
@@ -78,12 +145,7 @@ impl WebhookManagementService for WebhookManagementServiceImpl {
         event_type: WebhookEventType,
         payload: serde_json::Value,
     ) -> Result<()> {
-        let webhook = self
-            .webhook_repository
-            .find_by_id(webhook_id)
-            .await
-            .map_err(|e| anyhow!("Failed to find webhook {}: {}", webhook_id, e))?
-            .ok_or_else(|| anyhow!("Webhook not found: {}", webhook_id))?;
+        let webhook = self.find_webhook_or_err(webhook_id).await?;
 
         let mut event = WebhookEventBuilder::build_triggered_event(
             webhook.team_id,
@@ -97,51 +159,8 @@ impl WebhookManagementService for WebhookManagementServiceImpl {
         // 防止 webhook-worker 在发送期间认领造成重复投递
         event.status = crate::domain::models::WebhookStatus::Processing;
 
-        self.event_repository
-            .create(&event)
-            .await
-            .map_err(|e| anyhow!("Failed to create webhook event: {}", e))?;
-
-        if let Err(e) = self.webhook_service.send_webhook(&event).await {
-            error!("Failed to send webhook event {}: {}", event.id, e);
-            // 交还 worker 按重试策略投递
-            event.status = crate::domain::models::WebhookStatus::Failed;
-            event.next_retry_at = Some(chrono::Utc::now() + chrono::Duration::seconds(5));
-            if let Err(update_err) = self.event_repository.update(&event).await {
-                error!(
-                    "Failed to schedule retry for webhook event {}: {}",
-                    event.id, update_err
-                );
-            }
-            return Err(e);
-        }
-
-        // 内联发送成功：终结事件（写回 Delivered）。
-        // 外发已成功但状态回写失败会造成"外部已投递、DB 仍停留 Processing"，
-        // 后续 retry_failed 经 claim_pending 可能重复认领并再次外发（客户可见的
-        // 重复投递事故）。故回写失败时重试 1 次，仍失败则显式返回 Err
-        // （语义：已发送但状态未知）；重复外发由 event msg_id 幂等兜底
-        event.status = crate::domain::models::WebhookStatus::Delivered;
-        event.delivered_at = Some(chrono::Utc::now());
-        if let Err(update_err) = self.event_repository.update(&event).await {
-            error!(
-                "Failed to mark webhook event {} delivered (attempt 1/2), retrying: {}",
-                event.id, update_err
-            );
-            if let Err(retry_err) = self.event_repository.update(&event).await {
-                error!(
-                    "CRITICAL: webhook event {} was delivered externally but status \
-                     write-back failed after retry: {}; returning Err \
-                     (sent-but-status-unknown, dedup relies on event msg_id idempotency)",
-                    event.id, retry_err
-                );
-                return Err(anyhow!(
-                    "webhook event {} delivered but status write-back failed: {}",
-                    event.id,
-                    retry_err
-                ));
-            }
-        }
+        self.create_processing_event(&event).await?;
+        self.send_event_inline(&mut event).await?;
 
         info!("Triggered webhook {} for event {}", webhook_id, event.id);
         Ok(())

@@ -13,6 +13,8 @@ use thiserror::Error;
 
 use crate::utils::regex_cache::RegexCacheTrait;
 
+mod score;
+
 /// Relevance scorer errors
 #[derive(Error, Debug)]
 pub enum RelevanceScorerError {
@@ -201,47 +203,10 @@ impl RelevanceScorer {
         let desc_lower = description.map(|d| d.to_lowercase()).unwrap_or_default();
         let url_lower = url.to_lowercase();
 
-        // Title relevance (highest weight)
-        for term in &self.query_terms {
-            let weight = self.term_weights.get(term).unwrap_or(&1.0);
-
-            // Exact title match
-            if title_lower.contains(term) {
-                score += 2.0 * weight;
-            }
-
-            // Title starts with term
-            if title_lower.starts_with(term) {
-                score += 1.5 * weight;
-            }
-
-            // Title word boundary match
-            if self.has_word_boundary_match(&title_lower, term) {
-                score += 1.2 * weight;
-            }
-        }
-
-        // Description relevance (medium weight)
-        for term in &self.query_terms {
-            let weight = self.term_weights.get(term).unwrap_or(&1.0);
-
-            if desc_lower.contains(term) {
-                score += 0.8 * weight;
-            }
-
-            if self.has_word_boundary_match(&desc_lower, term) {
-                score += 0.6 * weight;
-            }
-        }
-
-        // URL relevance (lower weight)
-        for term in &self.query_terms {
-            let weight = self.term_weights.get(term).unwrap_or(&1.0);
-
-            if url_lower.contains(term) {
-                score += 0.4 * weight;
-            }
-        }
+        // 标题 → 描述 → URL 分项命中分依次累加（保持原浮点求和顺序）
+        self.accumulate_title_score(&title_lower, &mut score);
+        self.accumulate_description_score(&desc_lower, &mut score);
+        self.accumulate_url_score(&url_lower, &mut score);
 
         // Domain authority bonus (simplified)
         if self.is_authoritative_domain(url) {

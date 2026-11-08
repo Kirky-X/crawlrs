@@ -396,48 +396,11 @@ impl ScrapeWorker {
         // 304 短路：目标站确认内容未变，复用历史结果内容回填 200 响应，
         // 省去重复传输与重新提取。无历史结果可回填时为协议异常（304
         // 必然对应我们发出的条件请求），显性置 Failed 不返回空正文。
-        let response = if response.status_code == 304 {
-            match prior_result {
-                Some(ref prior) => {
-                    info!(
-                        "{}",
-                        crate::i18n::tr_log_args(
-                            "scrape-304-reused",
-                            &[
-                                (
-                                    "task_id",
-                                    fluent_bundle::FluentValue::from(task.id.to_string()),
-                                ),
-                                (
-                                    "bytes",
-                                    fluent_bundle::FluentValue::from(prior.content.len() as i64),
-                                ),
-                            ],
-                        )
-                    );
-                    not_modified_response(prior, &response)
-                }
-                None => {
-                    error!(
-                        "{}",
-                        crate::i18n::tr_log_args(
-                            "scrape-304-no-prior",
-                            &[(
-                                "task_id",
-                                fluent_bundle::FluentValue::from(task.id.to_string()),
-                            )],
-                        )
-                    );
-                    self.handle_failure(
-                        task,
-                        "304 response without prior result for conditional request",
-                    )
-                    .await?;
-                    return Ok(false);
-                }
-            }
-        } else {
-            response
+        let Some(response) = self
+            .resolve_not_modified_response(task, prior_result, response)
+            .await?
+        else {
+            return Ok(false);
         };
 
         debug!("status_code: {}", response.status_code);
@@ -448,6 +411,79 @@ impl ScrapeWorker {
         let has_screenshot = response.screenshot.is_some();
         let has_proxy = scrape_request.options.proxy.is_some();
 
+        self.persist_success_and_settle(
+            task,
+            scrape_request_dto,
+            response,
+            has_screenshot,
+            has_proxy,
+        )
+        .await
+    }
+
+    /// 304 短路：命中历史结果时用其内容回填 200 响应；无历史结果按协议异常
+    /// 置 Failed 并返回 `None`（调用方直接返回 `Ok(false)`）。
+    async fn resolve_not_modified_response(
+        &self,
+        task: &mut Task,
+        prior_result: Option<crate::domain::models::ScrapeResult>,
+        response: ScrapeResponse,
+    ) -> Result<Option<ScrapeResponse>> {
+        if response.status_code != 304 {
+            return Ok(Some(response));
+        }
+
+        match prior_result {
+            Some(ref prior) => {
+                info!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "scrape-304-reused",
+                        &[
+                            (
+                                "task_id",
+                                fluent_bundle::FluentValue::from(task.id.to_string()),
+                            ),
+                            (
+                                "bytes",
+                                fluent_bundle::FluentValue::from(prior.content.len() as i64),
+                            ),
+                        ],
+                    )
+                );
+                Ok(Some(not_modified_response(prior, &response)))
+            }
+            None => {
+                error!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "scrape-304-no-prior",
+                        &[(
+                            "task_id",
+                            fluent_bundle::FluentValue::from(task.id.to_string()),
+                        )],
+                    )
+                );
+                self.handle_failure(
+                    task,
+                    "304 response without prior result for conditional request",
+                )
+                .await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// 结果持久化与费用结算：success handler 失败转失败回填；守卫胜利者
+    /// 扣除高级功能费用。
+    async fn persist_success_and_settle(
+        &self,
+        task: &mut Task,
+        scrape_request_dto: Option<&ScrapeRequestDto>,
+        response: ScrapeResponse,
+        has_screenshot: bool,
+        has_proxy: bool,
+    ) -> Result<bool> {
         let result_persisted = match self
             .handle_scrape_success(task, scrape_request_dto, response)
             .await
@@ -529,43 +565,44 @@ impl ScrapeWorker {
             retry_reason, task.attempt_count, directive
         );
 
-        // If it's a timeout error, mark as failed immediately instead of rescheduling
-        let err_str = e.to_string().to_lowercase();
-        if err_str.contains("timeout")
-            || err_str.contains("expired")
-            || err_str.contains("all engines failed")
-        {
-            debug!("Timeout or AllEnginesFailed detected, marking task as failed");
-            self.mark_task_failed_immediately(task.id, &e.to_string(), &[])
-                .await?;
-        } else {
-            // reason-specific 重试限制检查
-            // RetryTracker 各 reason 独立计数——AntiBot/FeatureToggle 达上限后
-            // 即使总 max_retries 未耗尽也立即标记失败，避免无谓重试。
-            let mut tracker = RetryTracker::new_default();
-            for _ in 0..task.attempt_count {
-                tracker.record(retry_reason);
-            }
-            if !tracker.should_retry(retry_reason) {
-                info!(
-                    "retry limit reached for reason {:?} (attempt={}), \
-                     marking task {} as failed",
-                    retry_reason, task.attempt_count, task.id
-                );
-                self.mark_task_failed_immediately(
-                    task.id,
-                    &e.to_string(),
-                    &[("retry_limit_reason", json!(format!("{:?}", retry_reason)))],
-                )
-                .await?;
-            } else {
-                let err_msg = e.to_string();
-                self.handle_failure(task, &err_msg).await?;
-            }
-        }
+        self.apply_failure_disposition(task, &e, retry_reason)
+            .await?;
 
         // 触发失败 Webhook
         self.trigger_webhook(task, Some(e.to_string())).await;
+        Ok(())
+    }
+
+    /// 按重试分类执行失败处置：timeout/expired/全引擎失败立即标记失败；
+    /// reason 达上限立即标记失败（附原因 payload）；其余走重排。
+    async fn apply_failure_disposition(
+        &self,
+        task: &mut Task,
+        e: &EngineError,
+        retry_reason: crate::utils::retry::RetryReason,
+    ) -> Result<()> {
+        // If it's a timeout error, mark as failed immediately instead of rescheduling
+        let err_str = e.to_string().to_lowercase();
+        if is_immediate_failure(&err_str) {
+            debug!("Timeout or AllEnginesFailed detected, marking task as failed");
+            self.mark_task_failed_immediately(task.id, &e.to_string(), &[])
+                .await?;
+        } else if retry_limit_reached(retry_reason, task.attempt_count) {
+            info!(
+                "retry limit reached for reason {:?} (attempt={}), \
+                 marking task {} as failed",
+                retry_reason, task.attempt_count, task.id
+            );
+            self.mark_task_failed_immediately(
+                task.id,
+                &e.to_string(),
+                &[("retry_limit_reason", json!(format!("{:?}", retry_reason)))],
+            )
+            .await?;
+        } else {
+            let err_msg = e.to_string();
+            self.handle_failure(task, &err_msg).await?;
+        }
         Ok(())
     }
 
@@ -575,4 +612,23 @@ impl ScrapeWorker {
 
     // process_crawl_task / handle_crawl_success / handle_crawl_failure
     // 已迁移至 `crawl_task.rs`（partial impl block）
+}
+
+/// timeout / expired / 全引擎失败 → 不重排，立即标记失败
+fn is_immediate_failure(err_str: &str) -> bool {
+    err_str.contains("timeout")
+        || err_str.contains("expired")
+        || err_str.contains("all engines failed")
+}
+
+/// reason-specific 重试上限检查
+///
+/// RetryTracker 各 reason 独立计数——AntiBot/FeatureToggle 达上限后
+/// 即使总 max_retries 未耗尽也立即标记失败，避免无谓重试。
+fn retry_limit_reached(reason: crate::utils::retry::RetryReason, attempt_count: i32) -> bool {
+    let mut tracker = RetryTracker::new_default();
+    for _ in 0..attempt_count {
+        tracker.record(reason);
+    }
+    !tracker.should_retry(reason)
 }

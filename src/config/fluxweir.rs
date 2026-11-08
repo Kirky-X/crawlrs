@@ -130,6 +130,12 @@ impl FluxweirSettings {
             return Ok(());
         }
 
+        self.validate_mode_and_endpoint()?;
+        self.validate_credentials_and_timeout()
+    }
+
+    /// mode 合法性与形态相关端点校验：embedded 需监听地址、external 需实例地址
+    fn validate_mode_and_endpoint(&self) -> Result<(), String> {
         match self.mode.as_str() {
             "embedded" | "external" => {}
             other => {
@@ -159,6 +165,11 @@ impl FluxweirSettings {
             ));
         }
 
+        Ok(())
+    }
+
+    /// 密钥可解析性与请求超时上界校验
+    fn validate_credentials_and_timeout(&self) -> Result<(), String> {
         if self.api_key().is_none() {
             return Err(fluxweir_config_message(
                 "fluxweir-config-api-key-missing",

@@ -22,6 +22,8 @@ use crate::search::response::{Response, ResponseItem};
 use crate::search::rrf::RRFFuser;
 use crate::search::types::{EngineHealth, SearchEngineType};
 
+mod fanout;
+
 /// 并发聚合搜索引擎
 ///
 /// 数据流:
@@ -293,109 +295,16 @@ impl SearchEngine for SmartSearchEngine {
         // F2：lang/country/offset 端到端贯通——此前在此处被丢弃。
         let base_request = build_base_request(request);
 
-        // F1：每个引擎 future 独立超时——超时引擎按失败降级（部分结果容忍），
-        // 消除"单引擎 hang 拖死整体聚合"（引擎路由层的瀑布重试会叠加耗时）
-        macro_rules! engine_with_timeout {
-            ($gate:expr, $fut:expr) => {{
-                self.gates[$gate].wait_turn().await;
-                with_timeout(self.engine_timeout, $fut).await
-            }};
-        }
-
         // 并发查询三个基础引擎 + 可选附加引擎（SearXNG）
-        let extra_future = async {
-            match &self.extra_engine {
-                Some(engine) => {
-                    Some(with_timeout(self.engine_timeout, engine.search(&base_request)).await)
-                }
-                None => None,
-            }
-        };
-        let (bing_result, baidu_result, sogou_result, extra_result) = tokio::join!(
-            async { engine_with_timeout!(GATE_BING, self.bing_engine.search(&base_request)) },
-            async { engine_with_timeout!(GATE_BAIDU, self.baidu_engine.search(&base_request)) },
-            async { engine_with_timeout!(GATE_SOGOU, self.sogou_engine.search(&base_request)) },
-            extra_future,
-        );
+        let (bing_result, baidu_result, sogou_result, extra_result) =
+            self.fan_out_engines(&base_request).await;
 
         // 收集各引擎结果，记录来源和排名顺序
-        let mut bing_results: Vec<SearchResult> = Vec::new();
-        let mut baidu_results: Vec<SearchResult> = Vec::new();
-        let mut sogou_results: Vec<SearchResult> = Vec::new();
-
-        match bing_result {
-            Ok(response) => {
-                info!("Bing returned {} results", response.items.len());
-                bing_results = response
-                    .items
-                    .iter()
-                    .map(Self::item_to_search_result)
-                    .collect();
-            }
-            Err(e) => {
-                warn!("Bing search failed: {}", e);
-            }
-        }
-
-        match baidu_result {
-            Ok(response) => {
-                info!("Baidu returned {} results", response.items.len());
-                baidu_results = response
-                    .items
-                    .iter()
-                    .map(Self::item_to_search_result)
-                    .collect();
-            }
-            Err(e) => {
-                warn!("Baidu search failed: {}", e);
-            }
-        }
-
-        match sogou_result {
-            Ok(response) => {
-                info!("Sogou returned {} results", response.items.len());
-                sogou_results = response
-                    .items
-                    .iter()
-                    .map(Self::item_to_search_result)
-                    .collect();
-            }
-            Err(e) => {
-                warn!("Sogou search failed: {}", e);
-            }
-        }
-
+        let mut bing_results = fanout::collect_named_results("Bing", bing_result);
+        let mut baidu_results = fanout::collect_named_results("Baidu", baidu_result);
+        let mut sogou_results = fanout::collect_named_results("Sogou", sogou_result);
         // 附加引擎结果（启用 SearXNG 时参与融合）
-        let mut extra_results: Vec<SearchResult> = Vec::new();
-        if let Some(result) = extra_result {
-            match result {
-                Ok(response) => {
-                    info!(
-                        "{} returned {} results",
-                        self.extra_engine
-                            .as_ref()
-                            .map(|e| e.name())
-                            .unwrap_or("extra engine"),
-                        response.items.len()
-                    );
-                    extra_results = response
-                        .items
-                        .iter()
-                        .map(Self::item_to_search_result)
-                        .collect();
-                }
-                Err(e) => {
-                    warn!(
-                        "{} search failed: {}",
-                        self.extra_engine
-                            .as_ref()
-                            .map(|e| e.name())
-                            .unwrap_or("extra engine"),
-                        e
-                    );
-                }
-            }
-        }
+        let mut extra_results = fanout::collect_extra_results(self, extra_result);
 
         // 至少一个引擎需要返回结果
         if bing_results.is_empty()
@@ -417,12 +326,9 @@ impl SearchEngine for SmartSearchEngine {
 
         // Step 1: SimHash + URL 去重（每个引擎内部先去重）
         let mut deduplicator = ResultDeduplicator::with_default_config();
-        bing_results = deduplicator.deduplicate(bing_results);
-        deduplicator.reset();
-        baidu_results = deduplicator.deduplicate(baidu_results);
-        deduplicator.reset();
-        sogou_results = deduplicator.deduplicate(sogou_results);
-        deduplicator.reset();
+        bing_results = fanout::dedup_engine_results(&mut deduplicator, bing_results);
+        baidu_results = fanout::dedup_engine_results(&mut deduplicator, baidu_results);
+        sogou_results = fanout::dedup_engine_results(&mut deduplicator, sogou_results);
         extra_results = deduplicator.deduplicate(extra_results);
 
         // Step 2: RRF 融合（跨引擎去重 + 排名融合）
@@ -462,19 +368,7 @@ impl SearchEngine for SmartSearchEngine {
         info!("Returning {} final results", fused.len());
 
         // 转换为 ResponseItem，保留来源引擎标记
-        let items: Vec<ResponseItem> = fused
-            .into_iter()
-            .map(|r| {
-                let engine_type =
-                    SearchEngineType::from_name(&r.engine).unwrap_or(SearchEngineType::Smart);
-                ResponseItem {
-                    title: r.title,
-                    url: r.url,
-                    description: r.description.unwrap_or_default(),
-                    engine: engine_type,
-                }
-            })
-            .collect();
+        let items = fanout::to_response_items(fused);
 
         Ok(Response {
             items,

@@ -265,9 +265,31 @@ mod app {
             .map_err(|e| anyhow::anyhow!("db conn: {}", e))?;
 
         // 1. Ensure default team exists
+        let team_id = DEFAULT_TEAM_ID;
+        ensure_default_team(conn, team_id).await?;
+
+        // 2. Create admin API key via garrison
+        #[cfg(feature = "auth")]
+        {
+            create_bootstrap_admin_key(conn, team_id).await?;
+        }
+
+        #[cfg(not(feature = "auth"))]
+        {
+            println!("Auth feature is not enabled in this build.");
+            println!("Rebuild with default features to enable authentication.");
+        }
+
+        Ok(())
+    }
+
+    /// Ensure default team exists（自 [`ServiceType::run_bootstrap`] 提取）。
+    async fn ensure_default_team(
+        conn: &dbnexus::sea_orm::DatabaseConnection,
+        team_id: crawlrs::domain::id::Id,
+    ) -> anyhow::Result<()> {
         use crawlrs::infrastructure::database::entities::team;
         use dbnexus::sea_orm::{EntityTrait, Set};
-        let team_id = DEFAULT_TEAM_ID;
         let existing = team::Entity::find_by_id(team_id)
             .one(conn)
             .await
@@ -293,82 +315,80 @@ mod app {
         } else {
             println!("Team already exists: {}", team_id);
         }
+        Ok(())
+    }
 
-        // 2. Create admin API key via garrison
-        #[cfg(feature = "auth")]
-        {
-            use crawlrs::infrastructure::database::entities::api_key;
-            use garrison::protocol::apikey::ApiKeyHandler;
+    /// Create admin API key via garrison（自 [`ServiceType::run_bootstrap`] 提取）。
+    #[cfg(feature = "auth")]
+    async fn create_bootstrap_admin_key(
+        conn: &dbnexus::sea_orm::DatabaseConnection,
+        team_id: crawlrs::domain::id::Id,
+    ) -> anyhow::Result<()> {
+        use crawlrs::infrastructure::database::entities::api_key;
+        use dbnexus::sea_orm::{EntityTrait, Set};
+        use garrison::protocol::apikey::ApiKeyHandler;
 
-            let dao = crawlrs::infrastructure::auth::garrison_dao::get_garrison_dao()
-                .ok_or_else(|| anyhow::anyhow!("garrison DAO not initialized"))?;
-            let handler = ApiKeyHandler::new(dao);
-            let api_key_id = crawlrs::domain::id::Id::generate();
-            let login_id = api_key_id.to_string();
-            let scopes = vec![
-                "crawlrs:read".to_string(),
-                "crawlrs:write".to_string(),
-                "crawlrs:admin".to_string(),
-            ];
-            let expires_in_secs: i64 = 365 * 24 * 3600;
-            let plaintext_key = handler
-                .generate_with_namespace(login_id, "crawlrs", scopes, expires_in_secs)
-                .await
-                .map_err(|e| anyhow::anyhow!("garrison generate key: {}", e))?;
+        let dao = crawlrs::infrastructure::auth::garrison_dao::get_garrison_dao()
+            .ok_or_else(|| anyhow::anyhow!("garrison DAO not initialized"))?;
+        let handler = ApiKeyHandler::new(dao);
+        let api_key_id = crawlrs::domain::id::Id::generate();
+        let login_id = api_key_id.to_string();
+        let scopes = vec![
+            "crawlrs:read".to_string(),
+            "crawlrs:write".to_string(),
+            "crawlrs:admin".to_string(),
+        ];
+        let expires_in_secs: i64 = 365 * 24 * 3600;
+        let plaintext_key = handler
+            .generate_with_namespace(login_id, "crawlrs", scopes, expires_in_secs)
+            .await
+            .map_err(|e| anyhow::anyhow!("garrison generate key: {}", e))?;
 
-            // Extract key_id from "key_id.key_secret" format
-            let garrison_key_id = match plaintext_key.split_once('.') {
-                Some((k_id, _)) => k_id.to_string(),
-                None => return Err(anyhow::anyhow!("garrison returned malformed key")),
-            };
+        // Extract key_id from "key_id.key_secret" format
+        let garrison_key_id = match plaintext_key.split_once('.') {
+            Some((k_id, _)) => k_id.to_string(),
+            None => return Err(anyhow::anyhow!("garrison returned malformed key")),
+        };
 
-            // 3. Insert api_keys mapping
-            let now_ts = chrono::Utc::now();
-            let key_model = api_key::ActiveModel {
-                id: Set(api_key_id.into()),
-                team_id: Set(team_id.into()),
-                key: Set(garrison_key_id),
-                created_at: Set(now_ts.into()),
-                updated_at: Set(None),
-            };
-            api_key::Entity::insert(key_model)
-                .exec(conn)
-                .await
-                .map_err(|e| anyhow::anyhow!("insert api_key: {}", e))?;
+        // 3. Insert api_keys mapping
+        let now_ts = chrono::Utc::now();
+        let key_model = api_key::ActiveModel {
+            id: Set(api_key_id.into()),
+            team_id: Set(team_id.into()),
+            key: Set(garrison_key_id),
+            created_at: Set(now_ts.into()),
+            updated_at: Set(None),
+        };
+        api_key::Entity::insert(key_model)
+            .exec(conn)
+            .await
+            .map_err(|e| anyhow::anyhow!("insert api_key: {}", e))?;
 
-            // 完整 key 仅在交互终端展示（运维在场可立即保存）；管道/日志采集下
-            // stdout 会被留存，只输出掩码避免凭证入库。
-            use std::io::IsTerminal;
-            if std::io::stdout().is_terminal() {
-                println!("Created admin API key:");
-                println!("  api_key_id: {}", api_key_id);
-                println!("  team_id:    {}", team_id);
-                println!("  api_key:    {}", plaintext_key);
-                println!("  scopes:     read, write, admin");
-                println!();
-                println!("Use this key as Bearer token:");
-                println!(
-                    "  curl -H 'Authorization: Bearer {}' http://localhost:8899/v1/teams/me",
-                    plaintext_key
-                );
-            } else {
-                println!("Created admin API key:");
-                println!("  api_key_id: {}", api_key_id);
-                println!("  team_id:    {}", team_id);
-                println!(
-                    "  api_key:    {} (masked; rerun in a terminal to display the full key)",
-                    crawlrs::common::mask_secret(&plaintext_key)
-                );
-                println!("  scopes:     read, write, admin");
-            }
+        // 完整 key 仅在交互终端展示（运维在场可立即保存）；管道/日志采集下
+        // stdout 会被留存，只输出掩码避免凭证入库。
+        use std::io::IsTerminal;
+        if std::io::stdout().is_terminal() {
+            println!("Created admin API key:");
+            println!("  api_key_id: {}", api_key_id);
+            println!("  team_id:    {}", team_id);
+            println!("  api_key:    {}", plaintext_key);
+            println!("  scopes:     read, write, admin");
+            println!();
+            println!("Use this key as Bearer token:");
+            println!(
+                "  curl -H 'Authorization: Bearer {}' http://localhost:8899/v1/teams/me",
+                plaintext_key
+            );
+        } else {
+            println!("Created admin API key:");
+            println!("  api_key_id: {}", api_key_id);
+            println!("  team_id:    {}", team_id);
+            println!(
+                "  api_key:    {} (masked; rerun in a terminal to display the full key)",
+                crawlrs::common::mask_secret(&plaintext_key)
+            );
+            println!("  scopes:     read, write, admin");
         }
-
-        #[cfg(not(feature = "auth"))]
-        {
-            println!("Auth feature is not enabled in this build.");
-            println!("Rebuild with default features to enable authentication.");
-        }
-
         Ok(())
     }
 

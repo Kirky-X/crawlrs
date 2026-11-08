@@ -361,11 +361,41 @@ async fn score_and_enqueue(
     repository: &dyn TaskRepository,
     crawl_repository: &dyn CrawlRepository,
 ) -> Result<()> {
+    let frontier = build_scored_frontier(&new_urls, task);
+
+    // DFS/BFS 策略判断提到循环外：`to_lowercase` 每次调用都分配新 String，
+    // 不必逐 URL 重复计算
+    let is_dfs_strategy = config
+        .strategy
+        .as_deref()
+        .map(|s| s.to_lowercase() == "dfs")
+        .unwrap_or(false);
+
+    while let Some(scored) = frontier.pop() {
+        // 出队按 priority ASC（小值先出）。
+        // DFS（栈语义）：子链接键 = 父 priority - (子深度)，i32 负空间
+        // 保证默认 priority=0 与超深链路下仍严格随深度递减（复查
+        // 此前 saturating_sub(1) 在 priority=0 或深链路塌缩回 BFS）。
+        // BFS（层序）：继承父 priority。
+        let priority = child_priority(task.priority, is_dfs_strategy, current_depth);
+
+        let new_task =
+            build_child_crawl_task(task, crawl_id, current_depth, config, priority, scored.url);
+
+        repository.create(&new_task).await?;
+        crawl_repository.increment_total_tasks(crawl_id).await?;
+    }
+
+    Ok(())
+}
+
+/// 对 URL 评分并按 Frontier 评分排序入队（评分失败记 warn 后跳过）。
+fn build_scored_frontier(new_urls: &[String], task: &Task) -> Frontier {
     let scorer = PathDepthScorer::new();
     let scoring_ctx = ScoringContext::default();
     let frontier = Frontier::new();
 
-    for url in &new_urls {
+    for url in new_urls {
         let base_score = scorer.score(url, &scoring_ctx);
         // KG 结构空洞提升因子
         // kg_priority_boost > 1.0 表示 URL 可能填补结构空洞，应获得更高优先级
@@ -412,58 +442,54 @@ async fn score_and_enqueue(
         )
     );
 
-    // DFS/BFS 策略判断提到循环外：`to_lowercase` 每次调用都分配新 String，
-    // 不必逐 URL 重复计算
-    let is_dfs_strategy = config
-        .strategy
-        .as_deref()
-        .map(|s| s.to_lowercase() == "dfs")
-        .unwrap_or(false);
+    frontier
+}
 
-    while let Some(scored) = frontier.pop() {
-        // 出队按 priority ASC（小值先出）。
-        // DFS（栈语义）：子链接键 = 父 priority - (子深度)，i32 负空间
-        // 保证默认 priority=0 与超深链路下仍严格随深度递减（复查
-        // 此前 saturating_sub(1) 在 priority=0 或深链路塌缩回 BFS）。
-        // BFS（层序）：继承父 priority。
-        let mut priority = task.priority;
-        if is_dfs_strategy {
-            let depth_key = (current_depth.min(1_000_000) as i32).saturating_add(1);
-            priority = task.priority.saturating_sub(depth_key);
-        }
-
-        let new_task = Task {
-            id: crate::domain::id::Id::generate(),
-            task_type: TaskType::Crawl,
-            status: TaskStatus::Queued,
-            priority,
-            team_id: task.team_id,
-            api_key_id: task.api_key_id,
-            url: scored.url,
-            payload: json!({
-                "crawl_id": crawl_id.to_string(),
-                "depth": current_depth + 1,
-                "config": config
-            }),
-            retry_count: 0,
-            attempt_count: 0,
-            max_retries: 3,
-            scheduled_at: None,
-            created_at: Utc::now(),
-            started_at: None,
-            completed_at: None,
-            crawl_id: Some(crawl_id),
-            updated_at: Utc::now(),
-            lock_token: None,
-            lock_expires_at: None,
-            expires_at: None,
-        };
-
-        repository.create(&new_task).await?;
-        crawl_repository.increment_total_tasks(crawl_id).await?;
+/// 子链接优先级：DFS 按深度递减（栈语义），BFS 继承父优先级。
+fn child_priority(parent_priority: i32, is_dfs_strategy: bool, current_depth: u32) -> i32 {
+    if is_dfs_strategy {
+        let depth_key = (current_depth.min(1_000_000) as i32).saturating_add(1);
+        parent_priority.saturating_sub(depth_key)
+    } else {
+        parent_priority
     }
+}
 
-    Ok(())
+/// 构造子爬取任务（payload 记录 crawl_id / depth / config）。
+fn build_child_crawl_task(
+    task: &Task,
+    crawl_id: crate::domain::id::Id,
+    current_depth: u32,
+    config: &CrawlConfigDto,
+    priority: i32,
+    url: String,
+) -> Task {
+    Task {
+        id: crate::domain::id::Id::generate(),
+        task_type: TaskType::Crawl,
+        status: TaskStatus::Queued,
+        priority,
+        team_id: task.team_id,
+        api_key_id: task.api_key_id,
+        url,
+        payload: json!({
+            "crawl_id": crawl_id.to_string(),
+            "depth": current_depth + 1,
+            "config": config
+        }),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        created_at: Utc::now(),
+        started_at: None,
+        completed_at: None,
+        crawl_id: Some(crawl_id),
+        updated_at: Utc::now(),
+        lock_token: None,
+        lock_expires_at: None,
+        expires_at: None,
+    }
 }
 
 #[cfg(test)]

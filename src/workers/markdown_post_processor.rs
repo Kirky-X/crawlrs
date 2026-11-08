@@ -95,6 +95,16 @@ pub struct MarkdownPostProcessor {
     content_extractor: Option<Arc<ContentExtractionFacade>>,
 }
 
+/// only_main_content 时的正文来源（自 [`MarkdownPostProcessor::generate`] 提取）。
+enum MainContentSource {
+    /// 结构化正文 HTML
+    StructuredHtml(String),
+    /// 纯文本（抽取器未产出正文 HTML，显性降级）
+    PlainText(String),
+    /// 整页 HTML
+    FullHtml,
+}
+
 impl MarkdownPostProcessor {
     /// 创建新的 Markdown 后处理器
     ///
@@ -160,6 +170,48 @@ impl MarkdownPostProcessor {
             return Ok(None);
         }
 
+        let content_source = self
+            .resolve_main_content_source(task_id, req, content)
+            .await;
+
+        // 结构化正文与整页 HTML 走 Markdown 转换；纯文本没有可转换的结构，
+        // 直接作为 Markdown 正文（按值消费避免整文深拷贝；行首元字符做最小
+        // 转义防下游误渲染为标题/列表——见 escape_leading_markdown_chars）。
+        let markdown_result = self.convert_main_content_to_markdown(content, req, content_source);
+
+        match markdown_result {
+            Ok(md) if !md.trim().is_empty() => {
+                debug!(
+                    "task_id: {}, Markdown generated ({} bytes)",
+                    task_id,
+                    md.len()
+                );
+                Ok(Some(md))
+            }
+            Ok(_md) => {
+                debug!(
+                    "task_id: {}, Markdown conversion returned empty result",
+                    task_id
+                );
+                Err(MarkdownPostProcessorError::EmptyResult)
+            }
+            Err(e) => {
+                // #7：保留下层 MarkdownError 类型（通过 #[from] 自动转换），
+                // 调用方可 downcast_ref 拿到原始错误做精细处理。
+                warn!("task_id: {}, Markdown conversion failed: {}", task_id, e);
+                Err(MarkdownPostProcessorError::ConversionFailed(e))
+            }
+        }
+    }
+
+    /// 解析正文来源（自 [`Self::generate`] 提取）：`only_main_content=true`
+    /// 时优先用保留结构的正文 HTML，失败/缺失显性降级。
+    async fn resolve_main_content_source(
+        &self,
+        task_id: crate::domain::id::Id,
+        req: &ScrapeRequestDto,
+        content: &str,
+    ) -> MainContentSource {
         // only_main_content=true 时先提取正文
         let only_main = req
             .options
@@ -170,16 +222,7 @@ impl MarkdownPostProcessor {
         // P16：优先用保留结构的正文 HTML（表格/链接/代码块不丢）。
         // `ExtractedContent.text` 是纯文本——纯文本喂 Markdown 转换器
         // 会把结构信息全部抹平。
-        enum MainContentSource {
-            /// 结构化正文 HTML
-            StructuredHtml(String),
-            /// 纯文本（抽取器未产出正文 HTML，显性降级）
-            PlainText(String),
-            /// 整页 HTML
-            FullHtml,
-        }
-
-        let content_source: MainContentSource = if only_main {
+        if only_main {
             if let Some(extractor) = &self.content_extractor {
                 match extractor.extract(content, &req.url).await {
                     Ok(extracted) if !extracted.text.trim().is_empty() => {
@@ -222,12 +265,17 @@ impl MarkdownPostProcessor {
             }
         } else {
             MainContentSource::FullHtml
-        };
+        }
+    }
 
-        // 结构化正文与整页 HTML 走 Markdown 转换；纯文本没有可转换的结构，
-        // 直接作为 Markdown 正文（按值消费避免整文深拷贝；行首元字符做最小
-        // 转义防下游误渲染为标题/列表——见 escape_leading_markdown_chars）。
-        let markdown_result = match content_source {
+    /// 按正文来源执行 Markdown 转换（自 [`Self::generate`] 提取）。
+    fn convert_main_content_to_markdown(
+        &self,
+        content: &str,
+        req: &ScrapeRequestDto,
+        content_source: MainContentSource,
+    ) -> Result<String, MarkdownError> {
+        match content_source {
             MainContentSource::PlainText(text) => Ok(escape_leading_markdown_chars(&text)),
             MainContentSource::StructuredHtml(html) => {
                 // 复查：rs-trafilatura 0.2.2 的 content_html 不做相对→绝对
@@ -236,30 +284,6 @@ impl MarkdownPostProcessor {
                 self.markdown_converter.convert(&absolute)
             }
             MainContentSource::FullHtml => self.markdown_converter.convert(content),
-        };
-
-        match markdown_result {
-            Ok(md) if !md.trim().is_empty() => {
-                debug!(
-                    "task_id: {}, Markdown generated ({} bytes)",
-                    task_id,
-                    md.len()
-                );
-                Ok(Some(md))
-            }
-            Ok(_md) => {
-                debug!(
-                    "task_id: {}, Markdown conversion returned empty result",
-                    task_id
-                );
-                Err(MarkdownPostProcessorError::EmptyResult)
-            }
-            Err(e) => {
-                // #7：保留下层 MarkdownError 类型（通过 #[from] 自动转换），
-                // 调用方可 downcast_ref 拿到原始错误做精细处理。
-                warn!("task_id: {}, Markdown conversion failed: {}", task_id, e);
-                Err(MarkdownPostProcessorError::ConversionFailed(e))
-            }
         }
     }
 }

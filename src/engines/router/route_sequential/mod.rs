@@ -10,19 +10,22 @@
 //! - [`attempt`]：attempt 身份升级指令计算与请求构造（F2/F5）
 //! - [`antibot`]：反爬挑战处理与 F4 失败现场快照（F2/F4/F7）
 //! - [`finalize`]：成功/失败收尾簿记与 MRT 超时错误构造
+//! - [`outcome`]：attempt 成功/失败/超时三臂的收尾控制流
 
 #[cfg(feature = "content")]
 mod antibot;
 mod attempt;
 mod finalize;
 mod hints;
+mod outcome;
 
-use super::{check_js_upgrade_probe, EngineRouter, LoadBalancingStrategy};
+use super::{EngineRouter, LoadBalancingStrategy};
 use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use crate::utils::retry::{RetryReason, RetryTracker};
 use log::{debug, warn};
+use outcome::AttemptReport;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -199,7 +202,6 @@ impl EngineRouter {
         let request = context.request;
         let host = context.host;
         let start_time = context.start_time;
-        let max_retries = context.max_retries;
 
         let engine_name = engine.name();
 
@@ -248,193 +250,44 @@ impl EngineRouter {
 
         match tokio::time::timeout(effective_timeout, engine.scrape(&attempt_request)).await {
             Ok(Ok(response)) => {
-                let response_time = engine_start.elapsed();
-
-                #[cfg(feature = "content")]
-                let response = match self
-                    .record_antibot_failure(
-                        response,
-                        &request.url,
-                        engine_name,
-                        response_time,
-                        session_identity.as_ref(),
-                    )
-                    .await
-                {
-                    Err(challenge_reason) => {
-                        *state.last_error = Some(EngineError::AntiBotDetected(challenge_reason));
-                        *state.force_needs_js = true;
-
-                        // 记录 AntiBot 失败到 tracker
-                        let reason = RetryReason::AntiBot;
-                        state.tracker.record(reason);
-                        *state.last_reason = Some(reason);
-
-                        // 检查 tracker 上限（anti_bot cap=2）+ max_retries
-                        // 使用 should_stop_after_retry_check 消除重复（DRY）
-                        if self.should_stop_after_retry_check(
-                            state.tracker,
-                            reason,
-                            total_attempts,
-                            max_retries,
-                        ) {
-                            return AttemptOutcome::Done(Err(state
-                                .last_error
-                                .take()
-                                .unwrap_or_else(|| {
-                                    EngineError::AllEnginesFailed("Max retries reached".to_string())
-                                })));
-                        }
-                        return AttemptOutcome::Retry;
-                    }
-                    Ok(resp) => resp,
+                let report = AttemptReport {
+                    engine_name,
+                    response_time: engine_start.elapsed(),
+                    total_attempts,
                 };
-
-                // 流式 HTTP→Chrome 升级探测
-                //
-                // HTTP 引擎（needs_js==false）返回"成功"响应后，检查是否疑似 SPA 空壳。
-                // 若 probe 判定 upgrade，将当前结果视为失败（不返回空壳给用户），
-                // 以 needs_js=true 重新 route_internal 改派浏览器引擎（Playwright）渲染。
-                //
-                // 防递归：递归调用时 request.needs_js=true，attempt_request.needs_js=true，
-                // 故 `!attempt_request.needs_js` 为 false，probe 检查自然跳过。
-                if !attempt_request.needs_js {
-                    let verdict = check_js_upgrade_probe(&response);
-                    if verdict.upgrade {
-                        let mut js_request = request.clone();
-                        js_request.needs_js = true;
-
-                        // 死端预检：以 needs_js=true 重选引擎为空（部署未注册
-                        // 任何 JS-capable 引擎）时，递归只会返回
-                        // `No suitable engines available` 并丢弃这份已成功的响应。
-                        // probe 仅是启发式，此时降级返回原始响应：跳过本次 probe
-                        // 的失败记账，控制流落入下方成功收尾段（stats 成功记账 /
-                        // 熔断 record_success / host 纪律 / session Cookie 捕获
-                        // 均按成功语义原样执行）。
-                        if self.select_optimal_engines(&js_request).is_empty() {
-                            warn!(
-                                "JS upgrade probe hit (score={}, reason={}) but no \
-                                 JS-capable engine is registered for the needs_js \
-                                 re-route; degrading to the original HTTP response \
-                                 for {}",
-                                verdict.score, verdict.reason, request.url
-                            );
-                        } else {
-                            self.update_engine_stats(engine_name, false, response_time);
-                            self.metrics.record_engine_failure(
-                                engine_name,
-                                &format!("js-upgrade-probe: {}", verdict.reason),
-                            );
-                            debug!(
-                                "Engine {} returned SPA shell (probe score={}, reason={}); \
-                                 re-routing with needs_js=true to dispatch browser engine",
-                                engine_name, verdict.score, verdict.reason
-                            );
-                            return AttemptOutcome::Done(
-                                Box::pin(self.route_internal(&js_request)).await,
-                            );
-                        }
-                    }
-                }
-
-                AttemptOutcome::Done(
-                    self.finish_success(
-                        response,
-                        engine_name,
-                        response_time,
-                        start_time,
-                        host,
-                        session_identity.as_ref(),
-                    )
-                    .await,
+                self.finish_attempt_response(
+                    &report,
+                    response,
+                    attempt_request.needs_js,
+                    session_identity.as_ref(),
+                    context,
+                    state,
                 )
+                .await
             }
             Ok(Err(e)) => {
-                let response_time = engine_start.elapsed();
-                self.record_engine_error(engine_name, response_time, &e);
-
-                if e.is_retryable() {
-                    self.circuit_breaker.record_failure(engine_name).await;
-
-                    // 记录失败原因到 tracker（在 e move 之前取 reason）
-                    let reason = e.retry_reason();
-                    state.tracker.record(reason);
-                    *state.last_reason = Some(reason);
-
-                    // 检查 tracker 上限（AntiBot cap=2、FeatureToggle cap=3、total=5）+ max_retries
-                    // 使用 should_stop_after_retry_check 消除重复（DRY）
-                    if self.should_stop_after_retry_check(
-                        state.tracker,
-                        reason,
-                        total_attempts,
-                        max_retries,
-                    ) {
-                        return AttemptOutcome::Done(Err(e));
-                    }
-
-                    warn!(
-                        "Engine {} failed with retryable error: {}, trying next engine \
-                         (reason={:?}, tracker total={})",
-                        engine_name,
-                        e,
-                        reason,
-                        state.tracker.total()
-                    );
-                    *state.last_error = Some(e);
-                    return AttemptOutcome::Retry;
-                }
-
-                warn!(
-                    "Engine {} failed with non-retryable error: {}",
-                    engine_name, e
-                );
-                // 指标口径对齐：提前终止路径同样累计 total/failed，
-                // 否则 success_rate 分母缺失导致统计失真
-                self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
-                self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
-                AttemptOutcome::Done(Err(e))
+                let report = AttemptReport {
+                    engine_name,
+                    response_time: engine_start.elapsed(),
+                    total_attempts,
+                };
+                self.handle_attempt_failure(report, e, context, state).await
             }
             Err(_elapsed) => {
-                // MRT 瀑布式超时——`tokio::time::timeout` 在 effective_timeout 后
-                // 取消 engine.scrape() future，进入此分支。
-                //
-                // 根据 effective_timeout 的来源区分两种语义：
-                // - `effective_timeout == remaining`（remaining <= engine_mrt）：
-                //   请求整体超时（剩余时间耗尽），返回 `EngineError::Timeout`。
-                //   此时即使切下一引擎也无力回天，由上层 route_sequential 循环下轮
-                //   的 `remaining.is_zero()` 检查兜底。
-                // - `effective_timeout == engine_mrt`（engine_mrt < remaining）：
-                //   真正的引擎 MRT 超时，返回 `EngineError::EngineMrtExceeded`，
-                //   router 触发瀑布式 fallback 切下一引擎继续。
-                //
-                // 边界情况 `remaining == engine_mrt`：按 Timeout 处理（保守语义，
-                // 避免误认为仍有剩余时间可 fallback）。
-                let response_time = engine_start.elapsed();
-                self.update_engine_stats(engine_name, false, response_time);
-
-                let timeout_err =
-                    Self::mrt_timeout_error(engine_name, effective_timeout, engine_mrt, remaining);
-
-                self.metrics
-                    .record_engine_failure(engine_name, &timeout_err.to_string());
-
-                self.circuit_breaker.record_failure(engine_name).await;
-
-                let reason = timeout_err.retry_reason();
-                state.tracker.record(reason);
-                *state.last_reason = Some(reason);
-
-                if self.should_stop_after_retry_check(
-                    state.tracker,
-                    reason,
+                let report = AttemptReport {
+                    engine_name,
+                    response_time: engine_start.elapsed(),
                     total_attempts,
-                    max_retries,
-                ) {
-                    return AttemptOutcome::Done(Err(timeout_err));
-                }
-
-                *state.last_error = Some(timeout_err);
-                AttemptOutcome::Retry
+                };
+                self.handle_attempt_timeout(
+                    report,
+                    effective_timeout,
+                    engine_mrt,
+                    remaining,
+                    context,
+                    state,
+                )
+                .await
             }
         }
     }

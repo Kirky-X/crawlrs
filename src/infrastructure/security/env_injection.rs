@@ -385,61 +385,77 @@ impl EnvVarSecurityMonitor {
 
 // ── 值验证（委托至 env_validation 类型） ──────────────────
 
+/// 弱默认值词表：敏感变量值命中即告警（大小写不敏感）
+const WEAK_DEFAULT_VALUES: [&str; 15] = [
+    "password", "secret", "changeme", "default", "test", "demo", "example", "123456", "admin",
+    "root", "qwerty", "letmein", "welcome", "monkey", "dragon",
+];
+
+/// 测试值前缀模式：敏感变量值命中即告警（大小写不敏感）
+const TEST_VALUE_PATTERNS: [&str; 9] = [
+    "test_", "demo_", "example_", "sample_", "fake_", "mock_", "xxx", "yyy", "zzz",
+];
+
+/// 收集单个敏感变量的告警：空值优先并短路，其余检查依次追加
+fn collect_sensitive_var_warnings(
+    var_name: &str,
+    environment: &str,
+    warnings: &mut Vec<SensitiveVarWarning>,
+) {
+    if let Ok(value) = std::env::var(var_name) {
+        let lower_value = value.to_lowercase();
+
+        // 检查空值（生产环境严格要求）
+        if let Some(warning) = empty_value_warning(var_name, &value, environment) {
+            warnings.push(warning);
+            return;
+        }
+
+        if let Some(warning) =
+            weak_default_value_warning(var_name, &lower_value, &WEAK_DEFAULT_VALUES)
+        {
+            warnings.push(warning);
+        }
+
+        if let Some(warning) =
+            test_value_warning(var_name, &lower_value, &TEST_VALUE_PATTERNS, environment)
+        {
+            warnings.push(warning);
+        }
+
+        // 检查过短的密钥值（小于16字符）
+        if let Some(warning) = short_value_warning(var_name, &value) {
+            warnings.push(warning);
+        }
+
+        // 检查是否为常见的不安全模式
+        if let Some(warning) = insecure_pattern_warning(var_name, &lower_value) {
+            warnings.push(warning);
+        }
+    }
+}
+
 impl EnvVarSecurityMonitor {
     /// 验证敏感变量是否安全配置
     pub fn validate_sensitive_values(&self, environment: &str) -> Vec<SensitiveVarWarning> {
         let mut warnings = Vec::new();
-
-        let weak_defaults = [
-            "password", "secret", "changeme", "default", "test", "demo", "example", "123456",
-            "admin", "root", "qwerty", "letmein", "welcome", "monkey", "dragon",
-        ];
-
-        let test_patterns = [
-            "test_", "demo_", "example_", "sample_", "fake_", "mock_", "xxx", "yyy", "zzz",
-        ];
-
         for var_name in &self.whitelist.sensitive_vars {
-            if let Ok(value) = std::env::var(var_name) {
-                let lower_value = value.to_lowercase();
-
-                // 检查空值（生产环境严格要求）
-                if let Some(warning) = empty_value_warning(var_name, &value, environment) {
-                    warnings.push(warning);
-                    continue;
-                }
-
-                if let Some(warning) =
-                    weak_default_value_warning(var_name, &lower_value, &weak_defaults)
-                {
-                    warnings.push(warning);
-                }
-
-                if let Some(warning) =
-                    test_value_warning(var_name, &lower_value, &test_patterns, environment)
-                {
-                    warnings.push(warning);
-                }
-
-                // 检查过短的密钥值（小于16字符）
-                if let Some(warning) = short_value_warning(var_name, &value) {
-                    warnings.push(warning);
-                }
-
-                // 检查是否为常见的不安全模式
-                if let Some(warning) = insecure_pattern_warning(var_name, &lower_value) {
-                    warnings.push(warning);
-                }
-            }
+            collect_sensitive_var_warnings(var_name, environment, &mut warnings);
         }
-
         warnings
     }
 
     /// 验证日志配置安全性
     pub fn validate_logging_security(&self) -> Vec<LoggingSecurityWarning> {
         let mut warnings = Vec::new();
+        Self::check_log_level(&mut warnings);
+        Self::check_log_file_path(&mut warnings);
+        self.check_sensitive_var_logging(&mut warnings);
+        warnings
+    }
 
+    /// `RUST_LOG` 含 debug/trace 时告警：详细日志可能泄露敏感信息
+    fn check_log_level(warnings: &mut Vec<LoggingSecurityWarning>) {
         if let Ok(log_level) = std::env::var("RUST_LOG") {
             let lower_level = log_level.to_lowercase();
             if lower_level.contains("debug") || lower_level.contains("trace") {
@@ -453,7 +469,10 @@ impl EnvVarSecurityMonitor {
                 });
             }
         }
+    }
 
+    /// `LOG_FILE` 指向临时目录时告警：临时目录可能引发权限问题
+    fn check_log_file_path(warnings: &mut Vec<LoggingSecurityWarning>) {
         if let Ok(log_file) = std::env::var("LOG_FILE") {
             if log_file.starts_with("/tmp") || log_file.starts_with("/var/tmp") {
                 warnings.push(LoggingSecurityWarning {
@@ -463,7 +482,10 @@ impl EnvVarSecurityMonitor {
                 });
             }
         }
+    }
 
+    /// 敏感变量的 `*_DEBUG` / `*_LOG` 伴随变量告警
+    fn check_sensitive_var_logging(&self, warnings: &mut Vec<LoggingSecurityWarning>) {
         for var_name in &self.whitelist.sensitive_vars {
             let debug_var = format!("{}_DEBUG", var_name);
             let log_var = format!("{}_LOG", var_name);
@@ -490,8 +512,6 @@ impl EnvVarSecurityMonitor {
                 });
             }
         }
-
-        warnings
     }
 
     /// 执行完整的安全验证

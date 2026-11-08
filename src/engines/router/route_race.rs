@@ -19,16 +19,10 @@ use std::time::{Duration, Instant};
 
 /// 竞速单个引擎 future 的统一输出：
 /// `Ok((引擎名, 响应, 引擎耗时))` / `Err((引擎名, 错误, 引擎耗时))`
-type RaceFuture = std::pin::Pin<
-    Box<
-        dyn std::future::Future<
-                Output = Result<
-                    (String, InternalScrapeResponse, Duration),
-                    (String, EngineError, Duration),
-                >,
-            > + Send,
-    >,
->;
+type RaceCompletion =
+    Result<(String, InternalScrapeResponse, Duration), (String, EngineError, Duration)>;
+
+type RaceFuture = std::pin::Pin<Box<dyn std::future::Future<Output = RaceCompletion> + Send>>;
 
 impl EngineRouter {
     /// 并发竞速模式：同时发起多个引擎请求，返回最快成功的那个
@@ -95,34 +89,11 @@ impl EngineRouter {
             match time::timeout_at(deadline, future::select_all(pending)).await {
                 Ok((result, _index, others)) => {
                     pending = others;
-                    match result {
-                        Ok((engine_name, response, response_time)) => {
-                            // 胜出响应先过反爬分类：最快的引擎若返回的是挑战页
-                            // （200 + Just a moment 等），作废该结果并继续竞速剩余候选，
-                            // 与顺序模式的防护语义对齐。检查必须在成功统计之前。
-                            #[cfg(feature = "content")]
-                            if let Some(reason) = self.discard_race_antibot_challenge(
-                                &engine_name,
-                                &request.url,
-                                &response,
-                                response_time,
-                            ) {
-                                last_error = Some(EngineError::AntiBotDetected(reason));
-                                continue;
-                            }
-
-                            self.record_race_win(&engine_name, response_time, start_time)
-                                .await;
-
-                            // 取消其他正在进行的任务
-                            return Ok(response);
-                        }
-                        Err((engine_name, e, response_time)) => {
-                            self.record_race_failure(&engine_name, &e, response_time)
-                                .await;
-                            last_error = Some(e);
-                            // 继续竞速剩余候选
-                        }
+                    if let Some(outcome) = self
+                        .handle_race_completion(request, result, start_time, &mut last_error)
+                        .await
+                    {
+                        return outcome;
                     }
                 }
                 Err(_) => {
@@ -133,6 +104,50 @@ impl EngineRouter {
                     );
                     return Err(EngineError::Timeout(timeout_duration));
                 }
+            }
+        }
+    }
+
+    /// 处理单个竞速 future 的完成结果（自 [`EngineRouter::race_until_win`] 提取）。
+    ///
+    /// 成功响应先过反爬分类，挑战页作废并返回 `None`（继续竞速）；
+    /// 失败记录指标、更新 `last_error` 后返回 `None`。返回 `Some` 表示
+    /// 竞速已有最终结果，调用方直接返回。
+    async fn handle_race_completion(
+        &self,
+        request: &InternalScrapeRequest,
+        result: RaceCompletion,
+        start_time: Instant,
+        last_error: &mut Option<EngineError>,
+    ) -> Option<Result<InternalScrapeResponse, EngineError>> {
+        match result {
+            Ok((engine_name, response, response_time)) => {
+                // 胜出响应先过反爬分类：最快的引擎若返回的是挑战页
+                // （200 + Just a moment 等），作废该结果并继续竞速剩余候选，
+                // 与顺序模式的防护语义对齐。检查必须在成功统计之前。
+                #[cfg(feature = "content")]
+                if let Some(reason) = self.discard_race_antibot_challenge(
+                    &engine_name,
+                    &request.url,
+                    &response,
+                    response_time,
+                ) {
+                    *last_error = Some(EngineError::AntiBotDetected(reason));
+                    return None;
+                }
+
+                self.record_race_win(&engine_name, response_time, start_time)
+                    .await;
+
+                // 取消其他正在进行的任务
+                Some(Ok(response))
+            }
+            Err((engine_name, e, response_time)) => {
+                self.record_race_failure(&engine_name, &e, response_time)
+                    .await;
+                *last_error = Some(e);
+                // 继续竞速剩余候选
+                None
             }
         }
     }

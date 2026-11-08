@@ -63,54 +63,7 @@ impl I18nBundle {
         let mut bundles = HashMap::new();
 
         for locale in &supported_locales {
-            let locale_dir = Path::new(dir).join(locale.to_string());
-            if !locale_dir.exists() {
-                return Err(CrawlRsError::Config(format!(
-                    "Locale directory not found: {}",
-                    locale_dir.display()
-                )));
-            }
-
-            let mut bundle = FluentBundle::new(vec![locale.clone()]);
-
-            // 加载该 locale 目录下所有 .ftl 文件
-            let mut entries: Vec<_> = fs::read_dir(&locale_dir)
-                .map_err(|e| {
-                    CrawlRsError::Config(format!(
-                        "Failed to read locale directory {}: {e}",
-                        locale_dir.display()
-                    ))
-                })?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().is_some_and(|ext| ext == "ftl"))
-                .collect();
-
-            // 按文件名排序确保确定性
-            entries.sort_by_key(|e| e.file_name());
-
-            for entry in entries {
-                let content = fs::read_to_string(entry.path()).map_err(|e| {
-                    CrawlRsError::Config(format!(
-                        "Failed to read FTL file {}: {e}",
-                        entry.path().display()
-                    ))
-                })?;
-
-                let resource = FluentResource::try_new(content).map_err(|e| {
-                    CrawlRsError::Config(format!(
-                        "Failed to parse FTL file {}: {e:?}",
-                        entry.path().display()
-                    ))
-                })?;
-
-                bundle.add_resource(resource).map_err(|e| {
-                    CrawlRsError::Config(format!(
-                        "Failed to add resource for locale {locale}: {e:?}"
-                    ))
-                })?;
-            }
-
-            bundles.insert(locale.clone(), bundle);
+            bundles.insert(locale.clone(), Self::load_locale_bundle(locale, dir)?);
         }
 
         Ok(Self {
@@ -118,6 +71,60 @@ impl I18nBundle {
             default_locale,
             supported_locales,
         })
+    }
+
+    /// 加载单个 locale 目录下的全部 `.ftl` 资源（自 [`Self::load`] 提取），
+    /// 按文件名排序保证确定性。
+    fn load_locale_bundle(
+        locale: &Locale,
+        dir: &str,
+    ) -> Result<FluentBundle<FluentResource>, CrawlRsError> {
+        let locale_dir = Path::new(dir).join(locale.to_string());
+        if !locale_dir.exists() {
+            return Err(CrawlRsError::Config(format!(
+                "Locale directory not found: {}",
+                locale_dir.display()
+            )));
+        }
+
+        let mut bundle = FluentBundle::new(vec![locale.clone()]);
+
+        // 加载该 locale 目录下所有 .ftl 文件
+        let mut entries: Vec<_> = fs::read_dir(&locale_dir)
+            .map_err(|e| {
+                CrawlRsError::Config(format!(
+                    "Failed to read locale directory {}: {e}",
+                    locale_dir.display()
+                ))
+            })?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "ftl"))
+            .collect();
+
+        // 按文件名排序确保确定性
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in entries {
+            let content = fs::read_to_string(entry.path()).map_err(|e| {
+                CrawlRsError::Config(format!(
+                    "Failed to read FTL file {}: {e}",
+                    entry.path().display()
+                ))
+            })?;
+
+            let resource = FluentResource::try_new(content).map_err(|e| {
+                CrawlRsError::Config(format!(
+                    "Failed to parse FTL file {}: {e:?}",
+                    entry.path().display()
+                ))
+            })?;
+
+            bundle.add_resource(resource).map_err(|e| {
+                CrawlRsError::Config(format!("Failed to add resource for locale {locale}: {e:?}"))
+            })?;
+        }
+
+        Ok(bundle)
     }
 
     /// 翻译消息（无参数）

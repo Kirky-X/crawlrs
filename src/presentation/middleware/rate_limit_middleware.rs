@@ -300,54 +300,10 @@ pub async fn rate_limit_middleware(
         .check_rate_limit(&api_key, endpoint)
         .await
     {
-        Ok(RateLimitResult::Denied { reason }) => {
-            debug!(
-                "Rate limit exceeded for API key {}: {}",
-                hash_for_log(&api_key),
-                reason
-            );
-
-            let body = serde_json::json!({
-                "error": "Rate limit exceeded",
-                "message": reason
-            });
-            let json_body = serde_json::to_string(&body)
-                .expect("JSON serialization of rate limit response should never fail");
-            let mut response = Response::new(Body::from(json_body));
-            *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-            response.headers_mut().insert(
-                axum::http::header::CONTENT_TYPE,
-                axum::http::HeaderValue::from_static("application/json"),
-            );
-            response
-        }
+        Ok(RateLimitResult::Denied { reason }) => denied_rate_limit_response(&api_key, &reason),
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
-        }) => {
-            debug!(
-                "Rate limit retry after for API key {}: {} seconds",
-                hash_for_log(&api_key),
-                retry_after_seconds
-            );
-
-            let body = serde_json::json!({
-                "error": "Rate limit exceeded",
-                "message": format!("Retry after {} seconds", retry_after_seconds)
-            });
-            let json_body = serde_json::to_string(&body)
-                .expect("JSON serialization of rate limit response should never fail");
-            let mut response = Response::new(Body::from(json_body));
-            *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-            response.headers_mut().insert(
-                axum::http::header::CONTENT_TYPE,
-                axum::http::HeaderValue::from_static("application/json"),
-            );
-            response.headers_mut().insert(
-                "Retry-After",
-                axum::http::HeaderValue::from(retry_after_seconds),
-            );
-            response
-        }
+        }) => retry_after_rate_limit_response(&api_key, retry_after_seconds),
         Ok(RateLimitResult::Allowed) => {
             debug!(
                 "Rate limit check passed for API key: {}",
@@ -355,47 +311,113 @@ pub async fn rate_limit_middleware(
             );
             next.run(req).await
         }
-        Err(e) => {
-            // : 可配置的 fail-open/fail-closed 行为
-            if *RATE_LIMIT_FAIL_OPEN {
-                // Fail-open: 允许请求通过，但记录严重警告
-                // 注意：这可能导致在服务故障时无法限流
-                // 在生产环境中应考虑使用 fail-closed 模式
-                warn!(
-                    "SEC-003: Rate limiting service error - failing open (allowing request). \
-                     Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security. \
-                     error={} api_key={} path={}",
-                    e,
-                    hash_for_log(&api_key),
-                    path
-                );
-                next.run(req).await
-            } else {
-                // Fail-closed: 拒绝请求以确保安全
-                error!(
-                    "SEC-003: Rate limiting service error - failing closed (rejecting request) \
-                     error={} api_key={} path={}",
-                    e,
-                    hash_for_log(&api_key),
-                    path
-                );
-
-                let body = serde_json::json!({
-                    "error": "Service temporarily unavailable",
-                    "message": "Rate limiting service is temporarily unavailable. Please try again later."
-                });
-                let json_body =
-                    serde_json::to_string(&body).expect("JSON serialization should never fail");
-                let mut response = Response::new(Body::from(json_body));
-                *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
-                response.headers_mut().insert(
-                    axum::http::header::CONTENT_TYPE,
-                    axum::http::HeaderValue::from_static("application/json"),
-                );
-                response
-            }
-        }
+        Err(e) => rate_limit_service_error_response(&api_key, &e, req, next).await,
     }
+}
+
+/// 限流服务错误处理（SEC-003）：按 `RATE_LIMIT_FAIL_OPEN` 策略放行或返回 503。
+///
+/// fail-open 记录严重警告后放行请求；fail-closed 记录 error 后返回
+/// [`unavailable_rate_limit_response`]。请求路径在移动 `req` 前读取供日志使用。
+async fn rate_limit_service_error_response(
+    api_key: &str,
+    err: &(dyn std::error::Error + Send + Sync),
+    req: Request,
+    next: Next,
+) -> Response {
+    let path = req.uri().path();
+    // : 可配置的 fail-open/fail-closed 行为
+    if *RATE_LIMIT_FAIL_OPEN {
+        // Fail-open: 允许请求通过，但记录严重警告
+        // 注意：这可能导致在服务故障时无法限流
+        // 在生产环境中应考虑使用 fail-closed 模式
+        warn!(
+            "SEC-003: Rate limiting service error - failing open (allowing request). \
+             Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security. \
+             error={} api_key={} path={}",
+            err,
+            hash_for_log(api_key),
+            path
+        );
+        next.run(req).await
+    } else {
+        // Fail-closed: 拒绝请求以确保安全
+        error!(
+            "SEC-003: Rate limiting service error - failing closed (rejecting request) \
+             error={} api_key={} path={}",
+            err,
+            hash_for_log(api_key),
+            path
+        );
+
+        unavailable_rate_limit_response()
+    }
+}
+
+/// 限流拒绝响应（429，JSON body 携带拒绝原因）。
+fn denied_rate_limit_response(api_key: &str, reason: &str) -> Response {
+    debug!(
+        "Rate limit exceeded for API key {}: {}",
+        hash_for_log(api_key),
+        reason
+    );
+
+    let body = serde_json::json!({
+        "error": "Rate limit exceeded",
+        "message": reason
+    });
+    let json_body = serde_json::to_string(&body)
+        .expect("JSON serialization of rate limit response should never fail");
+    let mut response = Response::new(Body::from(json_body));
+    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
+/// 限流重试响应（429 + Retry-After）。
+fn retry_after_rate_limit_response(api_key: &str, retry_after_seconds: u64) -> Response {
+    debug!(
+        "Rate limit retry after for API key {}: {} seconds",
+        hash_for_log(api_key),
+        retry_after_seconds
+    );
+
+    let body = serde_json::json!({
+        "error": "Rate limit exceeded",
+        "message": format!("Retry after {} seconds", retry_after_seconds)
+    });
+    let json_body = serde_json::to_string(&body)
+        .expect("JSON serialization of rate limit response should never fail");
+    let mut response = Response::new(Body::from(json_body));
+    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    response.headers_mut().insert(
+        "Retry-After",
+        axum::http::HeaderValue::from(retry_after_seconds),
+    );
+    response
+}
+
+/// 限流服务不可用响应（fail-closed，503）。
+fn unavailable_rate_limit_response() -> Response {
+    let body = serde_json::json!({
+        "error": "Service temporarily unavailable",
+        "message": "Rate limiting service is temporarily unavailable. Please try again later."
+    });
+    let json_body = serde_json::to_string(&body).expect("JSON serialization should never fail");
+    let mut response = Response::new(Body::from(json_body));
+    *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    response
 }
 
 #[cfg(test)]

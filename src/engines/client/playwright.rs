@@ -10,18 +10,13 @@ use crate::engines::engine_client::{
     EngineError, InternalCapturedResponse, InternalPageAction, InternalScrapeRequest,
     InternalScrapeResponse, InternalScreenshotConfig, ScraperEngine,
 };
-use crate::engines::intercept::{InterceptController, ResourceKind, BLOCK_REASON};
-use crate::engines::validators;
 use crate::infrastructure::services::config_service::BrowserConfigTrait;
 use crate::utils::proxy::{redact_proxy_url, validate_proxy_url};
-use crate::utils::ua_pool::UaPool;
+use crate::utils::ua_pool::{UaPool, UaProfile};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chromiumoxide::cdp::browser_protocol::emulation::{
     SetDeviceMetricsOverrideParams, SetUserAgentOverrideParams,
-};
-use chromiumoxide::cdp::browser_protocol::fetch::{
-    ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
     DisableParams as NetworkDisableParams, EnableParams as NetworkEnableParams,
@@ -38,6 +33,9 @@ use crate::engines::xhr_capture::{
     process_body, url_matches_capture_patterns, BodyOutcome, PendingXhr, RecordOutcome,
     XhrCaptureBuffer, XhrCaptureConfig,
 };
+
+mod interception;
+mod session;
 
 /// PlaywrightEngine 默认 MRT（30 秒，对应 `EngineTimeoutSettings::cdp_seconds`）。
 ///
@@ -560,7 +558,18 @@ pub(crate) async fn apply_browser_fingerprint(
     mobile: bool,
 ) -> Result<(), EngineError> {
     let profile = ua_pool.pick_chromium(mobile);
+    apply_ua_and_locale(page, profile).await?;
+    apply_viewport_and_stealth(page, profile).await?;
+    Ok(())
+}
 
+/// UA override + locale 校正（自 [`apply_browser_fingerprint`] 提取）。
+///
+/// UA override 为硬失败；locale 为 best-effort（CDP 失败仅告警）。
+async fn apply_ua_and_locale(
+    page: &chromiumoxide::Page,
+    profile: &UaProfile,
+) -> Result<(), EngineError> {
     // 完整 UA override：UA + acceptLanguage + navigator.platform +
     // userAgentMetadata（Sec-CH-UA* 头与 navigator.userAgentData 的官方
     // 修正通道）；双词表与 brands 模板见 ua_metadata 模块文档
@@ -601,7 +610,16 @@ pub(crate) async fn apply_browser_fingerprint(
             log::warn!("Failed to set locale override: {}", e);
         }
     }
+    Ok(())
+}
 
+/// viewport 覆盖 + stealth 注入（自 [`apply_browser_fingerprint`] 提取）。
+///
+/// viewport 为硬失败；stealth best-effort 仅告警。
+async fn apply_viewport_and_stealth(
+    page: &chromiumoxide::Page,
+    profile: &UaProfile,
+) -> Result<(), EngineError> {
     // viewport 与 UA platform 一致
     let viewport_params = SetDeviceMetricsOverrideParams::new(
         profile.viewport.0 as i64,
@@ -662,72 +680,6 @@ async fn acquire_fingerprinted_page(
     apply_browser_fingerprint(&page, ua_pool, request.mobile).await?;
 
     Ok((pooled_page, page))
-}
-
-/// 请求拦截（广告/追踪域名 + 媒体资源）。
-/// 仅当 block_ads 或 block_media 任一启用时激活 CDP Fetch domain 拦截。
-/// 启用后所有请求被暂停，必须由事件处理 task 及时 continue/fail，
-/// 否则请求会挂起直至超时。task 在 page 关闭后事件流结束自动退出。
-async fn setup_request_interception(
-    page: &chromiumoxide::page::Page,
-    request: &InternalScrapeRequest,
-    intercept_guard: &mut InterceptGuard,
-) -> Result<(), EngineError> {
-    if request.block_ads || request.block_media {
-        let controller = Arc::new(InterceptController::new(
-            request.block_ads,
-            request.block_media,
-        ));
-
-        // 启用 Fetch domain（默认拦截所有请求阶段）
-        page.execute(EnableParams::default()).await.map_err(|e| {
-            EngineError::BrowserError(format!("Failed to enable Fetch interception: {}", e))
-        })?;
-
-        // 订阅 EventRequestPaused 事件流
-        let mut events = page
-            .event_listener::<EventRequestPaused>()
-            .await
-            .map_err(|e| {
-                EngineError::BrowserError(format!("Failed to subscribe EventRequestPaused: {}", e))
-            })?;
-
-        // 克隆 page + controller 给事件处理 task
-        let page_clone = page.clone();
-        let controller_clone = Arc::clone(&controller);
-
-        // 事件处理 task：对每个被暂停的请求判断是否拦截
-        // 命中黑名单/媒体 → FailRequest(BlockedByClient) + 计数
-        // 否则 → ContinueRequest（放行）
-        //
-        // CDP `ResourceType` 在边界处通过 `ResourceKind::from` 转换为领域
-        // `ResourceKind`，避免 InterceptController 依赖具体 CDP 实现。
-        let intercept_handle = tokio::spawn(async move {
-            while let Some(event) = events.next().await {
-                let url = event.request.url.clone();
-                let kind = ResourceKind::from(event.resource_type.clone());
-                let request_id = event.request_id.clone();
-                if controller_clone.should_block(&url, Some(kind)) {
-                    controller_clone.record_block();
-                    if let Err(e) = page_clone
-                        .execute(FailRequestParams::new(request_id, BLOCK_REASON))
-                        .await
-                    {
-                        log::debug!("FailRequest failed for {}: {}", url, e);
-                    }
-                } else if let Err(e) = page_clone
-                    .execute(ContinueRequestParams::new(request_id))
-                    .await
-                {
-                    log::debug!("ContinueRequest failed for {}: {}", url, e);
-                }
-            }
-        });
-        // 保存 JoinHandle 到守卫：scrape 退出（成功/错误/超时）时 abort，
-        // 防止拦截 task 残留在归还池的复用页面上。
-        intercept_guard.set(intercept_handle);
-    }
-    Ok(())
 }
 
 /// 页面导航与等待：goto（默认等 load 事件）→ 注入 cleanup 脚本（best-effort）→
@@ -867,57 +819,72 @@ async fn capture_screenshot(
     page: &chromiumoxide::page::Page,
     request: &InternalScrapeRequest,
 ) -> Result<Option<String>, EngineError> {
-    let mut screenshot: Option<String> = None;
-
-    if request.needs_screenshot {
-        let config = request
-            .screenshot_config
-            .clone()
-            .unwrap_or(InternalScreenshotConfig {
-                full_page: true,
-                selector: None,
-                quality: Some(80),
-                format: Some("jpeg".to_string()),
-            });
-
-        let format = match config.format.as_deref() {
-            Some("png") => CaptureScreenshotFormat::Png,
-            _ => CaptureScreenshotFormat::Jpeg,
-        };
-
-        let params = chromiumoxide::page::ScreenshotParams::builder()
-            .format(format)
-            .quality(config.quality.unwrap_or(80) as i64)
-            .full_page(config.full_page)
-            .build();
-
-        let screenshot_bytes = if let Some(selector) = &config.selector {
-            // Find element and screenshot
-            let element: chromiumoxide::element::Element = page
-                .find_element(selector)
-                .await
-                .map_err(|e| EngineError::BrowserError(format!("Element not found: {}", e)))?;
-
-            // Create new format instance for element screenshot since original was moved
-            let element_format = match config.format.as_deref() {
-                Some("png") => CaptureScreenshotFormat::Png,
-                _ => CaptureScreenshotFormat::Jpeg,
-            };
-
-            element.screenshot(element_format).await.map_err(|e| {
-                EngineError::BrowserError(format!("Element screenshot failed: {}", e))
-            })?
-        } else {
-            // Page screenshot
-            page.screenshot(params)
-                .await
-                .map_err(|e| EngineError::BrowserError(format!("Page screenshot failed: {}", e)))?
-        };
-
-        screenshot = Some(BASE64.encode(screenshot_bytes));
+    if !request.needs_screenshot {
+        return Ok(None);
     }
 
-    Ok(screenshot)
+    let config = request
+        .screenshot_config
+        .clone()
+        .unwrap_or(InternalScreenshotConfig {
+            full_page: true,
+            selector: None,
+            quality: Some(80),
+            format: Some("jpeg".to_string()),
+        });
+
+    let format = screenshot_format(config.format.as_deref());
+
+    let screenshot_bytes = if let Some(selector) = &config.selector {
+        capture_element_screenshot(page, selector, format).await?
+    } else {
+        capture_page_screenshot(page, &config, format).await?
+    };
+
+    Ok(Some(BASE64.encode(screenshot_bytes)))
+}
+
+/// 截图格式映射：`png` → Png，其余 → Jpeg
+fn screenshot_format(format: Option<&str>) -> CaptureScreenshotFormat {
+    match format {
+        Some("png") => CaptureScreenshotFormat::Png,
+        _ => CaptureScreenshotFormat::Jpeg,
+    }
+}
+
+/// 元素截图：按选择器定位元素后截图（元素不存在/截图失败均映射为浏览器错误）。
+async fn capture_element_screenshot(
+    page: &chromiumoxide::page::Page,
+    selector: &str,
+    format: CaptureScreenshotFormat,
+) -> Result<Vec<u8>, EngineError> {
+    // Find element and screenshot
+    let element: chromiumoxide::element::Element = page
+        .find_element(selector)
+        .await
+        .map_err(|e| EngineError::BrowserError(format!("Element not found: {}", e)))?;
+
+    element
+        .screenshot(format)
+        .await
+        .map_err(|e| EngineError::BrowserError(format!("Element screenshot failed: {}", e)))
+}
+
+/// 整页截图：按配置构建 `ScreenshotParams` 后截图。
+async fn capture_page_screenshot(
+    page: &chromiumoxide::page::Page,
+    config: &InternalScreenshotConfig,
+    format: CaptureScreenshotFormat,
+) -> Result<Vec<u8>, EngineError> {
+    let params = chromiumoxide::page::ScreenshotParams::builder()
+        .format(format)
+        .quality(config.quality.unwrap_or(80) as i64)
+        .full_page(config.full_page)
+        .build();
+
+    page.screenshot(params)
+        .await
+        .map_err(|e| EngineError::BrowserError(format!("Page screenshot failed: {}", e)))
 }
 
 /// 提取最终内容并构建响应：XHR 捕获收集 → final URL → content-type →
@@ -1015,20 +982,7 @@ impl ScraperEngine for PlaywrightEngine {
         &self,
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
-        if request.method != crate::engines::engine_client::HttpMethod::Get {
-            return Err(EngineError::Other("Unsupported HTTP method".to_string()));
-        }
-        // SSRF protection
-        validators::validate_url(&request.url)
-            .await
-            .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
-
-        // Only run if specifically requested for JS or screenshot
-        if !request.needs_js && !request.needs_screenshot {
-            return Err(EngineError::AllEnginesFailed(
-                "PlaywrightEngine only supports JS and screenshot requests".to_string(),
-            ));
-        }
+        session::validate_scrape_request(request).await?;
 
         let start = Instant::now();
         let timeout_duration = request.timeout;
@@ -1036,37 +990,7 @@ impl ScraperEngine for PlaywrightEngine {
         let pool = self.get_or_init_pool();
 
         // Wrap the entire operation in a timeout
-        tokio::time::timeout(timeout_duration, async {
-            let (pooled_page, page) =
-                acquire_fingerprinted_page(&pool, &self.ua_pool, request).await?;
-
-            if !request.headers.is_empty() {
-                // 如果 chromiumoxide 的 API 限制太多，我们暂时记录日志并跳过，
-                // 或在未来版本中寻找更底层的 CDP 调用方式
-                log::warn!("Custom headers are currently partially supported in PlaywrightEngine due to API constraints");
-            }
-
-            // 拦截事件处理 task 的守卫：声明在 if 块外的 async 作用域，覆盖整个
-            // 导航→返回生命周期。无论 scrape 以成功返回、`?` 早退、还是 timeout
-            // 取消（整个 future 被 drop）退出，守卫 drop 时都会 abort 拦截 task。
-            let mut intercept_guard = InterceptGuard::new();
-
-            setup_request_interception(&page, request, &mut intercept_guard).await?;
-
-            // F6：XHR/Fetch 后台响应捕获会话（导航前启动，详见 XhrCaptureSession）。
-            // 捕获与上方 Fetch 拦截并存互不干扰：被 FailRequest 的请求不会产生
-            // ResponseReceived 事件，自然不出现在捕获中。capture_xhr=false 时不创建
-            // 会话，全程零 Network 监听开销。
-            let xhr_session = match &self.xhr_capture {
-                Some(config) => XhrCaptureSession::start(&page, config).await,
-                None => None,
-            };
-
-            navigate_and_wait(&page, request).await?;
-
-            collect_and_build_response(&page, request, xhr_session.as_ref(), pooled_page, start)
-                .await
-        })
+        tokio::time::timeout(timeout_duration, self.scrape_session(request, &pool, start))
             .await
             .map_err(|_| EngineError::Timeout(timeout_duration))?
     }
@@ -1357,6 +1281,10 @@ async fn fetch_and_store(
 mod tests {
     use super::*;
     use crate::engines::engine_client::{InternalScrapeRequest, WaitFor};
+    use crate::engines::intercept::BLOCK_REASON;
+    use chromiumoxide::cdp::browser_protocol::fetch::{
+        ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
+    };
     use std::collections::HashMap;
     use std::time::Duration;
 

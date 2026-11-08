@@ -57,58 +57,66 @@ fn create_cors_layer(settings: &Settings) -> CorsLayer {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let cors_layer = if allowed_origins.is_empty() || allowed_origins.iter().any(|o| o == "*") {
-        // 生产环境不应使用通配符，这里仅作为开发回退
-        log::warn!("{}", crate::i18n::tr_log("boot-cors-wildcard"));
-        // 非 test/development 环境下对 CORS 通配符输出显式生产告警
-        let env = std::env::var(crate::common::constants::env_vars::ENV)
-            .or_else(|_| std::env::var(crate::common::constants::env_vars::APP_ENVIRONMENT))
-            .unwrap_or_else(|_| "development".to_string());
-        let is_test_env = env.to_lowercase() == "test"
-            || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
-        if !is_test_env {
-            log::warn!("CORS allows all origins in production");
-        }
+    if allowed_origins.is_empty() || allowed_origins.iter().any(|o| o == "*") {
+        wildcard_cors_layer()
+    } else {
+        restricted_cors_layer(&allowed_origins)
+    }
+}
+
+/// 通配符 CORS：允许任意 origin/method/header（开发回退，生产显式告警）。
+fn wildcard_cors_layer() -> CorsLayer {
+    // 生产环境不应使用通配符，这里仅作为开发回退
+    log::warn!("{}", crate::i18n::tr_log("boot-cors-wildcard"));
+    // 非 test/development 环境下对 CORS 通配符输出显式生产告警
+    let env = std::env::var(crate::common::constants::env_vars::ENV)
+        .or_else(|_| std::env::var(crate::common::constants::env_vars::APP_ENVIRONMENT))
+        .unwrap_or_else(|_| "development".to_string());
+    let is_test_env = env.to_lowercase() == "test"
+        || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
+    if !is_test_env {
+        log::warn!("CORS allows all origins in production");
+    }
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any)
+}
+
+/// 白名单 CORS：解析 origin 列表，全部非法时回退通配符。
+fn restricted_cors_layer(allowed_origins: &[String]) -> CorsLayer {
+    let origins: Vec<axum::http::HeaderValue> = allowed_origins
+        .iter()
+        .filter_map(|origin| origin.parse().ok())
+        .collect();
+
+    if origins.is_empty() {
+        log::warn!("{}", crate::i18n::tr_log("boot-cors-invalid-fallback"));
         CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
             .allow_headers(Any)
     } else {
-        let origins: Vec<axum::http::HeaderValue> = allowed_origins
-            .iter()
-            .filter_map(|origin| origin.parse().ok())
-            .collect();
-
-        if origins.is_empty() {
-            log::warn!("{}", crate::i18n::tr_log("boot-cors-invalid-fallback"));
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any)
-        } else {
-            CorsLayer::new()
-                .allow_origin(origins)
-                .allow_methods([
-                    axum::http::Method::GET,
-                    axum::http::Method::POST,
-                    axum::http::Method::PUT,
-                    axum::http::Method::DELETE,
-                    axum::http::Method::PATCH,
-                    axum::http::Method::HEAD,
-                    axum::http::Method::OPTIONS,
-                ])
-                .allow_headers([
-                    axum::http::HeaderName::from_static("authorization"),
-                    axum::http::HeaderName::from_static("content-type"),
-                    axum::http::HeaderName::from_static("x-api-key"),
-                    axum::http::HeaderName::from_static("x-request-id"),
-                ])
-                .expose_headers([axum::http::HeaderName::from_static("x-request-id")])
-                .max_age(std::time::Duration::from_secs(CORS_MAX_AGE_SECS))
-        }
-    };
-
-    cors_layer
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::PUT,
+                axum::http::Method::DELETE,
+                axum::http::Method::PATCH,
+                axum::http::Method::HEAD,
+                axum::http::Method::OPTIONS,
+            ])
+            .allow_headers([
+                axum::http::HeaderName::from_static("authorization"),
+                axum::http::HeaderName::from_static("content-type"),
+                axum::http::HeaderName::from_static("x-api-key"),
+                axum::http::HeaderName::from_static("x-request-id"),
+            ])
+            .expose_headers([axum::http::HeaderName::from_static("x-request-id")])
+            .max_age(std::time::Duration::from_secs(CORS_MAX_AGE_SECS))
+    }
 }
 
 /// Create public API routes (no authentication required).

@@ -233,28 +233,14 @@ impl MllmEngine {
         request: &InternalScrapeRequest,
         start: Instant,
     ) -> Result<String, EngineError> {
-        let timeout_duration = request.timeout;
-
         // Agentic loop
         let mut last_result: Option<ActionResult> = None;
         let mut iteration: u8 = 0;
         let final_content;
 
         loop {
-            if iteration >= self.config.max_iterations {
-                warn!(
-                    "MLLM engine reached max_iterations ({}) for {}",
-                    self.config.max_iterations, request.url
-                );
-                // Fallback: return current page content
-                final_content = get_page_content(page).await;
-                break;
-            }
-
-            let elapsed = start.elapsed();
-            if elapsed + Duration::from_secs(10) > timeout_duration {
-                warn!("MLLM engine approaching timeout for {}", request.url);
-                final_content = get_page_content(page).await;
+            if let Some(content) = self.guard_fallback(page, request, start, iteration).await {
+                final_content = content;
                 break;
             }
 
@@ -264,32 +250,9 @@ impl MllmEngine {
                 iteration, self.config.max_iterations
             );
 
-            // Step 1: Take screenshot
-            let screenshot_b64 = self.take_screenshot_base64(page).await?;
-
-            // Step 1.5: AX tree outline (F12 hybrid channel; None when disabled)
-            let ax_outline = self.capture_ax_outline(page).await;
-
-            // Step 2: Send to vision model
-            let prompt = self.build_vision_prompt(
-                goal,
-                iteration,
-                last_result.as_ref(),
-                ax_outline.as_deref(),
-            );
             let vision_response = self
-                .vision_adapter
-                .send_vision_request(
-                    &screenshot_b64,
-                    &prompt,
-                    &self.config.system_prompt,
-                    &self.config.vision_model,
-                )
-                .await
-                .map_err(|e| {
-                    error!("Vision model call failed: {}", e);
-                    EngineError::Other(format!("Vision model call failed: {}", e))
-                })?;
+                .request_vision_response(page, goal, iteration, last_result.as_ref())
+                .await?;
 
             // Step 3: Parse decision
             let decision = match parse_decision(&vision_response) {
@@ -304,21 +267,9 @@ impl MllmEngine {
             debug!("MLLM decision at iteration {}: {:?}", iteration, decision);
 
             // Step 4: Check for terminal decisions
-            match &decision {
-                MllmDecision::Extract { .. } => {
-                    final_content = get_page_content(page).await;
-                    info!("MLLM engine extracted content at iteration {}", iteration);
-                    break;
-                }
-                MllmDecision::Done { .. } => {
-                    final_content = get_page_content(page).await;
-                    info!(
-                        "MLLM engine completed navigation at iteration {}",
-                        iteration
-                    );
-                    break;
-                }
-                _ => {}
+            if let Some(content) = terminal_decision_content(page, &decision, iteration).await {
+                final_content = content;
+                break;
             }
 
             // Step 5: Execute the decision
@@ -330,6 +281,87 @@ impl MllmEngine {
         }
 
         Ok(final_content)
+    }
+
+    /// 双护栏检查（max_iterations / 临近超时）：命中即返回当前页面内容作为
+    /// 兜底终态；未命中返回 None（调用方继续本轮迭代）。
+    async fn guard_fallback(
+        &self,
+        page: &chromiumoxide::Page,
+        request: &InternalScrapeRequest,
+        start: Instant,
+        iteration: u8,
+    ) -> Option<String> {
+        if iteration >= self.config.max_iterations {
+            warn!(
+                "MLLM engine reached max_iterations ({}) for {}",
+                self.config.max_iterations, request.url
+            );
+            // Fallback: return current page content
+            return Some(get_page_content(page).await);
+        }
+
+        let elapsed = start.elapsed();
+        if elapsed + Duration::from_secs(10) > request.timeout {
+            warn!("MLLM engine approaching timeout for {}", request.url);
+            return Some(get_page_content(page).await);
+        }
+
+        None
+    }
+
+    /// 单轮视觉决策输入：截图 → AX 大纲 → 视觉模型调用。
+    async fn request_vision_response(
+        &self,
+        page: &chromiumoxide::Page,
+        goal: &str,
+        iteration: u8,
+        last_result: Option<&ActionResult>,
+    ) -> Result<String, EngineError> {
+        // Step 1: Take screenshot
+        let screenshot_b64 = self.take_screenshot_base64(page).await?;
+
+        // Step 1.5: AX tree outline (F12 hybrid channel; None when disabled)
+        let ax_outline = self.capture_ax_outline(page).await;
+
+        // Step 2: Send to vision model
+        let prompt = self.build_vision_prompt(goal, iteration, last_result, ax_outline.as_deref());
+        self.vision_adapter
+            .send_vision_request(
+                &screenshot_b64,
+                &prompt,
+                &self.config.system_prompt,
+                &self.config.vision_model,
+            )
+            .await
+            .map_err(|e| {
+                error!("Vision model call failed: {}", e);
+                EngineError::Other(format!("Vision model call failed: {}", e))
+            })
+    }
+}
+
+/// Extract/Done 终态判定：命中返回当前页面内容（含原日志），否则 None。
+async fn terminal_decision_content(
+    page: &chromiumoxide::Page,
+    decision: &MllmDecision,
+    iteration: u8,
+) -> Option<String> {
+    match decision {
+        MllmDecision::Extract { .. } => {
+            let content = get_page_content(page).await;
+            info!("MLLM engine extracted content at iteration {}", iteration);
+            Some(content)
+        }
+        MllmDecision::Done { .. } => {
+            let content = get_page_content(page).await;
+            info!(
+                "MLLM engine completed navigation at iteration {}",
+                iteration
+            );
+            Some(content)
+        }
+        _ => None,
     }
 }
 
