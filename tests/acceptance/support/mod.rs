@@ -204,6 +204,12 @@ impl SharedHarness {
         // SSRF 关闭使 wiremock（127.0.0.1）可作 mock 目标站（specs/acceptance-testing
         // Constraints：零外部网络依赖）。
         std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "true");
+        // 内存水位调度器关闭：本机可用内存（sysinfo available 口径）常态在
+        // tight_available_mib=2048 阈值边缘，Pressure 档会认领即 +30s 重排
+        // （task_lifecycle.rs acquire 段），制造与代码无关的批量 queued 停滞
+        // 窗口——2026-11-08 十一轮取证定位（容器内 tasks 行 updated_at+30s
+        // 量化证据）。验收关注任务语义而非调度对机器内存的自适应。
+        std::env::set_var("CRAWLRS__ENGINES__MEMORY_SCHEDULER__ENABLED", "false");
         std::env::set_var("CRAWLRS__AUTH__JWT_SECRET", TEST_JWT_SECRET);
         std::env::set_var("CRAWLRS__WEBHOOK__SECRET", TEST_WEBHOOK_SECRET);
 
