@@ -19,6 +19,7 @@
 //! 1. 仅当请求来自可信代理时才信任转发头
 //! 2. 可信代理列表通过配置文件管理
 //! 3. 支持单个 IP 和 CIDR 格式的可信代理配置
+//! 4. X-Real-IP 仅作开发模式（可信代理验证禁用）的回退，不参与生产信任链
 
 use axum::extract::Request;
 use log::{debug, warn};
@@ -260,11 +261,17 @@ impl<'a> SecureIpExtractor<'a> {
             }
         }
 
-        if let Some(real_ip) = req.headers().get("x-real-ip") {
-            if let Ok(ip_str) = real_ip.to_str() {
-                let trimmed = ip_str.trim();
-                if self.is_valid_ip(trimmed) {
-                    return Some(trimmed.to_string());
+        // X-Real-IP 仅在可信代理验证禁用（开发模式）时回退。启用可信代理时
+        // 该头可由客户端伪造（代理未覆写时），回退会把伪造值当客户端 IP：
+        // 轮换限流键、或借 garrison 按伪造 IP 定向计数（终验 M3 存量项）。
+        // 部署契约要求边缘代理覆写 X-Forwarded-For（docs/SECURITY.md）。
+        if !self.trusted_proxies.enabled {
+            if let Some(real_ip) = req.headers().get("x-real-ip") {
+                if let Ok(ip_str) = real_ip.to_str() {
+                    let trimmed = ip_str.trim();
+                    if self.is_valid_ip(trimmed) {
+                        return Some(trimmed.to_string());
+                    }
                 }
             }
         }
@@ -400,14 +407,20 @@ mod tests {
         let ip = extractor.extract_from_forwarded_headers(&req);
         assert_eq!(ip, Some("203.0.113.1".to_string()));
 
-        // 测试 X-Real-IP 头
+        // 测试 X-Real-IP 头：仅开发模式（enabled=false）回退
+        let dev_config = TrustedProxyConfig::from_settings(false, vec![]);
+        let dev_extractor = SecureIpExtractor::new(&dev_config);
         let req = HttpRequest::builder()
             .header("x-real-ip", "203.0.113.2")
             .body(axum::body::Body::empty())
             .unwrap();
 
-        let ip = extractor.extract_from_forwarded_headers(&req);
+        let ip = dev_extractor.extract_from_forwarded_headers(&req);
         assert_eq!(ip, Some("203.0.113.2".to_string()));
+
+        // 生产模式（enabled=true）：X-Real-IP 不参与回退，返回 None
+        let ip = extractor.extract_from_forwarded_headers(&req);
+        assert!(ip.is_none(), "X-Real-IP must not be trusted in proxy mode");
 
         // 测试无头的情况
         let req = HttpRequest::builder()
@@ -727,8 +740,8 @@ mod tests {
 
     #[test]
     fn test_extract_from_forwarded_headers_invalid_ip_falls_through_to_x_real_ip() {
-        // X-Forwarded-For 第一个 IP 无效 → 应回退到 X-Real-IP
-        let config = TrustedProxyConfig::default();
+        // 开发模式：XFF 全非法 → 回退到 X-Real-IP
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
         let extractor = SecureIpExtractor::new(&config);
 
         let req = HttpRequest::builder()
@@ -742,9 +755,24 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_from_forwarded_headers_empty_x_forwarded_for() {
-        // 空 X-Forwarded-For → 应回退到 X-Real-IP 或返回 None
+    fn test_extract_from_forwarded_headers_invalid_ip_proxy_mode_ignores_x_real_ip() {
+        // 生产模式：XFF 全非法也不回退 X-Real-IP（可伪造），返回 None
         let config = TrustedProxyConfig::default();
+        let extractor = SecureIpExtractor::new(&config);
+
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "invalid-ip")
+            .header("x-real-ip", "203.0.113.20")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        assert!(extractor.extract_from_forwarded_headers(&req).is_none());
+    }
+
+    #[test]
+    fn test_extract_from_forwarded_headers_empty_x_forwarded_for() {
+        // 开发模式：空 X-Forwarded-For → 回退到 X-Real-IP；生产模式 → None
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
         let extractor = SecureIpExtractor::new(&config);
 
         let req = HttpRequest::builder()
@@ -812,8 +840,8 @@ mod tests {
 
     #[test]
     fn test_extract_from_forwarded_headers_non_utf8_x_forwarded_for_falls_to_x_real_ip() {
-        // X-Forwarded-For 头包含非 ASCII 字节 → to_str 失败 → 回退到 X-Real-IP
-        let config = TrustedProxyConfig::default();
+        // 开发模式：XFF 头非 ASCII → to_str 失败 → 回退到 X-Real-IP
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
         let extractor = SecureIpExtractor::new(&config);
 
         let mut req = HttpRequest::builder()

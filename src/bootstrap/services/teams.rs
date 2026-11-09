@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use crate::bootstrap::infrastructure::Repositories;
+use crate::bootstrap::services::geolocation::GeoLocationServiceImpl;
 use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::team_service::TeamService;
-use crate::infrastructure::geolocation::GeoLocationServiceImpl;
 
 /// 装配 teams 相关服务：地理定位服务 + 团队服务（teams-off 时不编译）。
 pub(super) fn init_team_services(

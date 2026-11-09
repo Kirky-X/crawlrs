@@ -315,7 +315,8 @@ async fn test_invalid_key_returns_401() {
 /// # 注意
 ///
 /// garrison 默认 `BruteForceConfig`：5 次失败/60 秒窗口/300 秒锁定。
-/// 测试需连续发送 6 次失败请求触发限速。IP 来源是 `127.0.0.1`（本地测试）。
+/// 测试需连续发送 6 次失败请求触发限速。IP 来源为随机公网地址
+/// （经可信代理 + X-Forwarded-For 注入，见用例内 client_ip 构造）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[ignore = "需真实 DB + garrison 单例 + firewall-bruteforce feature——E2E 套件经 --include-ignored 运行（setup 重置全局态）"]
 async fn test_rate_limit_returns_429() {

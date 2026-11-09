@@ -11,7 +11,8 @@
 -- 停止所有应用写入副本**，否则并发插入重复 URL 会让建索引报 1062。本迁移
 -- 在建索引前重新执行与 009 等价的去重/孤儿清理/计数重算，用于收敛历史重复；
 -- 但不能替代停机。迁移按步骤幂等：中途失败重跑会从当前状态继续收敛。
--- 非旧/新两种预期定义（例如 CHAR(20) 或错误表达式）会显式失败，不静默跳过。
+-- 非旧/新两种预期定义（例如 CHAR(20) 或错误表达式）会显式失败，不静默跳过：
+-- 失败方式为标量子查询返回多行（ERROR 1242），全版本有效且无表名碰撞。
 
 SET @legacy = (
     SELECT COUNT(*) FROM information_schema.columns
@@ -43,7 +44,7 @@ SET @unexpected = @col_exists - @legacy - @modern;
 SET @assert_shape = IF(
     @unexpected = 0,
     'SELECT 1',
-    'SELECT * FROM _crawlrs_010_unexpected_url_hash_definition'
+    'SELECT (SELECT 1 UNION SELECT 2)'
 );
 PREPARE assert_shape FROM @assert_shape;
 EXECUTE assert_shape;
@@ -103,7 +104,7 @@ SET @modern_now = (
 SET @assert_modern = IF(
     @modern_now = 1,
     'SELECT 1',
-    'SELECT * FROM _crawlrs_010_url_hash_not_upgraded'
+    'SELECT (SELECT 1 UNION SELECT 2)'
 );
 PREPARE assert_modern FROM @assert_modern;
 EXECUTE assert_modern;
@@ -198,7 +199,7 @@ SET @idx_ok = (
 SET @assert_idx = IF(
     @idx_ok = 1,
     'SELECT 1',
-    'SELECT * FROM _crawlrs_010_url_hash_index_mismatch'
+    'SELECT (SELECT 1 UNION SELECT 2)'
 );
 PREPARE assert_idx FROM @assert_idx;
 EXECUTE assert_idx;

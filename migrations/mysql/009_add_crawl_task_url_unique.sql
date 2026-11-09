@@ -68,9 +68,10 @@ DROP TEMPORARY TABLE _crawl_dup_crawls;
 --     VIRTUAL 列 ADD COLUMN 为 INSTANT，建二级索引为 INPLACE 并允许写入。
 --   * BINARY(32) 存储 SHA-256 原始字节；utf8mb4 CHAR(64) 的哈希列
 --     最多占 256 字节，BINARY(32) 固定 32 字节。
--- 既有定义的列/索引在 DDL 之后重新校验；不一致时用一条引用不存在表的
--- 语句强制失败（8.0 全版本有效；SIGNAL 不能用于 prepared statement，
--- CHECK 约束在 8.0.16 之前不执行）。不能按名字静默跳过（审查 M-4）。
+-- 既有定义的列/索引在 DDL 之后重新校验；不一致时用一条必然报错的
+-- 标量子查询（返回多行 → ERROR 1242，8.0 全版本在 EXECUTE 阶段生效；
+-- SIGNAL 不能用于 prepared statement，CHECK 约束在 8.0.16 之前不执行）。
+-- 不能按名字静默跳过（审查 M-4）。
 --
 -- 兼容 HEAD 版 009 的 legacy 形状（CHAR(64) STORED + SHA2 hex）：
 -- 部分应用（列已建、索引未建）重跑时接受该形状并继续建索引，避免迁移死锁。
@@ -107,7 +108,7 @@ SET @col_ok = (
 SET @assert_col = IF(
     @col_ok = 1,
     'SELECT 1',
-    'SELECT * FROM _crawlrs_migration_error_url_hash_definition_mismatch'
+    'SELECT (SELECT 1 UNION SELECT 2)'
 );
 PREPARE assert_col FROM @assert_col;
 EXECUTE assert_col;
@@ -146,7 +147,7 @@ SET @idx_ok = (
 SET @assert_idx = IF(
     @idx_ok = 1,
     'SELECT 1',
-    'SELECT * FROM _crawlrs_migration_error_url_hash_index_mismatch'
+    'SELECT (SELECT 1 UNION SELECT 2)'
 );
 PREPARE assert_idx FROM @assert_idx;
 EXECUTE assert_idx;

@@ -4,6 +4,8 @@
 //! Application services initialization.
 
 mod auth;
+#[cfg(feature = "teams")]
+mod geolocation;
 mod runtime_services;
 mod search;
 #[cfg(feature = "teams")]

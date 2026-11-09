@@ -164,6 +164,10 @@ const ROBOTS_FAILURE_CACHE_TTL: Duration = Duration::from_secs(60);
 /// robots.txt 响应体上限（512 KiB；正常 robots.txt 远小于此值）
 const MAX_ROBOTS_BODY_BYTES: usize = 512 * 1024;
 
+/// 预分配上限（64 KiB）：Content-Length 是不可信响应头，钳制初始容量，
+/// 超出部分按 chunk 正常扩容（仍受 MAX_ROBOTS_BODY_BYTES 封顶）。
+const MAX_ROBOTS_PREALLOC_BYTES: usize = 64 * 1024;
+
 /// Robots.txt检查器
 #[derive(Clone)]
 pub struct RobotsChecker {
@@ -547,7 +551,7 @@ pub enum RobotsFetchAttempt {
 /// 生产实现 [`HttpRobotsFetcher`] 直连 reqwest；测试注入可控实现
 /// （本仓库约定：真实 trait 实现 + 测试专用行为，不引入 mock 库）。
 #[async_trait]
-pub trait RobotsFetcher: Send + Sync {
+pub(crate) trait RobotsFetcher: Send + Sync {
     /// 发起一次抓取尝试（不做重试与缓存）。
     async fn fetch(&self, robots_url: &str, user_agent: &str) -> RobotsFetchAttempt;
 }
@@ -592,11 +596,12 @@ impl RobotsFetcher for HttpRobotsFetcher {
                 let status = resp.status().as_u16();
                 if (200..300).contains(&status) {
                     // 审查 M2：robots.txt 响应体限长（防恶意站点大体积响应）；
-                    // 按 Content-Length 预分配（封顶上限），避免逐 chunk 扩容。
+                    // 按 Content-Length 预分配，但钳到 64 KiB——该头不可信，
+                    // 伪造大值不应触发大块分配（终验 INFO 项）。
                     let capacity =
                         resp.content_length()
                             .unwrap_or(0)
-                            .min(MAX_ROBOTS_BODY_BYTES as u64) as usize;
+                            .min(MAX_ROBOTS_PREALLOC_BYTES as u64) as usize;
                     let mut body: Vec<u8> = Vec::with_capacity(capacity);
                     loop {
                         match resp.chunk().await {

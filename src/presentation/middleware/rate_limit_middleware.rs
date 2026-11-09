@@ -377,6 +377,12 @@ fn apply_429_cors_headers(response: &mut Response, req: &Request, allowed_origin
         return;
     }
 
+    // 白名单模式：无论命中与否都带 Vary: Origin，防止中间缓存把
+    // “无 ACAO 的 429”串给命中 Origin 的浏览器客户端（终验 LOW）。
+    response
+        .headers_mut()
+        .insert(VARY, HeaderValue::from_static("Origin"));
+
     let Some(origin) = req.headers().get(ORIGIN).and_then(|v| v.to_str().ok()) else {
         return;
     };
@@ -385,9 +391,6 @@ fn apply_429_cors_headers(response: &mut Response, req: &Request, allowed_origin
             response
                 .headers_mut()
                 .insert(ACCESS_CONTROL_ALLOW_ORIGIN, value);
-            response
-                .headers_mut()
-                .insert(VARY, HeaderValue::from_static("Origin"));
         }
     }
 }
@@ -814,6 +817,7 @@ mod tests {
                 .unwrap(),
             "https://app.example"
         );
+        assert_eq!(response.headers().get("vary").unwrap(), "Origin");
 
         // 白名单未命中：不下发 ACAO
         let mut response = Response::new(Body::from("{}"));

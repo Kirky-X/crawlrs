@@ -20,7 +20,6 @@ pub mod database;
 pub mod dns;
 pub mod errors;
 pub mod events;
-pub mod geolocation;
 pub mod metrics;
 pub mod observability;
 pub mod oxcache;
