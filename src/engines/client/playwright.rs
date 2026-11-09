@@ -391,13 +391,9 @@ impl PlaywrightBrowserManagerComponent {
     /// 自行探测报出误导性的 "Could not auto detect a chrome executable"。
     /// 现支持显式路径环境变量，并在无浏览器时返回可操作的显式错误。
     async fn download_browser_if_needed(&self) -> Result<Option<PathBuf>, EngineError> {
-        // 显式路径优先：CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH
-        if let Ok(p) = std::env::var("CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH") {
-            let p = p.trim().to_string();
-            if !p.is_empty() && std::path::Path::new(&p).exists() {
-                log::info!("Using browser from CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH: {p}");
-                return Ok(Some(std::path::PathBuf::from(p)));
-            }
+        // 显式路径优先（共享解析器：两个启动路径同一语义，不打印路径值）
+        if let Some(path) = crate::engines::browser_downloader::browser_path_from_env() {
+            return Ok(Some(path));
         }
         // 首先检查系统是否有浏览器
         if let Some(path) = crate::engines::browser_downloader::find_system_browser().await {

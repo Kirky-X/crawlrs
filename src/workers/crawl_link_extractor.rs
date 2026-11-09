@@ -259,15 +259,29 @@ fn collect_unique_links(
         .as_deref()
         .and_then(|u| Url::parse(u).ok())
         .unwrap_or(Url::parse(&task.url)?);
-    let mut allowed_hosts: Vec<String> = Vec::new();
-    for candidate in [
-        task.url.as_str(),
-        response.final_url.as_deref().unwrap_or(""),
-    ] {
-        if let Ok(parsed) = Url::parse(candidate) {
-            if let Some(host) = parsed.host_str() {
-                allowed_hosts.push(host.to_ascii_lowercase());
-            }
+    let seed_host = Url::parse(&task.url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+    let mut allowed_hosts: Vec<String> = seed_host.clone().into_iter().collect();
+    // 审查 N7：final host 仅在与会话种子相关（等同/互为子域）时纳入允许集。
+    // 否则 302 到任意外部域会把外站变成可爬根，扩大 crawl 范围。
+    if let Some(final_host) = response
+        .final_url
+        .as_deref()
+        .and_then(|u| Url::parse(u).ok())
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+    {
+        let related = seed_host
+            .as_ref()
+            .map(|seed| host_matches(&final_host, seed) || host_matches(seed, &final_host))
+            .unwrap_or(false);
+        if related {
+            allowed_hosts.push(final_host);
+        } else {
+            log::debug!(
+                "redirect final host {} unrelated to seed host; not expanding crawl scope",
+                final_host
+            );
         }
     }
     allowed_hosts.sort();
@@ -406,6 +420,19 @@ async fn score_and_enqueue(
     repository: &dyn TaskRepository,
     crawl_repository: &dyn CrawlRepository,
 ) -> Result<()> {
+    // 审查 HIGH：停止瞬间仍在飞的子任务会继续入队新链接；入队侧再校验
+    // 一次父 crawl 终态，避免取消之后又产生新行。
+    if let Ok(Some(crawl)) = crawl_repository.find_by_id(crawl_id).await {
+        if crate::application::use_cases::crawl_state_machine::is_terminal(&crawl.status) {
+            log::info!(
+                "crawl {} is terminal; skip enqueueing {} discovered link(s)",
+                crawl_id,
+                new_urls.len()
+            );
+            return Ok(());
+        }
+    }
+
     let frontier = build_scored_frontier(&new_urls, task);
 
     // DFS/BFS 策略判断提到循环外：`to_lowercase` 每次调用都分配新 String，
@@ -435,14 +462,9 @@ async fn score_and_enqueue(
                 crawl_repository.increment_total_tasks(crawl_id).await?;
             }
             Err(e) => {
-                // D7 修复：并发窗口内重复 URL 由 (crawl_id,url) 唯一索引兜底——
-                // 冲突=已入队，跳过即可；其他错误保持原样上抛。
-                let msg = e.to_string().to_lowercase();
-                if msg.contains("duplicate key")
-                    || msg.contains("23505")
-                    || msg.contains("unique constraint")
-                    || msg.contains("duplicate entry")
-                {
+                // D7 修复 + 审查 L1：类型化唯一冲突（RepositoryError::Conflict）
+                // = 并发窗口已入队，跳过；其他错误原样上抛。
+                if e.is_unique_conflict() {
                     log::debug!("skip duplicate child task url={}", new_task.url);
                 } else {
                     return Err(e.into());

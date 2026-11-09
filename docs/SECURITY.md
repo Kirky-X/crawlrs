@@ -87,6 +87,10 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 
 - `security_headers_middleware` 统一注入安全响应头（有专属单元测试固化）。
 - `[trusted_proxies]` 配置（CIDR 列表）限定可信代理，防止客户端 IP 伪造绕过限流与防火墙。
+  XFF 解析取**最右非可信跳**，边缘代理必须**覆写**该头
+  （nginx：`proxy_set_header X-Forwarded-For $remote_addr;`），不要使用
+  `$proxy_add_x_forwarded_for`（它会保留客户端自带的左侧伪造值）。认证失败
+  计数（garrison）与 IP 限流共用这一解析口径。
 - `[cors]` 支持 `allowed_origins` 白名单；生产环境应配置具体来源而非 `*`。
 - 出站代理统一经 `[proxy]` 配置；限流由 limiteron 提供分布式限流、配额（`quota-control`）与熔断（`circuit-breaker`）。
 
@@ -116,7 +120,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 - [ ] CORS 配置为具体来源（禁用 `*` 通配）
 - [ ] 根据容量设置速率限制（`default_rpm` / `burst_size`）与团队并发（`concurrency.default_team_limit`）
 - [ ] 配置 `[trusted_proxies]`（CIDR）防止 IP 伪造绕过防火墙/限流
-- [ ] 启用 Prometheus 指标导出并接入告警（docker/prometheus/ 提供配置样例）。**注意**：当前 `/metrics` 为占位实现（硬编码 `version=1.0.0`、`uptime=3600`，非运行时真实指标），权威 Prometheus 聚合端点尚未实现；`docker/prometheus/` 配置样例仅作参考，真实指标清单见 `docs/PERFORMANCE.md`
+- [ ] 启用 Prometheus 指标导出并接入告警（指标端点已真实导出）（docker/prometheus/ 提供配置样例）。**注意**：`/metrics` 已返回真实 Prometheus 文本指标（进程内 recorder；公开、免认证、免限流，不含租户/URL/凭证标签；生产建议网络层 allowlist）；`docker/prometheus/` 配置样例仅作参考，真实指标清单见 `docs/PERFORMANCE.md`
 - [ ] 启用结构化日志聚合（inklog），审计日志（`/v1/audit/logs`）纳入巡检
 - [ ] 在 TLS 终止（反向代理/网关）之后部署，健康检查走 `/health`
 - [ ] 审查 Webhook `secret` 配置，验证接收端签名校验

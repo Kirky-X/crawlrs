@@ -244,22 +244,44 @@ fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash:
 /// - token 不记录到日志（CWE-532）；注入 extensions 的是 SHA-256 hash
 /// - `login_id` 解析失败不静默回退 `crate::domain::id::Id::nil()`（避免越权）
 ///
+/// 可信代理配置的进程级快照（bootstrap 从 Settings 注入一次）。
+///
+/// 与限流中间件使用同一 XFF 解析（最右非可信跳），避免认证失败计数按
+/// 反代直连 IP 聚合——否则攻击者可用 6 次错误 Key 封禁整台代理 IP。
+static TRUSTED_PROXY_CONFIG: std::sync::OnceLock<
+    std::sync::Arc<crate::infrastructure::security::secure_ip::TrustedProxyConfig>,
+> = std::sync::OnceLock::new();
+
+/// bootstrap 调用一次：注入 `[trusted_proxies]` 配置。
+pub fn configure_trusted_proxies(settings: &crate::config::settings::Settings) {
+    let config = std::sync::Arc::new(
+        crate::infrastructure::security::secure_ip::TrustedProxyConfig::from_settings(
+            settings.trusted_proxies.enabled,
+            settings.trusted_proxies.proxies.clone(),
+        ),
+    );
+    if TRUSTED_PROXY_CONFIG.set(config).is_err() {
+        log::debug!("trusted proxy config already initialized; keeping first value");
+    }
+}
+
 /// 将客户端 IP 注入 garrison task-local（`garrison::stp::with_current_ip`）。
 ///
 /// garrison firewall-bruteforce 的 IP 级失败计数读取 `garrison::stp::current_ip()`，
 /// 按 garrison 契约该值由 Web 框架中间件注入；缺失时 fail-open（IP 限速不启用）。
-/// 本层从 `ConnectInfo<SocketAddr>` 扩展提取 IP（main.rs 以
-/// `into_make_service_with_connect_info` 启动，故生产环境恒存在），须挂载于
-/// 认证中间件**外侧**，保证 `auth_middleware_inner` 运行时 task-local 已就位。
+/// IP 来源与限流中间件一致：`get_secure_client_ip`（可信代理 + 最右非可信跳）。
+/// 须挂载于认证中间件**外侧**，保证 `auth_middleware_inner` 运行时 task-local 已就位。
 #[cfg(feature = "auth")]
 pub async fn garrison_ip_context_middleware(req: axum::extract::Request, next: Next) -> Response {
-    let ip = req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map(|c| c.0.ip().to_string());
-    match ip {
-        Some(ip) => garrison::stp::with_current_ip(ip, next.run(req)).await,
-        None => next.run(req).await,
+    let trusted = TRUSTED_PROXY_CONFIG.get().cloned().unwrap_or_else(|| {
+        std::sync::Arc::new(
+            crate::infrastructure::security::secure_ip::TrustedProxyConfig::default(),
+        )
+    });
+    let ip = crate::infrastructure::security::secure_ip::get_secure_client_ip(&req, &trusted);
+    match ip.as_str() {
+        "unknown" | "" => next.run(req).await,
+        _ => garrison::stp::with_current_ip(ip, next.run(req)).await,
     }
 }
 

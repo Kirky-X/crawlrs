@@ -392,8 +392,11 @@ async fn test_cancel_tasks_by_crawl_id_with_real_db_cancels_matching() {
     task1.crawl_id = Some(crawl_id);
     let mut task2 = make_test_task();
     task2.crawl_id = Some(crawl_id);
+    // 唯一索引 (crawl_id, url)：同 crawl 下必须使用不同 URL
+    task2.url = format!("{}/task2", task2.url);
     let mut task3 = make_test_task();
     task3.crawl_id = Some(crawl_id);
+    task3.url = format!("{}/task3", task3.url);
     task3.status = TaskStatus::Completed; // already completed, should not be cancelled
     repo.create(&task1).await.expect("create task1 failed");
     repo.create(&task2).await.expect("create task2 failed");
@@ -410,6 +413,15 @@ async fn test_cancel_tasks_by_crawl_id_with_real_db_cancels_matching() {
         .expect("find_by_id failed")
         .expect("task1 should exist");
     assert_eq!(found1.status, TaskStatus::Cancelled);
+    assert!(
+        found1.completed_at.is_some(),
+        "cancelled 行必须写 completed_at"
+    );
+    assert!(found1.lock_token.is_none(), "cancelled 行必须清锁");
+    assert!(
+        found1.lock_expires_at.is_none(),
+        "cancelled 行必须清锁过期时间"
+    );
     let found2 = repo
         .find_by_id(task2.id)
         .await
@@ -507,6 +519,7 @@ async fn test_find_by_crawl_id_with_real_db_returns_matching_tasks() {
     task1.crawl_id = Some(crawl_id);
     let mut task2 = make_test_task();
     task2.crawl_id = Some(crawl_id);
+    task2.url = format!("{}/task2", task2.url);
     let unrelated = make_test_task();
     repo.create(&task1).await.expect("create task1 failed");
     repo.create(&task2).await.expect("create task2 failed");
@@ -638,6 +651,15 @@ async fn test_batch_cancel_with_real_db_cancels_owned_tasks() {
         .expect("find_by_id failed")
         .expect("task1 should exist");
     assert_eq!(found1.status, TaskStatus::Cancelled);
+    assert!(
+        found1.completed_at.is_some(),
+        "cancelled 行必须写 completed_at"
+    );
+    assert!(found1.lock_token.is_none(), "cancelled 行必须清锁");
+    assert!(
+        found1.lock_expires_at.is_none(),
+        "cancelled 行必须清锁过期时间"
+    );
     let found2 = repo
         .find_by_id(task2.id)
         .await

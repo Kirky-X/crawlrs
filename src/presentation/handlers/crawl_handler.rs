@@ -53,7 +53,7 @@ mod tests {
         )));
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(msg.contains("connection refused"));
+        assert_eq!(msg, "Internal server error");
     }
 
     #[test]
@@ -85,7 +85,7 @@ mod tests {
         let err = CrawlUseCaseError::Anyhow(anyhow::anyhow!("unexpected failure"));
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(msg.contains("unexpected failure"));
+        assert_eq!(msg, "Internal server error");
     }
 
     #[test]
@@ -98,7 +98,7 @@ mod tests {
         );
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(msg.contains("with additional context"));
+        assert_eq!(msg, "Internal server error");
     }
 
     // CrawlRequestDto construction tests
@@ -582,7 +582,7 @@ mod tests {
         );
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(msg.contains("outer context"));
+        assert_eq!(msg, "Internal server error");
     }
 
     #[test]
@@ -595,8 +595,7 @@ mod tests {
         )));
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(msg.contains("connection pool exhausted"));
-        assert!(msg.contains("30s"));
+        assert_eq!(msg, "Internal server error");
     }
 
     // CRAWL_TASK_CREDITS_COST constant

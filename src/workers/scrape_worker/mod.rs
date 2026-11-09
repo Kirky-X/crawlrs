@@ -126,6 +126,13 @@ pub struct ScrapeWorker {
     /// `RwLock` 因为 `extract_and_queue_links` 是 `&self`，但 bloom insert 需 `&mut`。
     /// `Arc` 是为后续支持跨 worker 共享（当前每 worker 独立实例）。
     deduplicator: Arc<parking_lot::RwLock<Deduplicator>>,
+    /// crawl 终态短 TTL 缓存（crawl_id → (is_terminal, checked_at)）
+    ///
+    /// 终态闸每个 crawl 子任务都会查一次父 crawl；活跃 crawl 下这是纯增量
+    /// SELECT（审查性能项）。10s TTL 把重复查询折叠，最坏延迟 10s 发现终态。
+    crawl_terminal_cache: DashMap<crate::domain::id::Id, (bool, std::time::Instant)>,
+    /// 缓存插入计数：每 1024 次触发一次过期项 retain（避免每任务 len 扫描）
+    crawl_terminal_cache_inserts: std::sync::atomic::AtomicUsize,
     /// 高级缓存服务
     ///
     /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
@@ -194,6 +201,8 @@ impl ScrapeWorker {
             // 默认每 worker 独立 Deduplicator
             // 后续可由 WorkerManager 通过 Builder 注入共享实例优化 DB 查询量
             deduplicator: Arc::new(parking_lot::RwLock::new(Deduplicator::new())),
+            crawl_terminal_cache: DashMap::new(),
+            crawl_terminal_cache_inserts: std::sync::atomic::AtomicUsize::new(0),
             cache_service: deps.cache_service,
             // 默认独立协调器，由 WorkerManager 通过
             // `with_shutdown_coordinator` 注入共享实例。

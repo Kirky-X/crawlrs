@@ -276,10 +276,9 @@ async fn sync_wait_and_refresh<T: TaskRepository>(
 /// 验证请求参数
 pub(crate) fn validate_request(request: &TaskQueryRequestDto) -> Result<(), CrawlRsError> {
     if let Err(errors) = request.validate() {
-        Err(CrawlRsError::from(anyhow::anyhow!(
-            "Validation error: {:?}",
-            errors
-        )))
+        Err(CrawlRsError::Unprocessable(
+            crate::presentation::handlers::response_builder::validation_error_message(&errors),
+        ))
     } else {
         Ok(())
     }

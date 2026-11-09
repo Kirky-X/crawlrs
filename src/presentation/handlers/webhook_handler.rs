@@ -114,12 +114,18 @@ pub async fn create_webhook<R: WebhookRepository>(
             // 不记录 resolved_ips 到日志，避免泄露内部网络拓扑
             log::debug!(
                 "Webhook URL passed SSRF validation url={} team_id={}",
-                payload.url,
+                crate::utils::url_redaction::redact_webhook_url_for_log(&payload.url),
                 team_id
             );
         }
         Err(e) => {
-            log::warn!("SSRF attack attempt blocked via webhook URL url={} team_id={} api_key_id={} error={}", payload.url, team_id, auth_state.api_key_id, e);
+            log::warn!(
+                "SSRF attack attempt blocked via webhook URL url={} team_id={} api_key_id={} error={}",
+                crate::utils::url_redaction::redact_webhook_url_for_log(&payload.url),
+                team_id,
+                auth_state.api_key_id,
+                e
+            );
             return Err(CrawlRsError::Validation(
                 "Invalid webhook URL: potential security risk detected".to_string(),
             ));

@@ -192,6 +192,14 @@ fn validate_crawl_request(
     locale: &Locale,
     bundle: &Arc<I18nBundle>,
 ) -> Option<Response> {
+    // 审查 HIGH：tasks.url 的普通 btree 索引（idx_tasks_url）仍有行上限，
+    // DTO 的 2048 字符对多字节 URL 可达 8 KiB。入队前按字节收敛。
+    if payload.url.len() > 2048 {
+        return Some(errors::unprocessable_entity(
+            "url must be at most 2048 bytes",
+        ));
+    }
+
     if payload.config.max_depth > crate::application::dto::crawl_request::MAX_CRAWL_DEPTH {
         return Some(errors::unprocessable_entity(
             "max_depth must be between 0 and 5",
@@ -336,9 +344,15 @@ impl From<CrawlUseCaseError> for (StatusCode, String) {
     fn from(err: CrawlUseCaseError) -> Self {
         match err {
             CrawlUseCaseError::ValidationError(msg) => (StatusCode::BAD_REQUEST, msg),
-            CrawlUseCaseError::Repository(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            CrawlUseCaseError::Repository(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".to_string(),
+            ),
             CrawlUseCaseError::NotFound => (StatusCode::NOT_FOUND, "Crawl not found".to_string()),
-            CrawlUseCaseError::Anyhow(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            CrawlUseCaseError::Anyhow(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".to_string(),
+            ),
         }
     }
 }

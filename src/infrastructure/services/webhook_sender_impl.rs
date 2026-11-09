@@ -122,7 +122,11 @@ impl WebhookSenderImpl {
             return Ok(());
         }
         if let Err(e) = validate_url(url).await {
-            warn!("SSRF protection blocked webhook delivery to {}: {}", url, e);
+            warn!(
+                "SSRF protection blocked webhook delivery to {}: {}",
+                crate::utils::url_redaction::redact_webhook_url_for_log(url),
+                e
+            );
             counter!(
                 "crawlrs_webhook_ssrf_blocked_total",
                 "reason" => e.kind().to_string()

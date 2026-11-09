@@ -126,6 +126,7 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
         .layer(Extension(state.db_pool.clone()))
         .layer(Extension(state.cache_service.clone()));
 
+    #[cfg_attr(not(feature = "auth"), allow(unused_mut))]
     let mut router = Router::new()
         .route("/health", get(routes::health_check))
         .merge(ready_routes)
@@ -535,6 +536,9 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>
 ///
 /// Returns the configured API router.
 pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
+    // 认证失败计数（garrison）与限流共用同一可信代理/XFF 解析口径。
+    #[cfg(feature = "auth")]
+    crate::presentation::middleware::auth_middleware::configure_trusted_proxies(&settings);
     let public_routes = create_public_routes(state);
     let protected_routes = create_protected_routes_with_state(state, settings.clone());
     let v2_routes = create_v2_routes_with_state(state, settings.clone());

@@ -41,6 +41,11 @@ enabled = true
 # 注：代码默认 100 与本文件值不同；toml 为运行时生效方，以本文件为准。
 default_rpm = 60
 burst_size = 20
+# IP 限流中间件阈值（每 IP 每分钟）：
+#  - anon_ip_rpm：无凭证请求（严格）
+#  - auth_ip_rpm：携带 Bearer 凭证的请求（宽松兜底；per-key 配额由 handler 执行）
+anon_ip_rpm = 10
+auth_ip_rpm = 600
 # 限流计数/封禁存储后端：
 # - "memory"   进程内存储（默认，单进程语义，重启即清零）
 # - "database" Postgres 共享存储（db-postgres 构建），api/worker 双进程共享，重启不丢失

@@ -34,6 +34,13 @@ pub struct SecureIpExtractor {
 }
 
 /// 可信代理配置
+///
+/// # 部署约束
+///
+/// X-Forwarded-For 解析取“最右非可信跳”。该策略要求边缘代理**覆写**该头
+/// （nginx `proxy_set_header X-Forwarded-For $remote_addr;`），而不是追加
+/// （`$proxy_add_x_forwarded_for` 会保留客户端自带的左侧值）。若代理原样
+/// 透传，整条 XFF 由客户端控制，IP 限流键仍可被轮换。
 #[derive(Debug, Clone)]
 pub struct TrustedProxyConfig {
     /// 是否启用可信代理验证
@@ -138,9 +145,10 @@ impl SecureIpExtractor {
                     "Request from trusted proxy {}, extracting IP from forwarded headers",
                     direct_ip
                 );
-                return self
-                    .extract_from_forwarded_headers(req)
-                    .or_else(|| Some(direct_ip.to_string()));
+                // 可信代理下 XFF 缺失/不可解析时返回 None（unknown），
+                // 不回退代理 IP：否则追加型代理场景可再次聚合封禁整台代理
+                // （审查 M1 条件 HIGH）。
+                return self.extract_from_forwarded_headers(req);
             } else {
                 // 不是可信代理，使用直接连接的 IP
                 debug!(
@@ -181,9 +189,8 @@ impl SecureIpExtractor {
                 "Request from trusted proxy {}, extracting IP from forwarded headers",
                 direct_ip
             );
-            // 从转发头中提取客户端 IP
+            // 从转发头中提取客户端 IP（缺失时返回 None，不回退代理 IP）
             self.extract_from_forwarded_headers(req)
-                .or_else(|| Some(direct_ip.to_string()))
         } else {
             // 不是可信代理，使用直接连接的 IP
             debug!(
@@ -210,19 +217,33 @@ impl SecureIpExtractor {
     /// 从转发头中提取 IP 地址
     ///
     /// 按照以下优先级提取：
-    /// 1. X-Forwarded-For 头的第一个 IP（原始客户端）
+    /// 1. X-Forwarded-For 的**最右非可信跳**（防追加型代理左侧伪造）
     /// 2. X-Real-IP 头
     fn extract_from_forwarded_headers(&self, req: &Request) -> Option<String> {
+        use std::net::IpAddr;
+
         // 检查 X-Forwarded-For 头
         if let Some(forwarded) = req.headers().get("x-forwarded-for") {
             if let Ok(ip_str) = forwarded.to_str() {
                 // X-Forwarded-For 格式: client, proxy1, proxy2, ...
-                // 取第一个 IP（原始客户端）
-                if let Some(client_ip) = ip_str.split(',').next() {
-                    let trimmed = client_ip.trim();
-                    if self.is_valid_ip(trimmed) {
-                        return Some(trimmed.to_string());
+                // 审查 N4：取**最右非可信跳**。追加型代理（nginx
+                // `$proxy_add_x_forwarded_for`）会把客户端自带值留在左侧，
+                // 取最左值等于完全信任客户端伪造的 XFF。
+                let hops: Vec<&str> = ip_str
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| self.is_valid_ip(s))
+                    .collect();
+                for hop in hops.iter().rev() {
+                    if let Ok(ip) = hop.parse::<IpAddr>() {
+                        if !self.trusted_proxies.is_trusted(&ip) {
+                            return Some((*hop).to_string());
+                        }
                     }
+                }
+                // 全部跳都是可信代理：退化为最左（最佳努力）
+                if let Some(leftmost) = hops.first() {
+                    return Some((*leftmost).to_string());
                 }
             }
         }
@@ -354,6 +375,15 @@ mod tests {
             .unwrap();
 
         let ip = extractor.extract_from_forwarded_headers(&req);
+        // 审查 N4：取最右非可信跳（192.0.2.1），左侧值可能是客户端伪造
+        assert_eq!(ip, Some("192.0.2.1".to_string()));
+
+        // 伪造场景：客户端自填 1.2.3.4，代理追加真实 203.0.113.1 与自身 10.0.0.1
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "1.2.3.4, 203.0.113.1, 10.0.0.1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let ip = extractor.extract_from_forwarded_headers(&req);
         assert_eq!(ip, Some("203.0.113.1".to_string()));
 
         // 测试 X-Real-IP 头
@@ -385,7 +415,8 @@ mod tests {
             .unwrap();
 
         let ip = extractor.extract_from_forwarded_headers(&req);
-        assert_eq!(ip, Some("203.0.113.1".to_string()));
+        // 最右非可信跳 = 198.51.100.1
+        assert_eq!(ip, Some("198.51.100.1".to_string()));
     }
 
     #[test]
@@ -399,7 +430,8 @@ mod tests {
             .unwrap();
 
         let ip = extractor.extract_from_forwarded_headers(&req);
-        assert!(ip.is_none());
+        // 无效项被过滤，仅保留有效跳 198.51.100.1
+        assert_eq!(ip, Some("198.51.100.1".to_string()));
     }
 
     #[test]
@@ -498,8 +530,9 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_client_ip_with_override_enabled_trusted_proxy_fallback() {
-        // direct_ip_override=Some + enabled=true + 可信代理 + 无转发头 → 回退到 direct_ip
+    fn test_extract_client_ip_with_override_enabled_trusted_proxy_no_forwarded() {
+        // 可信代理 + 无转发头 → None（unknown），不回退代理 IP：
+        // 防止追加型代理下攻击者用少量坏 key 封禁整台代理（审查 M1）。
         let config = TrustedProxyConfig::from_settings(true, vec!["10.0.0.1".to_string()]);
         let extractor = SecureIpExtractor::new(config);
 
@@ -509,7 +542,7 @@ mod tests {
             .unwrap();
 
         let ip = extractor.extract_client_ip_with_override(&req, Some(direct_ip));
-        assert_eq!(ip, Some("10.0.0.1".to_string()));
+        assert_eq!(ip, None);
     }
 
     #[test]

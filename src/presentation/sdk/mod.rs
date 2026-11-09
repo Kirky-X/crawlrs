@@ -29,6 +29,9 @@ use crate::queue::task_queue::TaskQueue;
 // extracted from AuthState set by auth_middleware to prevent horizontal
 // privilege escalation.
 
+/// tasks.url 的字节上限（与 HTTP 入口及 idx_tasks_url btree 行上限兼容）。
+const MAX_TASK_URL_BYTES: usize = 2048;
+
 #[derive(serde::Deserialize)]
 pub struct SdkSearchRequest {
     pub query: String,
@@ -130,8 +133,8 @@ async fn sdk_search(
     let resp = search_service
         .search(auth_state.team_id, auth_state.api_key_id, query)
         .await
-        .map_err(|e| ApiError::Internal {
-            message: e.to_string(),
+        .map_err(|_e| ApiError::Internal {
+            message: "Internal server error".to_string(),
             error_id: crate::domain::id::Id::generate().to_string(),
             source: None,
             context: None,
@@ -171,6 +174,14 @@ async fn sdk_create_task(
         // FTL key: validation.ftl `sdk-url-empty`
         return Err(ApiError::InvalidInput {
             message: t(&locale, &i18n, "sdk-url-empty"),
+            field: Some("url".to_string()),
+            value: None,
+        });
+    }
+    // tasks.url 的普通 btree 索引有行上限：与 HTTP 入口同口径按字节限长。
+    if req.url.len() > MAX_TASK_URL_BYTES {
+        return Err(ApiError::InvalidInput {
+            message: "url must be at most 2048 bytes".to_string(),
             field: Some("url".to_string()),
             value: None,
         });
@@ -215,8 +226,9 @@ async fn sdk_create_task(
         lock_expires_at: None,
     };
 
-    let created = queue.enqueue(task).await.map_err(|e| ApiError::Internal {
-        message: e.to_string(),
+    let created = queue.enqueue(task).await.map_err(|_e| ApiError::Internal {
+        // 固定文案：不向 SDK 客户端回显 DB/队列内部错误文本
+        message: "Internal server error".to_string(),
         error_id: crate::domain::id::Id::generate().to_string(),
         source: None,
         context: None,
@@ -251,6 +263,14 @@ async fn sdk_scrape(
             value: None,
         });
     }
+    // tasks.url 的普通 btree 索引有行上限：与 HTTP 入口同口径按字节限长。
+    if req.url.len() > MAX_TASK_URL_BYTES {
+        return Err(ApiError::InvalidInput {
+            message: "url must be at most 2048 bytes".to_string(),
+            field: Some("url".to_string()),
+            value: None,
+        });
+    }
 
     let now = chrono::Utc::now();
     let task = Task {
@@ -278,8 +298,9 @@ async fn sdk_scrape(
         lock_expires_at: None,
     };
 
-    let created = queue.enqueue(task).await.map_err(|e| ApiError::Internal {
-        message: e.to_string(),
+    let created = queue.enqueue(task).await.map_err(|_e| ApiError::Internal {
+        // 固定文案：不向 SDK 客户端回显 DB/队列内部错误文本
+        message: "Internal server error".to_string(),
         error_id: crate::domain::id::Id::generate().to_string(),
         source: None,
         context: None,
@@ -309,6 +330,14 @@ async fn sdk_create_crawl(
         // FTL key: validation.ftl `sdk-url-empty`
         return Err(ApiError::InvalidInput {
             message: t(&locale, &i18n, "sdk-url-empty"),
+            field: Some("url".to_string()),
+            value: None,
+        });
+    }
+    // tasks.url 的普通 btree 索引有行上限：与 HTTP 入口同口径按字节限长。
+    if req.url.len() > MAX_TASK_URL_BYTES {
+        return Err(ApiError::InvalidInput {
+            message: "url must be at most 2048 bytes".to_string(),
             field: Some("url".to_string()),
             value: None,
         });

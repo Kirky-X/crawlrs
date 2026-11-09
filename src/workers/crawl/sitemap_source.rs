@@ -400,6 +400,17 @@ async fn flush_batch(
     cache: &dyn CacheService,
     pointer_ttl_secs: u64,
 ) -> anyhow::Result<()> {
+    // 审查 HIGH：sitemap 入队前校验父 crawl 终态，避免停止后继续扩容。
+    if let Ok(Some(crawl)) = crawl_repo.find_by_id(seed.crawl_id).await {
+        if crate::application::use_cases::crawl_state_machine::is_terminal(&crawl.status) {
+            log::info!(
+                "crawl {} is terminal; skip enqueueing sitemap batch",
+                seed.crawl_id
+            );
+            return Ok(());
+        }
+    }
+
     let new_urls = dedup_filtered_batch(
         filter_batch_urls(
             batch,
@@ -431,12 +442,8 @@ async fn flush_batch(
                 stats.enqueued += 1;
             }
             Err(e) => {
-                let msg = e.to_string().to_lowercase();
-                if msg.contains("duplicate key")
-                    || msg.contains("23505")
-                    || msg.contains("unique constraint")
-                    || msg.contains("duplicate entry")
-                {
+                // 审查 L1：类型化唯一冲突判定
+                if e.is_unique_conflict() {
                     log::debug!("skip duplicate sitemap task url={}", task.url);
                 } else {
                     return Err(e.into());

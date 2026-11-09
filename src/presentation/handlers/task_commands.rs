@@ -14,7 +14,6 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::presentation::errors::CrawlRsError;
 use crate::presentation::handlers::response_builder::{json_rejection_error, ApiResponse};
 use crate::presentation::middleware::auth_middleware::AuthState;
-use anyhow;
 use axum::{extract::Extension, Json};
 use chrono::Utc;
 use sdforge::validator::Validate;
@@ -83,10 +82,9 @@ fn parse_cancel_request(
     };
 
     if let Err(errors) = request.validate() {
-        return Err(CrawlRsError::from(anyhow::anyhow!(
-            "Validation error: {:?}",
-            errors
-        )));
+        return Err(CrawlRsError::Unprocessable(
+            crate::presentation::handlers::response_builder::validation_error_message(&errors),
+        ));
     }
 
     if request.task_ids.is_empty() {

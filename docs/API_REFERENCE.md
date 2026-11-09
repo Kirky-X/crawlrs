@@ -266,6 +266,11 @@ All API responses follow this unified structure:
 
 > `CONFLICT` / `PRECONDITION_FAILED` / `FEATURE_DISABLED` 在 `error_codes` 模块有常量定义，但无生产发射点；feature 未编译时对应路由根本不注册，请求得到的是普通 404（`NOT_FOUND`）。
 
+> `/metrics`：公开 Prometheus 文本端点（免认证、免限流），仅暴露运行态指标，
+> 不含租户 ID/webhook URL/凭证等敏感标签。生产建议在反向代理层做网络 allowlist；
+> 指标传输已改为进程内 recorder（不再监听 9100）。
+
+
 ---
 
 ## 🌐 Public Endpoints

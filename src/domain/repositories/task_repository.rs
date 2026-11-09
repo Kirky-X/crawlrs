@@ -16,6 +16,16 @@ pub enum RepositoryError {
     /// 指定记录不存在
     #[error("Record not found")]
     NotFound,
+    /// 唯一约束冲突（可安全跳过，例如并发重复入队）
+    #[error("Unique conflict: {detail}")]
+    Conflict { detail: String },
+}
+
+impl RepositoryError {
+    /// 是否为唯一约束冲突（调用方据此跳过重复写入，而非嗅探错误串）。
+    pub fn is_unique_conflict(&self) -> bool {
+        matches!(self, RepositoryError::Conflict { .. })
+    }
 }
 
 /// 任务查询参数
@@ -132,26 +142,23 @@ pub trait TaskRepository: Send + Sync {
         reason: &str,
     ) -> Result<u64, RepositoryError> {
         let mut failed = task.clone();
-        failed.status = TaskStatus::Failed;
-        failed.completed_at = Some(Utc::now());
-        // 注意：不在快照里清锁——守卫过滤要求快照锁身份与 DB 一致；
-        // 终态清锁由 update_task_guarded 写入时统一处理（见该实现）。
-        if !reason.is_empty() {
-            if let Some(obj) = failed.payload.as_object_mut() {
-                obj.insert(
-                    "error".to_string(),
-                    serde_json::Value::String(reason.to_string()),
-                );
-            } else {
-                // 审查 F8：payload 非对象时原因会被静默丢弃——显式告警，
-                // 与 RetryHandler::terminate_task 行为对齐。
-                log::warn!(
-                    "Task {} payload is not an object, cannot record failure reason",
-                    failed.id
-                );
-            }
+        // 注意：fail_with_reason 会清快照锁，但守卫过滤要求快照锁身份与 DB
+        // 一致；此处先保留原锁（终态清锁由 update_task_guarded 写入时处理）。
+        let snapshot_lock = failed.lock_token;
+        let snapshot_lock_expires = failed.lock_expires_at;
+        failed.fail_with_reason(reason);
+        failed.lock_token = snapshot_lock;
+        failed.lock_expires_at = snapshot_lock_expires;
+        let rows = self.update_task_guarded(&failed).await?;
+        if rows == 0 {
+            // 审查 F7：0 行既可能是守卫竞争，也可能是仓储未实现
+            // update_task_guarded；必须显性化而非静默成功。
+            log::warn!(
+                "mark_failed_with_reason: task {} not updated (guard lost or repository unsupported)",
+                failed.id
+            );
         }
-        self.update_task_guarded(&failed).await
+        Ok(rows)
     }
 
     /// 续期任务锁（锁续期心跳）

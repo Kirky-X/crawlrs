@@ -99,6 +99,9 @@ struct FetchedRobots {
 /// robots.txt 获取失败标记的缓存 TTL（短 TTL，防止对不可达目标站打爆）
 const ROBOTS_FAILURE_CACHE_TTL: Duration = Duration::from_secs(60);
 
+/// robots.txt 响应体上限（512 KiB；正常 robots.txt 远小于此值）
+const MAX_ROBOTS_BODY_BYTES: usize = 512 * 1024;
+
 /// Robots.txt检查器
 #[derive(Clone)]
 pub struct RobotsChecker {
@@ -223,7 +226,7 @@ impl RobotsChecker {
 
         // 3. Fetch robots.txt with retry
         match self.fetch_robots_text(&robots_url).await {
-            RobotsFetch::FailClosed => Ok(FetchedRobots {
+            RobotsFetch::FailClosed | RobotsFetch::Rejected => Ok(FetchedRobots {
                 content: String::new(),
                 fetch_failed: true,
             }),
@@ -295,6 +298,7 @@ impl RobotsChecker {
     async fn fetch_robots_text(&self, robots_url: &str) -> RobotsFetch {
         let mut attempt = 0;
         let mut last_error = None;
+        let mut rejected = false;
 
         while attempt < self.retry_policy.max_retries {
             attempt += 1;
@@ -306,6 +310,12 @@ impl RobotsChecker {
                 RobotsFetchAttempt::Retryable(err) => {
                     last_error = Some(err);
                 }
+                RobotsFetchAttempt::Rejected(err) => {
+                    log::warn!("robots fetch rejected (no retry): {}", err);
+                    last_error = Some(err);
+                    rejected = true;
+                    break;
+                }
             }
 
             if attempt < self.retry_policy.max_retries {
@@ -314,6 +324,12 @@ impl RobotsChecker {
             }
         }
 
+        if rejected {
+            // 不可重试拒绝：无论 fail_closed 与否都写短 TTL 失败标记，
+            // 避免空内容被持久缓存 24h（审查 L2）。
+            self.store_failure_marker(robots_url).await;
+            return RobotsFetch::Rejected;
+        }
         match last_error {
             Some(err) => self.handle_robots_fetch_error(robots_url, err).await,
             // max_retries=0：从未发起尝试，等价于历史空内容返回
@@ -332,6 +348,19 @@ impl RobotsChecker {
         self.fetcher.fetch(robots_url, &self.user_agent).await
     }
 
+    /// 写短 TTL 失败标记（60s），防止对不可达/非法目标站打爆。
+    async fn store_failure_marker(&self, robots_url: &str) {
+        let mut cache = self.memory_cache.lock().await;
+        cache.insert(
+            robots_url.to_string(),
+            CachedRobots {
+                content: String::new(),
+                expires_at: Instant::now() + ROBOTS_FAILURE_CACHE_TTL,
+                fetch_failed: true,
+            },
+        );
+    }
+
     /// 重试耗尽后的降级：fail-closed 写短 TTL 失败标记并判禁；fail-open 告警并放行空内容
     async fn handle_robots_fetch_error(&self, robots_url: &str, err: anyhow::Error) -> RobotsFetch {
         if self.fail_closed {
@@ -345,18 +374,7 @@ impl RobotsChecker {
                     ],
                 )
             );
-            // 失败标记按短 TTL 写入内存缓存，防止对不可达目标站打爆
-            {
-                let mut cache = self.memory_cache.lock().await;
-                cache.insert(
-                    robots_url.to_string(),
-                    CachedRobots {
-                        content: String::new(),
-                        expires_at: Instant::now() + ROBOTS_FAILURE_CACHE_TTL,
-                        fetch_failed: true,
-                    },
-                );
-            }
+            self.store_failure_marker(robots_url).await;
             return RobotsFetch::FailClosed;
         }
         log::warn!("Failed to fetch robots.txt from {}: {}", robots_url, err);
@@ -443,6 +461,9 @@ enum RobotsFetch {
     FailClosed,
     /// 抓取成功 / 404 / fail-open 降级（内容可能为空串）
     Content(String),
+    /// 不可重试拒绝（超大响应体 / 私网地址）：写短 TTL 失败标记，
+    /// 不写 24h 持久缓存（避免恶意站点污染规则缓存）。
+    Rejected,
 }
 
 /// 单次 robots.txt 抓取尝试的结果（重试循环据此判定是否继续）
@@ -451,6 +472,9 @@ pub enum RobotsFetchAttempt {
     Content(String),
     /// 5xx 或传输错误：按 retry_policy 重试
     Retryable(anyhow::Error),
+    /// 不可重试的拒绝（超大响应体 / 解析到内网地址）：不再重试，避免
+    /// 对同一非法目标反复请求；fail_closed=true 时按获取失败判禁。
+    Rejected(anyhow::Error),
 }
 
 /// robots.txt 抓取器抽象。
@@ -479,15 +503,49 @@ impl RobotsFetcher for HttpRobotsFetcher {
             .send()
             .await;
         match response {
-            Ok(resp) => {
+            Ok(mut resp) => {
+                // 审查 L5：DNS 重绑定缓解——连接建立后校验对端地址，
+                // 命中内网/回环立即按可重试失败处理，不读取响应体。
+                match resp.remote_addr() {
+                    Some(addr) if crate::engines::shared::is_private_ip(addr.ip()) => {
+                        return RobotsFetchAttempt::Rejected(anyhow::anyhow!(
+                            "Robots fetch resolved to private/reserved address: {}",
+                            addr.ip()
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        // HTTP/2 连接池等场景可能取不到对端地址；静态 DNS 校验
+                        // 与逐跳重定向策略仍在，记录 debug 后继续。
+                        log::debug!(
+                            "robots fetch remote_addr unavailable; relying on DNS validation"
+                        );
+                    }
+                }
                 let status = resp.status().as_u16();
                 if (200..300).contains(&status) {
-                    match resp.text().await {
-                        Ok(text) => RobotsFetchAttempt::Content(text),
-                        Err(e) => {
-                            RobotsFetchAttempt::Retryable(anyhow::anyhow!("Read body failed: {e}"))
+                    // 审查 M2：robots.txt 响应体限长（防恶意站点大体积响应）
+                    let mut body: Vec<u8> = Vec::new();
+                    loop {
+                        match resp.chunk().await {
+                            Ok(Some(chunk)) => {
+                                if body.len() + chunk.len() > MAX_ROBOTS_BODY_BYTES {
+                                    return RobotsFetchAttempt::Rejected(anyhow::anyhow!(
+                                        "robots.txt exceeds {} bytes",
+                                        MAX_ROBOTS_BODY_BYTES
+                                    ));
+                                }
+                                body.extend_from_slice(&chunk);
+                            }
+                            Ok(None) => break,
+                            Err(e) => {
+                                return RobotsFetchAttempt::Retryable(anyhow::anyhow!(
+                                    "Read body failed: {e}"
+                                ));
+                            }
                         }
                     }
+                    RobotsFetchAttempt::Content(String::from_utf8_lossy(&body).into_owned())
                 } else if status == 404 {
                     RobotsFetchAttempt::Content(String::new())
                 } else if status >= 500 {
@@ -535,8 +593,6 @@ fn apply_crawl_delay_value(delay: &mut Option<f64>, raw: &str) {
         }
     }
 }
-
-impl RobotsChecker {}
 
 #[cfg(test)]
 #[path = "tests/robots/mod.rs"]

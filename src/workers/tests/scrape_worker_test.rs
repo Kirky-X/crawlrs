@@ -2158,6 +2158,39 @@ async fn test_validate_scrape_request_robots_denied_records_reason() {
 }
 
 #[tokio::test]
+async fn test_validate_scrape_request_guard_rejected_does_not_persist() {
+    // 审查 F13：守卫返回 0（锁被抢占/仓储不支持）时不得伪装成功。
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    task_repo.reject_guarded_update();
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        Arc::new(ConfigurableCrawlRepo::new()),
+        Arc::new(DenyingRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+
+    let task = make_task(json!({}));
+    let scrape_request = ScrapeRequest::new(task.url.clone());
+    let dto: ScrapeRequestDto = serde_json::from_value(json!({
+        "url": task.url,
+        "options": { "respect_robots": true }
+    }))
+    .expect("dto");
+
+    let allowed = worker
+        .validate_scrape_request(&task, &scrape_request, Some(&dto))
+        .await
+        .expect("validate should succeed");
+    assert!(!allowed, "robots Disallow 仍应拒绝");
+    assert_eq!(task_repo.update_count(), 1, "必须尝试一次守卫式写入");
+    assert!(
+        task_repo.last_updated_task().is_none(),
+        "守卫拒绝时不得产生成功写入快照"
+    );
+}
+
+#[tokio::test]
 async fn test_validate_scrape_request_ssrf_proxy_records_reason() {
     let task_repo = Arc::new(ConfigurableTaskRepo::new());
     let worker = build_configurable_worker(
@@ -4799,6 +4832,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 struct ConfigurableTaskRepo {
     fail_mark_failed: AtomicBool,
     fail_update: AtomicBool,
+    /// 模拟守卫更新失败（rows=0）：验证调用方不会把"未写入"当成功
+    guard_rejects: AtomicBool,
     fail_find_by_id: AtomicBool,
     fail_find_existing_urls: AtomicBool,
     find_by_id_result: std::sync::Mutex<Option<Task>>,
@@ -4816,6 +4851,7 @@ impl ConfigurableTaskRepo {
         Self {
             fail_mark_failed: AtomicBool::new(false),
             fail_update: AtomicBool::new(false),
+            guard_rejects: AtomicBool::new(false),
             fail_find_by_id: AtomicBool::new(false),
             fail_find_existing_urls: AtomicBool::new(false),
             find_by_id_result: std::sync::Mutex::new(None),
@@ -4852,6 +4888,11 @@ impl ConfigurableTaskRepo {
     fn last_updated_task(&self) -> Option<Task> {
         self.last_updated_task.lock().unwrap().clone()
     }
+
+    /// 模拟守卫竞争：update_task_guarded 返回 0 且不捕获快照
+    fn reject_guarded_update(&self) {
+        self.guard_rejects.store(true, Ordering::SeqCst);
+    }
 }
 
 #[async_trait::async_trait]
@@ -4883,6 +4924,9 @@ impl TaskRepository for ConfigurableTaskRepo {
     // 守卫式更新与 update 走同一计数/捕获（生产实现中两者互斥使用）
     async fn update_task_guarded(&self, task: &Task) -> Result<u64, RepositoryError> {
         self.update_count.fetch_add(1, Ordering::SeqCst);
+        if self.guard_rejects.load(Ordering::SeqCst) {
+            return Ok(0);
+        }
         *self.last_updated_task.lock().unwrap() = Some(task.clone());
         if self.fail_update.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(

@@ -8,35 +8,112 @@
 use super::*;
 
 impl ScrapeWorker {
-    pub(super) async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
-        debug!("task_id: {}", task.id);
+    /// crawl 终态闸（scrape/crawl 两条任务路径共用）。
+    ///
+    /// 命中终态时用 `cancel_tasks_by_crawl_id` 一次性取消该 crawl 的
+    /// queued/active 残留任务（单条 UPDATE），返回 true 表示当前任务应终止。
+    ///
+    /// 缓存：crawl_id → (is_terminal, checked_at)，10s TTL；过期项读取时移除，
+    /// 每 1024 次插入对整个 map retain 一次过期项（审查：无界增长）。
+    pub(super) async fn crawl_terminal_short_circuit(&self, task: &Task) -> Result<bool> {
+        const CRAWL_TERMINAL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
-        // D2 修复：终态闸——父 crawl 已终态（completed/cancelled/failed）时
-        // 不再执行其残留子任务（E2E SC-10：max_pages 停止后 2832 个已入队
-        // 子任务继续被消费，对终态 crawl 的 DELETE 也无法止血）。
-        if let Some(crawl_id) = task.crawl_id {
-            match self.crawl_repository.find_by_id(crawl_id).await {
-                Ok(Some(crawl))
-                    if crate::application::use_cases::crawl_state_machine::is_terminal(
+        let Some(crawl_id) = task.crawl_id else {
+            return Ok(false);
+        };
+
+        let cached_terminal = self.crawl_terminal_cache.get(&crawl_id).and_then(|entry| {
+            if entry.value().1.elapsed() < CRAWL_TERMINAL_CACHE_TTL {
+                Some(entry.value().0)
+            } else {
+                None
+            }
+        });
+        if cached_terminal.is_none() {
+            // 过期项摘除（DashMap 无全局 GC，靠读取与容量阈值兜底）
+            self.crawl_terminal_cache.remove(&crawl_id);
+        }
+        let is_terminal = match cached_terminal {
+            Some(value) => value,
+            None => match self.crawl_repository.find_by_id(crawl_id).await {
+                Ok(Some(crawl)) => {
+                    let value = crate::application::use_cases::crawl_state_machine::is_terminal(
                         &crawl.status,
-                    ) =>
-                {
-                    info!(
-                        "crawl_terminal_gate: cancel task {} (crawl {} is terminal)",
-                        task.id, crawl_id
                     );
-                    self.repository.mark_cancelled(task.id).await?;
-                    return Ok(());
+                    self.crawl_terminal_cache
+                        .insert(crawl_id, (value, std::time::Instant::now()));
+                    self.note_crawl_terminal_cache_insert(CRAWL_TERMINAL_CACHE_TTL);
+                    value
                 }
-                Ok(_) => {}
+                // crawl 行不存在（无外键的孤儿任务）同样缓存，避免每任务打库
+                Ok(None) => {
+                    self.crawl_terminal_cache
+                        .insert(crawl_id, (false, std::time::Instant::now()));
+                    self.note_crawl_terminal_cache_insert(CRAWL_TERMINAL_CACHE_TTL);
+                    false
+                }
                 Err(e) => {
                     log::warn!(
                         "crawl_terminal_gate lookup failed for crawl {}: {}",
                         crawl_id,
                         e
                     );
+                    false
                 }
+            },
+        };
+
+        if !is_terminal {
+            return Ok(false);
+        }
+
+        info!(
+            "crawl_terminal_gate: cancel task {} (crawl {} is terminal)",
+            task.id, crawl_id
+        );
+        match self.repository.cancel_tasks_by_crawl_id(crawl_id).await {
+            Ok(0) => {
+                // 当前任务可能已被他方终结；兜底单条取消
+                self.repository.mark_cancelled(task.id).await?;
             }
+            Ok(cancelled) => {
+                info!(
+                    "crawl_terminal_gate: cancelled {} residual task(s) for crawl {}",
+                    cancelled, crawl_id
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "crawl_terminal_gate batch cancel failed for crawl {}: {}",
+                    crawl_id,
+                    e
+                );
+                self.repository.mark_cancelled(task.id).await?;
+            }
+        }
+        Ok(true)
+    }
+
+    /// 每 1024 次插入做一次过期项清理（O(1) 递增，不逐任务扫描分片）。
+    fn note_crawl_terminal_cache_insert(&self, ttl: std::time::Duration) {
+        let count = self
+            .crawl_terminal_cache_inserts
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        if count.is_multiple_of(1024) {
+            self.crawl_terminal_cache
+                .retain(|_, value| value.1.elapsed() < ttl);
+        }
+    }
+
+    pub(super) async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
+        debug!("task_id: {}", task.id);
+
+        // D2 修复：终态闸（抽为共享方法，crawl 任务路径同样调用——
+        // 审查 HIGH：此前只挂在 process_scrape_task，而 crawl 子任务走
+        // process_crawl_task，闸在生产路径不可达）。
+        if self.crawl_terminal_short_circuit(&task).await? {
+            return Ok(());
         }
 
         let (scrape_request_dto, mut scrape_request) =

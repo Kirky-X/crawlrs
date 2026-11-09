@@ -139,6 +139,30 @@ impl Task {
         self.updated_at = Utc::now();
     }
 
+    /// 标记失败并写入失败原因到 `payload["error"]`（API 状态端点回读）。
+    ///
+    /// 审查 F9：终结逻辑统一收敛到本方法（RetryHandler 与仓储默认实现共用），
+    /// 避免三处重复实现产生行为分叉。
+    pub fn fail_with_reason(&mut self, reason: &str) {
+        self.fail();
+        self.lock_token = None;
+        self.lock_expires_at = None;
+        if reason.is_empty() {
+            return;
+        }
+        if let Some(obj) = self.payload.as_object_mut() {
+            obj.insert(
+                "error".to_string(),
+                serde_json::Value::String(reason.to_string()),
+            );
+        } else {
+            log::warn!(
+                "Task {} payload is not an object, cannot record failure reason",
+                self.id
+            );
+        }
+    }
+
     /// Mark the task as cancelled
     pub fn cancel(&mut self) {
         self.status = TaskStatus::Cancelled;

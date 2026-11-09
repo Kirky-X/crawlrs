@@ -101,14 +101,6 @@ impl RateLimiter {
     pub fn cleanup_expired(&self) {}
 }
 
-/// 匿名/非 API 路径的 IP 速率限制器（全局单例，10 req/min）
-static IP_RATE_LIMITER: once_cell::sync::Lazy<RateLimiter> =
-    once_cell::sync::Lazy::new(|| RateLimiter::new_for_ip_limit(DEFAULT_IP_RATE_LIMIT));
-
-/// 受保护 API 路径的每 IP 聚合限制器（600 req/min）
-static AUTH_IP_RATE_LIMITER: once_cell::sync::Lazy<RateLimiter> =
-    once_cell::sync::Lazy::new(|| RateLimiter::new_for_ip_limit(DEFAULT_AUTH_IP_RATE_LIMIT));
-
 /// 速率限制中间件配置容器。
 ///
 /// 结构体被构造并 Clone 到 axum 中间件栈中，字段由
@@ -166,15 +158,6 @@ fn get_client_ip(req: &Request, trusted: &TrustedProxyConfig) -> String {
 /// # 返回值
 ///
 /// 返回 `Ok()` 如果请求被允许，返回 `Err(Response)` 如果请求被拒绝
-fn apply_ip_rate_limit(client_ip: &str) -> Result<(), Box<Response>> {
-    apply_ip_rate_limit_for(
-        &IP_RATE_LIMITER,
-        client_ip,
-        DEFAULT_IP_RATE_LIMIT,
-        "anonymous",
-    )
-}
-
 /// 指定限制器/阈值的 IP 限流（匿名 10/min 与 API 前缀 600/min 共用）。
 fn apply_ip_rate_limit_for(
     limiter: &RateLimiter,
@@ -212,6 +195,12 @@ fn apply_ip_rate_limit_for(
             "Retry-After",
             axum::http::HeaderValue::from(IP_RATE_LIMIT_WINDOW_SECS),
         );
+        // 浏览器跨域客户端需要 CORS 头才能读到 429；限流层在 CORS 外层，
+        // 内层 CORS 不会为短路响应补头。
+        response.headers_mut().insert(
+            axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            axum::http::HeaderValue::from_static("*"),
+        );
 
         return Err(Box::new(response));
     }
@@ -228,14 +217,28 @@ fn apply_ip_rate_limit_for(
 pub struct RateLimitRuntimeConfig {
     /// `[rate_limiting].enabled`：false 时跳过 IP 限流（安全兜底可显式关闭）
     pub enabled: bool,
+    /// 匿名请求每 IP 每分钟上限（`[rate_limiting].anon_ip_rpm`）
+    pub anon_limit: u64,
+    /// 携带 Bearer 凭证请求每 IP 每分钟上限（`[rate_limiting].auth_ip_rpm`）
+    pub auth_limit: u64,
+    /// 匿名限流器
+    pub anon_limiter: Arc<RateLimiter>,
+    /// 带凭证限流器
+    pub auth_limiter: Arc<RateLimiter>,
     /// `[trusted_proxies]`：可信代理判定（XFF 信任边界）
     pub trusted_proxies: TrustedProxyConfig,
 }
 
 impl Default for RateLimitRuntimeConfig {
     fn default() -> Self {
+        let anon_limit = DEFAULT_IP_RATE_LIMIT;
+        let auth_limit = DEFAULT_AUTH_IP_RATE_LIMIT;
         Self {
             enabled: true,
+            anon_limit,
+            auth_limit,
+            anon_limiter: Arc::new(RateLimiter::new_for_ip_limit(anon_limit)),
+            auth_limiter: Arc::new(RateLimiter::new_for_ip_limit(auth_limit)),
             trusted_proxies: TrustedProxyConfig::default(),
         }
     }
@@ -244,8 +247,14 @@ impl Default for RateLimitRuntimeConfig {
 impl RateLimitRuntimeConfig {
     /// 从应用配置构造（bootstrap 调用）。
     pub fn from_settings(settings: &crate::config::settings::Settings) -> Self {
+        let anon_limit = settings.rate_limiting.anon_ip_rpm.max(1) as u64;
+        let auth_limit = settings.rate_limiting.auth_ip_rpm.max(1) as u64;
         Self {
             enabled: settings.rate_limiting.enabled,
+            anon_limit,
+            auth_limit,
+            anon_limiter: Arc::new(RateLimiter::new_for_ip_limit(anon_limit)),
+            auth_limiter: Arc::new(RateLimiter::new_for_ip_limit(auth_limit)),
             trusted_proxies: TrustedProxyConfig {
                 enabled: settings.trusted_proxies.enabled,
                 proxies: settings.trusted_proxies.proxies.clone(),
@@ -303,6 +312,11 @@ pub async fn rate_limit_middleware(
 ) -> Response {
     let path = req.uri().path();
 
+    // CORS 预检不消耗限流桶（浏览器客户端每个带凭证请求前都会发 OPTIONS）
+    if req.method() == axum::http::Method::OPTIONS {
+        return next.run(req).await;
+    }
+
     if !config.enabled {
         debug!("Rate limiting disabled by [rate_limiting].enabled=false");
         return next.run(req).await;
@@ -316,13 +330,18 @@ pub async fn rate_limit_middleware(
     let client_ip = get_client_ip(&req, &config.trusted_proxies);
     let result = if has_bearer_credentials(&req) {
         apply_ip_rate_limit_for(
-            &AUTH_IP_RATE_LIMITER,
+            &config.auth_limiter,
             &client_ip,
-            DEFAULT_AUTH_IP_RATE_LIMIT,
+            config.auth_limit,
             "bearer-credentials",
         )
     } else {
-        apply_ip_rate_limit(&client_ip)
+        apply_ip_rate_limit_for(
+            &config.anon_limiter,
+            &client_ip,
+            config.anon_limit,
+            "anonymous",
+        )
     };
 
     match result {
@@ -551,28 +570,31 @@ mod tests {
         assert_eq!(remaining, 0);
     }
 
-    // ========== apply_ip_rate_limit tests ==========
-    // These use the global IP_RATE_LIMITER, so we use unique IPs per test.
+    // ========== apply_ip_rate_limit_for tests ==========
 
     #[test]
     fn test_apply_ip_rate_limit_allows() {
-        let unique_ip = "198.51.100.1";
-        let result = apply_ip_rate_limit(unique_ip);
+        let limiter = RateLimiter::new_for_ip_limit(DEFAULT_IP_RATE_LIMIT);
+        let result =
+            apply_ip_rate_limit_for(&limiter, "198.51.100.1", DEFAULT_IP_RATE_LIMIT, "anonymous");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_apply_ip_rate_limit_blocks_after_exceeding() {
+        let limiter = RateLimiter::new_for_ip_limit(DEFAULT_IP_RATE_LIMIT);
         let unique_ip = "198.51.100.2";
         // Default limit is 10 per 60 seconds
         for _ in 0..10 {
             assert!(
-                apply_ip_rate_limit(unique_ip).is_ok(),
+                apply_ip_rate_limit_for(&limiter, unique_ip, DEFAULT_IP_RATE_LIMIT, "anonymous")
+                    .is_ok(),
                 "First 10 requests should be allowed"
             );
         }
         // 11th request should be blocked
-        let result = apply_ip_rate_limit(unique_ip);
+        let result =
+            apply_ip_rate_limit_for(&limiter, unique_ip, DEFAULT_IP_RATE_LIMIT, "anonymous");
         assert!(result.is_err(), "11th request should be blocked");
         let response = *result.unwrap_err();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);

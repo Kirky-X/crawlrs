@@ -207,7 +207,7 @@ impl BrowserDownloadManager {
         }
 
         Err(BrowserDownloadError::DownloadFailed(
-            "automatic browser download is unavailable in this build              (chromiumoxide_fetcher was removed for RUSTSEC advisories);              install Chrome/Chromium or set              CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH"
+            "automatic browser download is unavailable in this build (chromiumoxide_fetcher was removed for RUSTSEC advisories); install Chrome/Chromium or set CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH"
                 .to_string(),
         ))
     }
@@ -248,6 +248,29 @@ impl BrowserDownloadManager {
     }
 }
 
+/// 浏览器路径环境变量名（显式路径优先于系统探测与内置下载）。
+pub const BROWSER_PATH_ENV: &str = "CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH";
+
+/// 解析环境变量指定的浏览器可执行文件。
+///
+/// 统一两个启动路径（直连 playwright / 浏览器池）的读取与校验逻辑；
+/// 日志只记录"已设置/无效"，不输出路径值（审查 L2：路径可能包含用户名）。
+pub fn browser_path_from_env() -> Option<PathBuf> {
+    let raw = std::env::var(BROWSER_PATH_ENV).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if path.is_file() {
+        log::info!("{BROWSER_PATH_ENV} is set and points to an existing file");
+        Some(path)
+    } else {
+        log::warn!("{BROWSER_PATH_ENV} is set but the path does not exist; ignoring");
+        None
+    }
+}
+
 /// 检查系统是否有可用的 Chrome/Chromium
 pub async fn find_system_browser() -> Option<PathBuf> {
     // 检查常见路径
@@ -265,7 +288,7 @@ pub async fn find_system_browser() -> Option<PathBuf> {
     ];
 
     for path in &common_paths {
-        if path.exists() {
+        if path.is_file() {
             log::info!(
                 "{}",
                 tr_log_args(

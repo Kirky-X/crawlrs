@@ -242,6 +242,17 @@ impl SearchService {
             self.crawl_repo.create(&crawl).await?;
 
             for result in &results {
+                // tasks.url 的普通 btree 索引有行上限：与 crawl/scrape/extract
+                // 同口径过滤超长 URL（字节）。
+                if result.url.len() > 2048 {
+                    log::warn!(
+                        "skip oversized search result url ({} bytes)",
+                        result.url.len()
+                    );
+                    #[cfg(feature = "metrics")]
+                    metrics::counter!("crawlrs_search_oversized_url_total").increment(1);
+                    continue;
+                }
                 let mut task = Task::new(
                     crate::domain::id::Id::generate(),
                     TaskType::Crawl,

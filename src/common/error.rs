@@ -653,6 +653,9 @@ impl From<crate::domain::repositories::task_repository::RepositoryError> for Cra
             crate::domain::repositories::task_repository::RepositoryError::NotFound => {
                 CrawlRsError::NotFound("Resource not found".to_string())
             }
+            crate::domain::repositories::task_repository::RepositoryError::Conflict { detail } => {
+                CrawlRsError::Validation(detail)
+            }
         }
     }
 }

@@ -86,7 +86,16 @@ where
     if let Err(verrs) = payload.validate() {
         return error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            format!("Validation error: {verrs:?}"),
+            crate::presentation::handlers::response_builder::validation_error_message(&verrs),
+        );
+    }
+
+    // 审查 HIGH：tasks.url 的普通 btree 索引仍有行上限；DTO 仅限制
+    // 2048 字符，多字节 URL 可达 8 KiB。入队前按字节收敛。
+    if payload.urls.iter().any(|url| url.len() > 2048) {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "each url must be at most 2048 bytes",
         );
     }
 
@@ -244,13 +253,25 @@ async fn preflight_extract(
         return Some(response);
     }
 
-    // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
-    if let Some(response) = check_ssrf_urls_batch(&payload.urls, team_id, api_key_id).await {
+    // 与 teams-on 路径一致：廉价校验先于 SSRF，多字节 URL 按字节收敛
+    if let Some(response) = validate_extract_sync_wait(payload) {
         return Some(response);
     }
+    if payload.urls.iter().any(|url| url.len() > 2048) {
+        return Some(error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "each url must be at most 2048 bytes",
+        ));
+    }
+    if let Err(errors) = payload.validate() {
+        return Some(error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            crate::presentation::handlers::response_builder::validation_error_message(&errors),
+        ));
+    }
 
-    // Validate sync_wait_ms if present
-    if let Some(response) = validate_extract_sync_wait(payload) {
+    // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
+    if let Some(response) = check_ssrf_urls_batch(&payload.urls, team_id, api_key_id).await {
         return Some(response);
     }
 
@@ -345,7 +366,7 @@ fn validate_extract_fields(payload: &ExtractRequestDto) -> Option<Response> {
     None
 }
 
-/// 校验 sync_wait_ms 上限（需在 SSRF 校验之后调用，保持既有错误优先级）。
+/// 校验 sync_wait_ms 上限（廉价校验，先于 SSRF 批量 DNS 执行）。
 fn validate_extract_sync_wait(payload: &ExtractRequestDto) -> Option<Response> {
     if let Some(ms) = payload.sync_wait_ms {
         if ms > crawl_task::MAX_SYNC_WAIT_MS {

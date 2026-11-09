@@ -89,7 +89,10 @@ fn start_testcontainers_pg() -> String {
                     "migrations/postgres/003_add_acquire_next_indexes.sql",
                     "migrations/postgres/004_drop_feature_flags.sql",
                     "migrations/postgres/005_deprecate_legacy_api_keys.sql",
+                    "migrations/postgres/006_add_message_queue.sql",
+                    "migrations/postgres/007_add_retention_indexes.sql",
                     "migrations/postgres/008_add_searxng_instances.sql",
+                    "migrations/postgres/009_add_crawl_task_url_unique.sql",
                 ];
                 for file in &migration_files {
                     let sql = std::fs::read_to_string(file)

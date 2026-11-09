@@ -163,10 +163,16 @@ async fn preflight_scrape(
     // 属性仅被单测直调，HTTP 创建路径全部放行（E2E SB-12/13 实证）。此处
     // 接线后保持既有错误优先级：sync_wait 手动校验（400/422 语义不变）与
     // SSRF 静态校验（无效 URL 400）均先于本校验执行。
+    if payload.url.len() > 2048 {
+        return Some(errors::unprocessable_entity(
+            "url must be at most 2048 bytes",
+        ));
+    }
+
     if let Err(errors) = payload.validate() {
-        return Some(errors::unprocessable_entity(format!(
-            "Validation error: {errors:?}"
-        )));
+        return Some(errors::unprocessable_entity(
+            crate::presentation::handlers::response_builder::validation_error_message(&errors),
+        ));
     }
 
     CreditFlow::new(rate_limiting_service, team_id)

@@ -1111,7 +1111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_metrics_does_not_panic() {
-        // init_metrics 会尝试绑定 9100 端口；若端口被占用则 warn 并 return，
+        // init_metrics 不再绑定 9100（由专用监听/网络层采集）；
         // 若端口可用则 spawn 后台任务并注册指标。两种情况都不应 panic。
         init_metrics();
     }

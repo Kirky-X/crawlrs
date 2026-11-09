@@ -1157,3 +1157,23 @@ mod tests {
         assert!(resp.timestamp.is_some());
     }
 }
+
+/// 校验失败响应文案：只输出字段名与约束码，不输出 Debug 参数值
+/// （审查 L3：`ValidationErrors` 的 Debug 会带出内部字段路径与约束参数）。
+pub fn validation_error_message(errors: &sdforge::validator::ValidationErrors) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (field, errs) in errors.field_errors() {
+        let codes: Vec<String> = errs.iter().map(|e| e.code.to_string()).collect();
+        if codes.is_empty() {
+            parts.push(field.to_string());
+        } else {
+            parts.push(format!("{} ({})", field, codes.join(",")));
+        }
+    }
+    parts.sort();
+    if parts.is_empty() {
+        "Validation failed".to_string()
+    } else {
+        format!("Validation failed - {}", parts.join("; "))
+    }
+}

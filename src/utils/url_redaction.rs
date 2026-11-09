@@ -49,6 +49,33 @@ pub(crate) fn redact_url_for_log(url: &str) -> String {
     }
 }
 
+/// webhook URL 日志脱敏：只保留 `scheme://host[:port]`。
+///
+/// Slack/Discord/Teams 等 webhook 的密钥位于路径中（如
+/// `https://hooks.slack.com/services/T000/B000/XXXX`），通用
+/// [`redact_url_for_log`] 会保留 path，因此 webhook 日志必须使用本函数。
+#[must_use]
+pub(crate) fn redact_webhook_url_for_log(url: &str) -> String {
+    match Url::parse(url) {
+        Ok(mut parsed) => {
+            parsed.set_query(None);
+            parsed.set_fragment(None);
+            parsed.set_path("");
+            if parsed.username() != "" {
+                let _ = parsed.set_username("");
+            }
+            if parsed.password().is_some() {
+                parsed.set_password(None).ok();
+            }
+            format!(
+                "{}/[redacted-webhook-path]",
+                parsed.as_str().trim_end_matches('/')
+            )
+        }
+        Err(_) => "[invalid-webhook-url]".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,6 +95,14 @@ mod tests {
         let redacted = redact_url_for_log(url);
         assert_eq!(redacted, "https://example.com/");
         assert!(!redacted.contains("secret"));
+    }
+
+    #[test]
+    fn webhook_redaction_drops_path_secret() {
+        let url = "https://hooks.slack.com/services/T000/B000/SECRET";
+        let redacted = redact_webhook_url_for_log(url);
+        assert_eq!(redacted, "https://hooks.slack.com/[redacted-webhook-path]");
+        assert!(!redacted.contains("SECRET"));
     }
 
     #[test]

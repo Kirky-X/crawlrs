@@ -98,24 +98,14 @@ impl RetryHandler {
 
         task.attempt_count = new_attempt_count as i32;
         task.retry_count += 1;
-        task.status = TaskStatus::Failed;
-        task.completed_at = Some(Utc::now());
-
-        // 终结分支透传错误串：API 回读 payload["error"]，无此写入则回退
-        // "Task failed." 泛化文案。空串不写（保留"真无错误串才回退"语义）。
-        if !error.is_empty() {
-            if let Some(obj) = task.payload.as_object_mut() {
-                obj.insert(
-                    "error".to_string(),
-                    serde_json::Value::String(error.to_string()),
-                );
-            } else {
-                warn!(
-                    "Task {} payload is not an object, cannot record error string",
-                    task.id
-                );
-            }
-        }
+        // 统一终态迁移：Failed + completed_at + payload["error"] + 清锁。
+        // 守卫过滤要求快照锁与 DB 一致，故写前恢复锁身份；
+        // update_task_guarded 会按终态语义把锁列写回 NULL。
+        let snapshot_lock = task.lock_token;
+        let snapshot_lock_expires = task.lock_expires_at;
+        task.fail_with_reason(error);
+        task.lock_token = snapshot_lock;
+        task.lock_expires_at = snapshot_lock_expires;
 
         // 守卫式写入：锁被抢占/任务已被他方迁移时放弃终结
         let rows = match self.repository.update_task_guarded(task).await {

@@ -25,6 +25,12 @@ use crate::workers::scrape_executor::{process_text_encoding, save_result};
 
 impl ScrapeWorker {
     pub(super) async fn process_crawl_task(&self, mut task: Task) -> Result<()> {
+        // 终态闸：crawl 子任务的实际执行路径（审查 HIGH：此前只挂在
+        // process_scrape_task，生产 crawl 任务永不经过）。
+        if self.crawl_terminal_short_circuit(&task).await? {
+            return Ok(());
+        }
+
         // 1. 解析 Crawl 任务特定的 Payload
         let Some((crawl_id, depth, config)) = self.parse_crawl_task_payload(&task).await? else {
             return Ok(());

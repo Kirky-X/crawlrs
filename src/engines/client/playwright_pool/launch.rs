@@ -94,19 +94,8 @@ impl BrowserPoolState {
         // 在池模式下不会被调用，release+LTO 下其文案不进入二进制）——此前只
         // 修了直连路径，运行时仍由池路径吞错并触发误导性的
         // "Could not auto detect a chrome executable"。
-        if let Ok(p) = std::env::var("CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH") {
-            let p = p.trim().to_string();
-            if !p.is_empty() && std::path::Path::new(&p).exists() {
-                info!(
-                    "Using browser from CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH: {}",
-                    p
-                );
-                return Ok(Some(std::path::PathBuf::from(p)));
-            }
-            warn!(
-                "CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH is set but not an existing file: {}",
-                p
-            );
+        if let Some(path) = crate::engines::browser_downloader::browser_path_from_env() {
+            return Ok(Some(path));
         }
 
         // PERF-010: OnceCell::get_or_try_init — 已初始化时直接返回，无锁

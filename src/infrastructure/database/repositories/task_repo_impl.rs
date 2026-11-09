@@ -238,7 +238,20 @@ impl TaskRepository for TaskRepositoryImpl {
                     .map_err(|e| RepositoryError::Database(e.into()))?,
             )
             .await
-            .map_err(|e| RepositoryError::Database(e.into()))?;
+            .map_err(|e| {
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("duplicate key")
+                    || msg.contains("23505")
+                    || msg.contains("unique constraint")
+                    || msg.contains("duplicate entry")
+                {
+                    RepositoryError::Conflict {
+                        detail: "tasks unique constraint conflict".to_string(),
+                    }
+                } else {
+                    RepositoryError::Database(e.into())
+                }
+            })?;
 
         Ok(task.clone())
     }
@@ -853,6 +866,15 @@ impl TaskRepository for TaskRepositoryImpl {
                 Expr::value(TaskStatus::Cancelled.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
+            .col_expr(
+                task_entity::Column::LockToken,
+                Expr::value(None::<uuid::Uuid>),
+            )
+            .col_expr(
+                task_entity::Column::LockExpiresAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
             .filter(task_entity::Column::CrawlId.eq(crawl_id))
             .filter(task_entity::Column::Status.is_in(vec![
                 TaskStatus::Queued.to_string(),
@@ -1108,7 +1130,21 @@ async fn cancel_owned_tasks(
             Expr::value(TaskStatus::Cancelled.to_string()),
         )
         .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+        .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
+        .col_expr(
+            task_entity::Column::LockToken,
+            Expr::value(None::<uuid::Uuid>),
+        )
+        .col_expr(
+            task_entity::Column::LockExpiresAt,
+            Expr::value(None::<chrono::DateTime<Utc>>),
+        )
         .filter(task_entity::Column::Id.is_in(owned_ids.iter().copied()))
+        // 只取消活跃行，避免把已 completed/failed 覆盖为 cancelled
+        .filter(task_entity::Column::Status.is_in([
+            TaskStatus::Queued.to_string(),
+            TaskStatus::Active.to_string(),
+        ]))
         .exec(conn)
         .await
         .map_err(|e| RepositoryError::Database(e.into()))?;

@@ -110,6 +110,13 @@ pub struct LimiteronService {
     credits_repository: Arc<dyn CreditsRepository>,
 }
 
+/// 日志脱敏：SHA-256 前 12 位（禁止输出原始 key 片段）。
+fn hash_key_prefix(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(key.as_bytes());
+    format!("sha256:{}", &hex::encode(digest)[..12])
+}
+
 impl LimiteronService {
     /// 创建新的 LimiteronService
     ///
@@ -299,7 +306,7 @@ impl RateLimitService for LimiteronService {
     ) -> Result<RateLimitResult, RateLimitingError> {
         debug!(
             "LimiteronService: Checking rate limit for API key: {}..., endpoint: {}",
-            &api_key[..std::cmp::min(8, api_key.len())],
+            hash_key_prefix(api_key),
             endpoint
         );
 
@@ -319,7 +326,7 @@ impl RateLimitService for LimiteronService {
             Ok(Decision::Rejected(reason)) => {
                 warn!(
                     "LimiteronService: Rate limit exceeded for API key: {}...: {:?}",
-                    &api_key[..std::cmp::min(8, api_key.len())],
+                    hash_key_prefix(api_key),
                     reason
                 );
                 Ok(RateLimitResult::Denied {
@@ -329,7 +336,7 @@ impl RateLimitService for LimiteronService {
             Ok(Decision::Banned(ban_info)) => {
                 warn!(
                     "LimiteronService: API key {}... is banned: {}",
-                    &api_key[..std::cmp::min(8, api_key.len())],
+                    hash_key_prefix(api_key),
                     ban_info.reason()
                 );
                 Ok(RateLimitResult::Denied {
@@ -339,11 +346,15 @@ impl RateLimitService for LimiteronService {
             Err(e) => {
                 warn!(
                     "LimiteronService: Rate limit check error for API key: {}...: {}",
-                    &api_key[..std::cmp::min(8, api_key.len())],
+                    hash_key_prefix(api_key),
                     e
                 );
-                // 失败时允许请求（fail-open）
-                Ok(RateLimitResult::Allowed)
+                // 审查 M6：后端错误上抛，由调用方按 RATE_LIMIT_FAIL_OPEN
+                // 统一决策（handler 侧默认 fail-closed → 503）；不得在此
+                // 静默放行，否则 fail-closed 分支永远不可达。
+                Err(RateLimitingError::Other(anyhow::anyhow!(
+                    "rate limit backend error: {e}"
+                )))
             }
         }
     }

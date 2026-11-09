@@ -79,7 +79,9 @@ impl WebhookWorker {
     async fn process_webhook_event(&self, mut event: WebhookEvent) -> Result<()> {
         info!(
             "Processing webhook event {} for URL {} (attempt {})",
-            event.id, event.webhook_url, event.attempt_count
+            event.id,
+            crate::utils::url_redaction::redact_webhook_url_for_log(&event.webhook_url),
+            event.attempt_count
         );
 
         match self.webhook_service.send_webhook(&event).await {

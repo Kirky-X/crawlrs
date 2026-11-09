@@ -178,6 +178,15 @@ pub struct RateLimitingSettings {
     #[config(default = 20)]
     pub burst_size: u32,
 
+    /// 匿名请求每 IP 每分钟上限（IP 限流中间件）
+    #[config(default = 10)]
+    pub anon_ip_rpm: u32,
+
+    /// 携带 Bearer 凭证请求每 IP 每分钟上限（IP 限流中间件；
+    /// per-API-key 配额仍由 handler 在认证后执行）
+    #[config(default = 600)]
+    pub auth_ip_rpm: u32,
+
     /// 限流计数/封禁记录的存储后端
     ///
     /// - `memory`（默认）：进程内存储，单进程语义，重启即清零（历史行为）
@@ -376,6 +385,8 @@ mod tests {
             enabled: false,
             default_rpm: 200,
             burst_size: 50,
+            anon_ip_rpm: 10,
+            auth_ip_rpm: 600,
             storage_backend: "memory".to_string(),
         };
         assert!(!settings.enabled);
