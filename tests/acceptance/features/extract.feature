@@ -6,7 +6,8 @@
 # R-acceptance-003/004：extract 验收（同步型端点）
 # 契约注记：
 # - 请求体为 {"urls": [...]}（ExtractRequestDto），步骤内单 URL 包成数组；
-# - 无效 URL 与 scrape/crawl 一致，SSRF 静态校验先于 DTO validator → 400。
+# - 无效 URL 由 DTO validator 先拒绝（http/https scheme 校验）→ 422；
+#   sync_wait_ms 超限由 handler 廉价校验 → 400。
 
 Feature: Extract
   HTML 数据提取端点正常流与异常矩阵
@@ -20,10 +21,10 @@ Feature: Extract
     And the response JSON field "data.status" is "pending"
     And the response JSON field "data.id" is a non-empty string
 
-  Scenario: Invalid extract URL is rejected with 400
+  Scenario: Invalid extract URL is rejected with 422
     Given an admin API key
     When I extract url "not-a-url" at "/v1/extract"
-    Then the response status is 400
+    Then the response status is 422
 
   Scenario: Missing urls field is rejected
     Given an admin API key
@@ -31,7 +32,7 @@ Feature: Extract
     Then the response status is 422
 
   Scenario: sync_wait_ms above the maximum is rejected with 400
-    # 契约：sync_wait_ms > 30000 由 handler 手动校验（晚于 SSRF、早于任务创建）→ 400
+    # 契约：sync_wait_ms > 30000 由 handler 在 DTO/SSRF 之前手动校验 → 400
     Given an admin API key
     When I extract url "{mock_base}/page" at "/v1/extract" with sync wait ms 30001
     Then the response status is 400

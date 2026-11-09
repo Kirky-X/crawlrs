@@ -215,7 +215,8 @@ fn test_repository_database_error_maps_to_internal_server_error() {
     )));
     let (status, msg): (StatusCode, String) = err.into();
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(msg.contains("connection refused"));
+    // 安全整改：500 响应不得回显底层 DB 错误细节
+    assert_eq!(msg, "Internal server error");
 }
 
 #[test]
@@ -239,11 +240,11 @@ fn test_anyhow_error_maps_to_internal_server_error() {
     let err = CrawlUseCaseError::Anyhow(anyhow::anyhow!("unexpected failure"));
     let (status, msg): (StatusCode, String) = err.into();
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(msg.contains("unexpected failure"));
+    assert_eq!(msg, "Internal server error");
 }
 
 #[test]
-fn test_anyhow_error_with_chained_context_preserved() {
+fn test_anyhow_error_with_chained_context_not_leaked() {
     let err = CrawlUseCaseError::Anyhow(
         anyhow::anyhow!("root cause")
             .context("middle context")
@@ -251,7 +252,7 @@ fn test_anyhow_error_with_chained_context_preserved() {
     );
     let (status, msg): (StatusCode, String) = err.into();
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(msg.contains("outer context"));
+    assert_eq!(msg, "Internal server error");
 }
 
 // CrawlRequestDto construction and validation

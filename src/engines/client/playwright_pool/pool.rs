@@ -302,6 +302,12 @@ impl Drop for BrowserPool {
 }
 
 impl BrowserPool {
+    /// 测试访问器：同级测试模块需要信号量与返回通道，不暴露生产字段。
+    #[cfg(test)]
+    pub(super) fn state_for_test(&self) -> &Arc<BrowserPoolState> {
+        &self.state
+    }
+
     /// 注入内存水位镜像（engine-moli）
     ///
     /// 由 DI 装配在池构造后调用；`None`（调度器关闭）时池行为与无水位门控一致。

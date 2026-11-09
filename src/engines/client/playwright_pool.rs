@@ -915,7 +915,12 @@ mod tests {
 
         // 信号量可用 permit 应等于 max_instances（无实例占用）
         // 通过 acquire_owned 测试（不实际创建浏览器）
-        let permit = pool.state.semaphore.clone().acquire_owned().await;
+        let permit = pool
+            .state_for_test()
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await;
         assert!(
             permit.is_ok(),
             "should be able to acquire permit when pool is empty"
@@ -935,7 +940,7 @@ mod tests {
         // 并发克隆 return_sender（应无锁，瞬间完成）
         let mut handles = Vec::new();
         for _ in 0..100 {
-            let state = pool.state.clone();
+            let state = pool.state_for_test().clone();
             handles.push(tokio::spawn(async move {
                 let _sender = state.clone_return_sender();
             }));

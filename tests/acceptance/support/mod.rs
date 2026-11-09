@@ -210,6 +210,12 @@ impl SharedHarness {
         // 窗口——2026-11-08 十一轮取证定位（容器内 tasks 行 updated_at+30s
         // 量化证据）。验收关注任务语义而非调度对机器内存的自适应。
         std::env::set_var("CRAWLRS__ENGINES__MEMORY_SCHEDULER__ENABLED", "false");
+        // 注入式 worker 的 MemoryScheduler 读 [concurrency] 阈值（与引擎
+        // memory_scheduler 不是同一开关）；本机内存常态 >80% 会把任务
+        // 认领后 +30s 重排，制造机器相关的 queued 停滞。验收不考核机器内存
+        // 自适应，抬高阈值使判定与宿主负载无关。
+        std::env::set_var("CRAWLRS__CONCURRENCY__MEM_PRESSURE_THRESHOLD", "0.99");
+        std::env::set_var("CRAWLRS__CONCURRENCY__MEM_CRITICAL_THRESHOLD", "0.995");
         std::env::set_var("CRAWLRS__AUTH__JWT_SECRET", TEST_JWT_SECRET);
         std::env::set_var("CRAWLRS__WEBHOOK__SECRET", TEST_WEBHOOK_SECRET);
 

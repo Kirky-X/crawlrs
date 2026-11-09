@@ -12,4 +12,5 @@ use tokio::sync::Mutex;
 /// `tests/unit/bootstrap/routes_test.rs`（OnceCell 进程内只构建一次）写入的是
 /// 同一进程全局态；不加锁并行运行时互相触发
 /// "set_garrison_dao failed: global DAO already injected"。
+#[allow(dead_code)] // 共享测试 helper：仅部分测试目标引用（main / auth_garrison）
 pub static GARRISON_GLOBAL_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));

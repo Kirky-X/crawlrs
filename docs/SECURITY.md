@@ -133,7 +133,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 | 场景 | 位置 |
 |------|------|
 | 认证端到端（签发/校验/RBAC/锁定） | `tests/integration/auth_garrison_test.rs`（ignored，真实 PostgreSQL） |
-| 暴力破解 429 语义 | 同上 + `tests/unit/presentation/middleware/rate_limit_middleware_test.rs` |
+| 暴力破解 429 语义 | 同上 + `src/presentation/middleware/rate_limit_middleware.rs` 内联测试 |
 | SSRF 前置/重定向校验 | `tests/unit/presentation/helpers/ssrf_mod_test.rs`、`ssrf_redirect_test.rs` |
 | 安全响应头 | `tests/unit/presentation/middleware/security_headers_middleware_test.rs` |
 | Token 伪造/绕过 | `tests/unit/presentation`（middleware 域） |
