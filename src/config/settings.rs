@@ -406,6 +406,18 @@ pub struct CorsSettings {
     pub allowed_origins: String,
 }
 
+impl CorsSettings {
+    /// 解析后的来源列表（唯一真源；CORS 层与 429 辅助函数共用）。
+    pub fn allowed_origins_list(&self) -> Vec<String> {
+        self.allowed_origins
+            .split(',')
+            .map(str::trim)
+            .filter(|origin| !origin.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
 // Webhook 配置
 
 /// Webhook配置设置
@@ -1048,37 +1060,6 @@ pub struct TrustedProxySettings {
     pub proxies: Vec<String>,
 }
 
-impl TrustedProxySettings {
-    /// 检查 IP 地址是否在可信代理列表中
-    ///
-    /// # 参数
-    ///
-    /// * `ip` - 要检查的 IP 地址
-    ///
-    /// # 返回值
-    ///
-    /// 如果 IP 在可信代理列表中返回 true，否则返回 false
-    pub fn is_trusted(&self, ip: &std::net::IpAddr) -> bool {
-        use std::net::IpAddr;
-        use std::str::FromStr;
-
-        for proxy in &self.proxies {
-            if let Ok(network) = ipnetwork::IpNetwork::from_str(proxy) {
-                if network.contains(*ip) {
-                    return true;
-                }
-            } else {
-                if let Ok(trusted_ip) = proxy.parse::<IpAddr>() {
-                    if trusted_ip == *ip {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-}
-
 // 可观测性配置
 
 /// 可观测性配置设置（吸收点 F4，参考 Crawlee ErrorSnapshotter）
@@ -1550,63 +1531,6 @@ mod tests {
         let o: ObservabilitySettings = toml::from_str("").expect("empty toml with serde defaults");
         assert_eq!(o.failure_snapshot_dir, "");
         assert_eq!(o.failure_snapshot_max_total, 200);
-    }
-
-    #[test]
-    fn test_trusted_proxy_settings_default() {
-        let settings = TrustedProxySettings::default();
-        assert!(settings.enabled);
-        assert!(!settings.proxies.is_empty());
-
-        // 测试私有 IP 地址
-        let ip: std::net::IpAddr = "10.0.0.1".parse().unwrap();
-        assert!(settings.is_trusted(&ip));
-
-        let ip: std::net::IpAddr = "172.16.0.1".parse().unwrap();
-        assert!(settings.is_trusted(&ip));
-
-        let ip: std::net::IpAddr = "192.168.1.1".parse().unwrap();
-        assert!(settings.is_trusted(&ip));
-
-        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
-        assert!(settings.is_trusted(&ip));
-
-        // 测试公网 IP
-        let ip: std::net::IpAddr = "8.8.8.8".parse().unwrap();
-        assert!(!settings.is_trusted(&ip));
-    }
-
-    #[test]
-    fn test_trusted_proxy_settings_ipv6() {
-        let settings = TrustedProxySettings::default();
-
-        // 测试 IPv6 本地回环
-        let ip: std::net::IpAddr = "::1".parse().unwrap();
-        assert!(settings.is_trusted(&ip));
-
-        // 测试 IPv6 公网地址
-        let ip: std::net::IpAddr = "2001:db8::1".parse().unwrap();
-        assert!(!settings.is_trusted(&ip));
-    }
-
-    #[test]
-    fn test_trusted_proxy_settings_custom_cidr() {
-        let settings = TrustedProxySettings {
-            enabled: true,
-            proxies: vec!["203.0.113.0/24".to_string(), "198.51.100.1".to_string()],
-        };
-
-        // 测试 CIDR 范围内的 IP
-        let ip: std::net::IpAddr = "203.0.113.100".parse().unwrap();
-        assert!(settings.is_trusted(&ip));
-
-        // 测试单个 IP
-        let ip: std::net::IpAddr = "198.51.100.1".parse().unwrap();
-        assert!(settings.is_trusted(&ip));
-
-        // 测试不在范围内的 IP
-        let ip: std::net::IpAddr = "203.0.114.1".parse().unwrap();
-        assert!(!settings.is_trusted(&ip));
     }
 
     // WorkerCount tests

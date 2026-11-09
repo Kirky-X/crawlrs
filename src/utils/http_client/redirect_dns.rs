@@ -10,7 +10,7 @@
 /// （该路径不受初始请求 resolve_to_addrs pin 的约束）。策略闭包为同步
 /// 上下文，使用阻塞式解析；解析失败按 fail-closed 拒绝跟随。
 pub(super) fn redirect_dns_check_blocks(redirect_url: &reqwest::Url) -> bool {
-    use crate::engines::shared::is_private_ip;
+    use crate::infrastructure::security::ssrf::is_private_ip;
     use std::net::ToSocketAddrs;
 
     if let Some(host) = redirect_url.host_str() {

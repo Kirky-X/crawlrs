@@ -49,13 +49,7 @@ use crate::bootstrap::route_groups::map_routes;
 ///
 /// 基于配置创建适合开发/生产环境的 CORS 配置
 fn create_cors_layer(settings: &Settings) -> CorsLayer {
-    let allowed_origins: Vec<String> = settings
-        .cors
-        .allowed_origins
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let allowed_origins = settings.cors.allowed_origins_list();
 
     if allowed_origins.is_empty() || allowed_origins.iter().any(|o| o == "*") {
         wildcard_cors_layer()

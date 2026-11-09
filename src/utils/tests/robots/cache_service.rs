@@ -15,7 +15,7 @@ async fn test_cache_service_hit_returns_content_without_http() {
     let checker = RobotsChecker {
         fetcher: Arc::new(MockFetcher::with_response(200, "")),
         user_agent: "crawlrs-bot/1.0".to_string(),
-        memory_cache: Arc::new(Mutex::new(HashMap::new())),
+        memory_cache: Arc::new(Mutex::new(MemoryCache::default())),
         cache_service: Some(mock_cache as Arc<dyn CacheService>),
 
         cache_ttl: Duration::from_secs(3600),
@@ -38,6 +38,7 @@ async fn test_cache_service_hit_returns_content_without_http() {
     // Memory cache should be updated from cache_service content
     let mem_cache = checker.memory_cache.lock().await;
     let entry = mem_cache
+        .entries
         .get(robots_url)
         .expect("memory cache should be populated from cache_service");
     assert!(entry.content.contains("Disallow: /private"));
@@ -57,7 +58,7 @@ async fn test_expired_memory_cache_removed_then_cache_service_hit() {
     let checker = RobotsChecker {
         fetcher: Arc::new(MockFetcher::with_response(200, "")),
         user_agent: "crawlrs-bot/1.0".to_string(),
-        memory_cache: Arc::new(Mutex::new(HashMap::new())),
+        memory_cache: Arc::new(Mutex::new(MemoryCache::default())),
         cache_service: Some(mock_cache as Arc<dyn CacheService>),
 
         cache_ttl: Duration::from_secs(3600),
@@ -72,7 +73,7 @@ async fn test_expired_memory_cache_removed_then_cache_service_hit() {
         cache.insert(
             robots_url.to_string(),
             CachedRobots {
-                content: "old-expired-content".to_string(),
+                content: Arc::from("old-expired-content"),
                 expires_at: Instant::now() - Duration::from_secs(1),
                 fetch_failed: false,
             },
@@ -88,9 +89,10 @@ async fn test_expired_memory_cache_removed_then_cache_service_hit() {
     // Memory cache should now hold the fresh content from cache_service.
     let mem_cache = checker.memory_cache.lock().await;
     let entry = mem_cache
+        .entries
         .get(robots_url)
         .expect("memory cache should have fresh entry");
-    assert_eq!(entry.content, "User-agent: *\nDisallow: /\n");
+    assert_eq!(&*entry.content, "User-agent: *\nDisallow: /\n");
     assert!(
         entry.expires_at > Instant::now(),
         "new entry should not be expired"
@@ -121,6 +123,7 @@ async fn test_http_fetch_success_returns_content() {
     // Memory cache should be updated after fetch.
     let mem_cache = checker.memory_cache.lock().await;
     let entry = mem_cache
+        .entries
         .get("http://8.8.8.8:80/robots.txt")
         .expect("memory cache should be updated after HTTP fetch");
     assert!(entry.content.contains("Disallow: /private"));
@@ -140,9 +143,10 @@ async fn test_http_fetch_404_returns_empty_content() {
 
     let mem_cache = checker.memory_cache.lock().await;
     let entry = mem_cache
+        .entries
         .get("http://8.8.8.8:80/robots.txt")
         .expect("memory cache should have empty content");
-    assert_eq!(entry.content, "", "404 should store empty content");
+    assert_eq!(&*entry.content, "", "404 should store empty content");
 }
 
 #[tokio::test]
@@ -184,10 +188,11 @@ async fn test_http_fetch_500_retries_then_defaults_empty() {
 
     let mem_cache = checker.memory_cache.lock().await;
     let entry = mem_cache
+        .entries
         .get("http://8.8.8.8:80/robots.txt")
         .expect("memory cache should have entry");
     assert_eq!(
-        entry.content, "",
+        &*entry.content, "",
         "content should be empty after failed retries"
     );
 }
@@ -227,7 +232,7 @@ async fn test_http_fetch_updates_cache_service() {
             "User-agent: *\nDisallow: /private\n",
         )),
         user_agent: "crawlrs-bot/1.0".to_string(),
-        memory_cache: Arc::new(Mutex::new(HashMap::new())),
+        memory_cache: Arc::new(Mutex::new(MemoryCache::default())),
         cache_service: Some(mock_cache.clone() as Arc<dyn CacheService>),
         cache_ttl: Duration::from_secs(3600),
         retry_policy: RetryPolicy {

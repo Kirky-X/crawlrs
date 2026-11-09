@@ -1979,8 +1979,13 @@ mod tests {
         tokio::pin!(notify_fut);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
-            // 先检查是否已写入（可能 spawn task 在 await 前已完成）
-            if mock.entry_count() > 0 {
+            // 先检查本用例事件是否已写入（可能 spawn task 在 await 前已完成）。
+            // 全局 mock 可能同时收到其他并行用例的事件，必须按 id 过滤。
+            if mock
+                .entries()
+                .iter()
+                .any(|entry| entry.api_key_id == Some(api_key_id))
+            {
                 break;
             }
             if std::time::Instant::now() >= deadline {
@@ -2001,12 +2006,16 @@ mod tests {
             }
         }
 
-        // assert: entry 被持久化，且字段正确
-        let entries = mock.entries();
+        // assert: 本用例的 entry 恰好持久化一次，且字段正确
+        let entries: Vec<_> = mock
+            .entries()
+            .into_iter()
+            .filter(|entry| entry.api_key_id == Some(api_key_id))
+            .collect();
         assert_eq!(
             entries.len(),
             1,
-            "exactly one entry should be persisted via log()"
+            "exactly one entry for this api_key_id should be persisted via log()"
         );
         let entry = &entries[0];
         assert_eq!(entry.requested_action, "auth.login");

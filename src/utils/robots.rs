@@ -78,8 +78,8 @@ pub trait RobotsCheckerTrait: Send + Sync {
 /// 缓存的Robots.txt内容
 #[derive(Clone)]
 struct CachedRobots {
-    /// 内容
-    content: String,
+    /// 内容（Arc 使缓存命中克隆为 O(1)，不在锁内深拷贝 512 KiB）
+    content: Arc<str>,
 
     /// 过期时间
     expires_at: Instant,
@@ -92,8 +92,70 @@ struct CachedRobots {
 /// robots.txt 获取结果：内容 + 是否为获取失败标记
 #[derive(Clone)]
 struct FetchedRobots {
-    content: String,
+    content: Arc<str>,
     fetch_failed: bool,
+}
+
+/// 内存缓存上限：条目数与总字节数双限，防恶意站点用 512 KiB robots.txt
+/// 打爆进程内存（审查 H3）。
+const MAX_MEMORY_CACHE_ENTRIES: usize = 4096;
+const MAX_MEMORY_CACHE_BYTES: usize = 16 * 1024 * 1024;
+
+/// robots.txt 内存缓存（条目 + 总字节计数，供 LRU/过期淘汰）。
+#[derive(Default)]
+struct MemoryCache {
+    entries: HashMap<String, CachedRobots>,
+    total_bytes: usize,
+}
+
+impl MemoryCache {
+    fn remove(&mut self, key: &str) -> Option<CachedRobots> {
+        let removed = self.entries.remove(key);
+        if let Some(entry) = &removed {
+            self.total_bytes = self.total_bytes.saturating_sub(entry.content.len());
+        }
+        removed
+    }
+
+    fn insert(&mut self, key: String, value: CachedRobots) {
+        // 覆盖旧条目时先归还其字节配额。
+        self.remove(&key);
+        let incoming = value.content.len();
+        if incoming > MAX_MEMORY_CACHE_BYTES {
+            return;
+        }
+        if self.total_bytes + incoming > MAX_MEMORY_CACHE_BYTES
+            || self.entries.len() >= MAX_MEMORY_CACHE_ENTRIES
+        {
+            self.make_room(incoming);
+        }
+        if self.total_bytes + incoming > MAX_MEMORY_CACHE_BYTES
+            || self.entries.len() >= MAX_MEMORY_CACHE_ENTRIES
+        {
+            return;
+        }
+        self.total_bytes += incoming;
+        self.entries.insert(key, value);
+    }
+
+    /// 一次扫描 + 排序后按最早过期顺序批量淘汰，避免每次只删一条、
+    /// 反复全表扫描造成全局锁内毫秒级停顿（审查 M1）。
+    fn make_room(&mut self, incoming: usize) {
+        let mut candidates: Vec<(Instant, String)> = self
+            .entries
+            .iter()
+            .map(|(key, entry)| (entry.expires_at, key.clone()))
+            .collect();
+        candidates.sort_by_key(|(expires_at, _)| *expires_at);
+        for (_expires_at, key) in candidates {
+            if self.total_bytes + incoming <= MAX_MEMORY_CACHE_BYTES
+                && self.entries.len() < MAX_MEMORY_CACHE_ENTRIES
+            {
+                break;
+            }
+            self.remove(&key);
+        }
+    }
 }
 
 /// robots.txt 获取失败标记的缓存 TTL（短 TTL，防止对不可达目标站打爆）
@@ -112,8 +174,8 @@ pub struct RobotsChecker {
     /// robots.txt 匹配与抓取使用的 User-Agent（可配置，见 RobotsSettings）
     user_agent: String,
 
-    /// 内存缓存
-    memory_cache: Arc<Mutex<HashMap<String, CachedRobots>>>,
+    /// 内存缓存（条目/字节双限）
+    memory_cache: Arc<Mutex<MemoryCache>>,
 
     /// 缓存服务（可选，用于持久化缓存）
     cache_service: Option<Arc<dyn CacheService>>,
@@ -179,7 +241,7 @@ impl RobotsChecker {
                 client: http_client,
             }),
             user_agent: settings.user_agent.clone(),
-            memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
+            memory_cache: Arc::new(Mutex::new(MemoryCache::default())),
             cache_service,
             cache_ttl: Duration::from_secs(settings.cache_ttl_secs),
             retry_policy: RetryPolicy {
@@ -222,15 +284,16 @@ impl RobotsChecker {
         }
 
         // SSRF protection
-        crate::engines::validators::validate_url(&robots_url).await?;
+        crate::infrastructure::security::ssrf::validate_url(&robots_url).await?;
 
         // 3. Fetch robots.txt with retry
         match self.fetch_robots_text(&robots_url).await {
             RobotsFetch::FailClosed | RobotsFetch::Rejected => Ok(FetchedRobots {
-                content: String::new(),
+                content: Arc::from(""),
                 fetch_failed: true,
             }),
             RobotsFetch::Content(content) => {
+                let content: Arc<str> = Arc::from(content);
                 self.store_fetched_content(&robots_url, &cache_key, &content)
                     .await;
 
@@ -243,13 +306,13 @@ impl RobotsChecker {
     }
 
     /// 成功抓取后的持久化：按正常 TTL 写内存缓存 + 24h 写持久缓存
-    async fn store_fetched_content(&self, robots_url: &str, cache_key: &str, content: &str) {
+    async fn store_fetched_content(&self, robots_url: &str, cache_key: &str, content: &Arc<str>) {
         // 4. Update memory cache
         self.store_memory_cache(robots_url, content).await;
 
         // 5. Update cache service
         if let Some(ref cache_service) = self.cache_service {
-            let _ = cache_service.set(cache_key, content, 86400).await;
+            let _ = cache_service.set(cache_key, content.as_ref(), 86400).await;
             // Cache for 24 hours
         }
     }
@@ -257,16 +320,17 @@ impl RobotsChecker {
     /// 内存缓存查询：命中未过期 → 记 hit 并返回内容；过期条目移除
     async fn try_memory_cache(&self, robots_url: &str) -> Option<FetchedRobots> {
         let mut cache = self.memory_cache.lock().await;
-        if let Some(cached) = cache.get(robots_url) {
+        if let Some(cached) = cache.entries.get(robots_url) {
             if cached.expires_at > Instant::now() {
-                self.cache_stats.record_hit();
-                return Some(FetchedRobots {
-                    content: cached.content.clone(),
+                let fetched = FetchedRobots {
+                    content: Arc::clone(&cached.content),
                     fetch_failed: cached.fetch_failed,
-                });
-            } else {
-                cache.remove(robots_url);
+                };
+                drop(cache);
+                self.cache_stats.record_hit();
+                return Some(fetched);
             }
+            cache.remove(robots_url);
         }
         None
     }
@@ -275,15 +339,17 @@ impl RobotsChecker {
     async fn try_cache_service(&self, cache_key: &str, robots_url: &str) -> Option<FetchedRobots> {
         if let Some(ref cache_service) = self.cache_service {
             if let Ok(Some(content)) = cache_service.get(cache_key).await {
+                let content: Arc<str> = Arc::from(content.as_str());
                 let mut cache = self.memory_cache.lock().await;
                 cache.insert(
                     robots_url.to_string(),
                     CachedRobots {
-                        content: content.clone(),
+                        content: Arc::clone(&content),
                         expires_at: Instant::now() + self.cache_ttl,
                         fetch_failed: false,
                     },
                 );
+                drop(cache);
                 self.cache_stats.record_hit();
                 return Some(FetchedRobots {
                     content,
@@ -354,7 +420,7 @@ impl RobotsChecker {
         cache.insert(
             robots_url.to_string(),
             CachedRobots {
-                content: String::new(),
+                content: Arc::from(""),
                 expires_at: Instant::now() + ROBOTS_FAILURE_CACHE_TTL,
                 fetch_failed: true,
             },
@@ -382,14 +448,13 @@ impl RobotsChecker {
         RobotsFetch::Content(String::new())
     }
 
-    /// 构造 robots.txt 抓取请求（5s 超时 + 配置的 User-Agent）
     /// 按正常 TTL 写入内存缓存（成功获取 / fail-open 降级共用）
-    async fn store_memory_cache(&self, robots_url: &str, content: &str) {
+    async fn store_memory_cache(&self, robots_url: &str, content: &Arc<str>) {
         let mut cache = self.memory_cache.lock().await;
         cache.insert(
             robots_url.to_string(),
             CachedRobots {
-                content: content.to_string(),
+                content: Arc::clone(content),
                 expires_at: Instant::now() + self.cache_ttl, // Cache for 1 hour
                 fetch_failed: false,
             },
@@ -507,7 +572,9 @@ impl RobotsFetcher for HttpRobotsFetcher {
                 // 审查 L5：DNS 重绑定缓解——连接建立后校验对端地址，
                 // 命中内网/回环立即按可重试失败处理，不读取响应体。
                 match resp.remote_addr() {
-                    Some(addr) if crate::engines::shared::is_private_ip(addr.ip()) => {
+                    Some(addr)
+                        if crate::infrastructure::security::ssrf::is_private_ip(addr.ip()) =>
+                    {
                         return RobotsFetchAttempt::Rejected(anyhow::anyhow!(
                             "Robots fetch resolved to private/reserved address: {}",
                             addr.ip()
@@ -524,8 +591,13 @@ impl RobotsFetcher for HttpRobotsFetcher {
                 }
                 let status = resp.status().as_u16();
                 if (200..300).contains(&status) {
-                    // 审查 M2：robots.txt 响应体限长（防恶意站点大体积响应）
-                    let mut body: Vec<u8> = Vec::new();
+                    // 审查 M2：robots.txt 响应体限长（防恶意站点大体积响应）；
+                    // 按 Content-Length 预分配（封顶上限），避免逐 chunk 扩容。
+                    let capacity =
+                        resp.content_length()
+                            .unwrap_or(0)
+                            .min(MAX_ROBOTS_BODY_BYTES as u64) as usize;
+                    let mut body: Vec<u8> = Vec::with_capacity(capacity);
                     loop {
                         match resp.chunk().await {
                             Ok(Some(chunk)) => {
@@ -545,7 +617,11 @@ impl RobotsFetcher for HttpRobotsFetcher {
                             }
                         }
                     }
-                    RobotsFetchAttempt::Content(String::from_utf8_lossy(&body).into_owned())
+                    // 合法 UTF-8 直接接管 Vec，避免 from_utf8_lossy 的整串复制
+                    RobotsFetchAttempt::Content(match String::from_utf8(body) {
+                        Ok(text) => text,
+                        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+                    })
                 } else if status == 404 {
                     RobotsFetchAttempt::Content(String::new())
                 } else if status >= 500 {

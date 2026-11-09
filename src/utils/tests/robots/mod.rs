@@ -3,6 +3,7 @@ use super::*;
 use std::future::Future;
 use std::pin::Pin;
 
+mod cache_bounds;
 mod cache_service;
 mod cache_stats;
 mod crawl_delay;
@@ -30,7 +31,7 @@ async fn populate_robots_cache(checker: &RobotsChecker, robots_url: &str, conten
     cache.insert(
         robots_url.to_string(),
         CachedRobots {
-            content: content.to_string(),
+            content: Arc::from(content),
             expires_at: Instant::now() + checker.cache_ttl,
             fetch_failed: false,
         },
@@ -166,7 +167,7 @@ fn make_fail_closed_checker_with_mock_fetcher(
     RobotsChecker {
         fetcher,
         user_agent: "crawlrs-bot/1.0".to_string(),
-        memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
+        memory_cache: Arc::new(Mutex::new(MemoryCache::default())),
         cache_service: None,
 
         cache_ttl: Duration::from_secs(3600),

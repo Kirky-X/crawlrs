@@ -45,6 +45,10 @@ fn apply_sql(schema: &mut Schema, sql: &str) {
     let mut statements = Vec::new();
     collect_statements(sql, &mut statements);
     for stmt in statements {
+        // MySQL 幂等迁移把 DDL 放在动态 SQL 的字符串字面量里
+        // （`SET @ddl = IF(... 'ALTER TABLE ...')`）。解析器必须看到这段
+        // DDL，否则真实列漂移会从测试里消失。
+        apply_embedded_ddl(schema, &stmt);
         let trimmed = stmt.trim();
         if let Some(rest) = strip_prefix_ci(trimmed, "CREATE TABLE") {
             if let Some((table, columns)) = parse_create_table(rest) {
@@ -57,6 +61,30 @@ fn apply_sql(schema: &mut Schema, sql: &str) {
             if let Some(table) = first_identifier(rest) {
                 schema.remove(&table);
             }
+        }
+    }
+}
+
+/// Apply DDL statements embedded in single-quoted string literals
+/// (MySQL `SET @ddl = IF(..., 'ALTER TABLE ...', ...)`), so dynamic-SQL
+/// migrations stay visible to the schema reconstruction.
+fn apply_embedded_ddl(schema: &mut Schema, stmt: &str) {
+    let mut literal = String::new();
+    let mut in_single = false;
+    for ch in stmt.chars() {
+        if ch == '\'' {
+            if in_single {
+                let trimmed = literal.trim();
+                if let Some(rest) = strip_prefix_ci(trimmed, "ALTER TABLE") {
+                    apply_alter(schema, rest);
+                }
+                literal.clear();
+            }
+            in_single = !in_single;
+            continue;
+        }
+        if in_single {
+            literal.push(ch);
         }
     }
 }
@@ -212,7 +240,7 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     if s.len() < prefix.len() {
         return None;
     }
-    if !s[..prefix.len()].eq_ignore_ascii_case(prefix) {
+    if !s.get(..prefix.len())?.eq_ignore_ascii_case(prefix) {
         return None;
     }
     let rest = &s[prefix.len()..];
@@ -310,11 +338,47 @@ fn all_three_dialect_dirs_are_present() {
 
 /// R-multidb-schema-001: the three dialects must cover the same tables and
 /// columns after applying the full migration sequence.
+/// Columns that exist in one dialect only because of a physical storage
+/// constraint, not a logical schema difference. Every entry must exist in
+/// the named dialect after parsing and must be absent from the others.
+const DIALECT_ONLY_COLUMNS: &[(&str, &str, &str, &str)] = &[
+    (
+        "mysql",
+        "tasks",
+        "url_hash",
+        "MySQL cannot index TEXT directly; unique URL uses SHA-256 generated column",
+    ),
+    (
+        "mysql",
+        "searxng_instances",
+        "url_hash",
+        "MySQL cannot index TEXT directly; unique URL uses SHA-256 generated column",
+    ),
+];
+
+fn strip_dialect_only_columns(dialect: &str, schema: &mut Schema) {
+    for (only_dialect, table, column, _reason) in DIALECT_ONLY_COLUMNS {
+        if *only_dialect != dialect {
+            continue;
+        }
+        let removed = schema
+            .get_mut(*table)
+            .is_some_and(|columns| columns.remove(*column));
+        assert!(
+            removed,
+            "{dialect}.{table}.{column} must exist (dialect-only column registration)"
+        );
+    }
+}
+
 #[test]
 fn three_dialects_cover_same_tables_and_columns() {
-    let postgres = parse_dialect(&migrations_root().join("postgres"));
-    let sqlite = parse_dialect(&migrations_root().join("sqlite"));
-    let mysql = parse_dialect(&migrations_root().join("mysql"));
+    let mut postgres = parse_dialect(&migrations_root().join("postgres"));
+    let mut sqlite = parse_dialect(&migrations_root().join("sqlite"));
+    let mut mysql = parse_dialect(&migrations_root().join("mysql"));
+    strip_dialect_only_columns("postgres", &mut postgres);
+    strip_dialect_only_columns("sqlite", &mut sqlite);
+    strip_dialect_only_columns("mysql", &mut mysql);
 
     assert!(!postgres.is_empty(), "postgres schema must not be empty");
 

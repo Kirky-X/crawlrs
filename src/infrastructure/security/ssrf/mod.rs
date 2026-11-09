@@ -50,13 +50,146 @@ pub use redirect::{RedirectPolicy, RedirectValidator};
 pub use static_validator::is_internal_url;
 pub use types::{SsrfConfig, SsrfValidationResult, ValidatedUrl};
 
-use crate::engines::shared::{is_blocked_hostname, is_private_ip};
 use std::net::IpAddr;
 use tokio::net::lookup_host;
 use url::Url;
 
 use crate::infrastructure::dns::DnsCacheService;
 use std::sync::Arc;
+
+/// Check if an IP address is a private/reserved address that should be blocked for SSRF protection.
+///
+/// This function covers:
+/// - IPv4 private addresses (RFC 1918): 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+/// - IPv4 loopback: 127.0.0.0/8
+/// - IPv4 link-local: 169.254.0.0/16
+/// - IPv4 multicast: 224.0.0.0/4
+/// - IPv4 carrier-grade NAT: 100.64.0.0/10
+/// - IPv4 broadcast: 0.0.0.0/8, 255.255.255.255
+/// - IPv6 loopback: ::1/128
+/// - IPv6 unique local (ULA): fc00::/7
+/// - IPv6 link-local: fe80::/10
+/// - IPv6 multicast: ff00::/8
+/// - IPv6 unspecified: ::/128
+/// - IPv6 documentation: 2001:db8::/32
+pub fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => is_private_ipv4(ipv4),
+        IpAddr::V6(ipv6) => is_private_ipv6(ipv6),
+    }
+}
+
+/// 判定 IPv4 地址是否为私有/保留地址
+///
+/// （`is_private_ip` 的 V4 分支，逻辑与注释原样保留）
+fn is_private_ipv4(ipv4: std::net::Ipv4Addr) -> bool {
+    let octets = ipv4.octets();
+    // 10.0.0.0/8
+    octets[0] == 10
+    // 172.16.0.0/12
+    || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+    // 192.168.0.0/16
+    || (octets[0] == 192 && octets[1] == 168)
+    // Loopback 127.0.0.0/8
+    || ipv4.is_loopback()
+    // Link-local 169.254.0.0/16
+    || ipv4.is_link_local()
+    // Multicast 224.0.0.0/4
+    || (224..=239).contains(&octets[0])
+    // Carrier-Grade NAT 100.64.0.0/10
+    || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+    // Broadcast 0.0.0.0/8
+    || octets[0] == 0
+    // 255.255.255.255
+    || (octets[0] == 255 && octets[1] == 255 && octets[2] == 255 && octets[3] == 255)
+}
+
+/// 判定 IPv6 地址是否为私有/保留地址
+///
+/// （`is_private_ip` 的 V6 分支，逻辑与注释原样保留）
+fn is_private_ipv6(ipv6: std::net::Ipv6Addr) -> bool {
+    let segs = ipv6.segments();
+    ipv6.is_loopback()
+        || (segs[0] & 0xfe00) == 0xfc00 // fc00::/7 ULA
+        || (segs[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+        || (segs[0] & 0xff00) == 0xff00 // ff00::/8 multicast
+        || (segs[0] & 0xffc0) == 0xfec0 // fec0::/10 deprecated site-local
+        || segs == [0, 0, 0, 0, 0, 0, 0, 0] // /128 unspecified
+        || (segs[0] == 0x2001 && segs[1] == 0x0db8) // 2001:db8::/32 documentation
+        // IPv4-mapped IPv6 (ffff:x.x.x.x) - use std lib (Rust 1.65+)
+        || ipv6
+            .to_ipv4_mapped()
+            .map(is_private_ipv4)
+            .unwrap_or(false)
+        // IPv4-compatible IPv6 (x.x.x.x, RFC 4291 deprecated) - bypass risk
+        // to_ipv4_mapped does NOT cover this form; must check explicitly.
+        // Exclude ::/128 (unspecified) and ::1 (loopback) - already handled above.
+        || (segs[0..6] == [0, 0, 0, 0, 0, 0]
+            && (segs[6] != 0 || segs[7] != 0)
+            && {
+                let ipv4 = std::net::Ipv4Addr::new(
+                    (segs[6] >> 8) as u8,
+                    (segs[6] & 0xff) as u8,
+                    (segs[7] >> 8) as u8,
+                    (segs[7] & 0xff) as u8,
+                );
+                is_private_ipv4(ipv4)
+            })
+}
+
+/// List of blocked hostnames that should never be accessed via SSRF.
+///
+/// This includes:
+/// - Localhost variants
+/// - Link-local addresses as strings
+/// - Cloud provider metadata endpoints
+pub fn get_blocked_hostnames() -> &'static [&'static str] {
+    &[
+        // Localhost variants
+        "localhost",
+        "localhost.localdomain",
+        "ip6-localhost",
+        "ip6-loopback",
+        // Link-local addresses
+        "0.0.0.0",
+        "::1",
+        "::",
+        // Cloud provider metadata endpoints
+        "169.254.169.254",             // AWS, Azure, GCP
+        "metadata.google.internal",    // GCP
+        "metadata.azure.com",          // Azure
+        "metadata.msftidentity.com",   // Azure
+        "metadata.nova.canonical.com", // OpenStack
+        "metadata.packet.csi.com",     // Packet
+    ]
+}
+
+/// Check if a hostname is in the blocked list.
+///
+/// This function checks exact hostname matches only. For IP address checks,
+/// use `is_private_ip()` instead.
+pub fn is_blocked_hostname(host: &str) -> bool {
+    let host_lower = host.to_lowercase();
+    let blocked = get_blocked_hostnames();
+
+    if blocked.iter().any(|&b| host_lower == b) {
+        return true;
+    }
+
+    // IPv6 host from url::Url::host_str comes wrapped in brackets (e.g. "[::1]").
+    // Strip brackets before parsing to IpAddr, otherwise parse fails and IPv6
+    // IP checks are silently skipped (SSRF bypass vector).
+    let host_for_parse = host_lower
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(&host_lower);
+
+    if let Ok(ip) = host_for_parse.parse::<std::net::IpAddr>() {
+        return is_private_ip(ip);
+    }
+
+    false
+}
 
 /// Direct DNS resolution helper (no cache). Used when oxcache-cache feature is disabled
 /// or when SsrfValidator is constructed without a DNS cache.
@@ -316,27 +449,42 @@ pub async fn validate_url(url_str: &str) -> Result<ValidatedUrl, SsrfError> {
 /// 同步降级为普通跟随（`utils::http_client`）。进程内只告警一次；
 /// 非 test/development 环境的启动期显著告警由 config_validator 负责。
 pub(crate) fn ssrf_protection_disabled() -> bool {
-    use std::sync::OnceLock;
-    static DISABLED: OnceLock<bool> = OnceLock::new();
-    *DISABLED.get_or_init(|| {
-        let disabled =
-            std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok();
-        if disabled {
-            log::warn!(
-                "{}",
-                crate::i18n::tr_log_args(
-                    "ssrf-protection-disabled",
-                    &[(
-                        "env",
-                        fluent_bundle::FluentValue::from(
-                            crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION,
-                        ),
-                    )],
-                )
-            );
-        }
-        disabled
-    })
+    // 单元测试进程内多个用例会并发 set/remove 该环境变量；缓存会让
+    // 先跑到的值污染后续用例（测试隔离缺陷）。test 构建每次读取，
+    // 生产路径仍用 OnceLock 只读一次环境。
+    #[cfg(test)]
+    {
+        // 与 config_validator 的 env 改写测试共用同一把锁，避免读取到
+        // 其他用例临时 set_var 的瞬时值。
+        let _guard = crate::common::test_support::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        return std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok();
+    }
+    #[cfg(not(test))]
+    {
+        use std::sync::OnceLock;
+        static DISABLED: OnceLock<bool> = OnceLock::new();
+        *DISABLED.get_or_init(|| {
+            let disabled =
+                std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok();
+            if disabled {
+                log::warn!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "ssrf-protection-disabled",
+                        &[(
+                            "env",
+                            fluent_bundle::FluentValue::from(
+                                crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION,
+                            ),
+                        )],
+                    )
+                );
+            }
+            disabled
+        })
+    }
 }
 
 /// DNS rebinding detection + private-IP rejection:

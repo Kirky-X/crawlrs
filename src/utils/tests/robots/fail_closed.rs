@@ -42,10 +42,11 @@ async fn test_fetch_failure_fail_closed_blocks_and_caches_marker() {
     {
         let cache = checker.memory_cache.lock().await;
         let entry = cache
+            .entries
             .get("http://8.8.8.8:80/robots.txt")
             .expect("失败标记应写入内存缓存");
         assert!(entry.fetch_failed, "缓存条目应携带失败标记");
-        assert_eq!(entry.content, "", "失败标记条目内容为空");
+        assert_eq!(&*entry.content, "", "失败标记条目内容为空");
         assert!(
             entry.expires_at <= Instant::now() + ROBOTS_FAILURE_CACHE_TTL,
             "失败标记应使用短 TTL（60s）"
@@ -83,6 +84,7 @@ async fn test_fetch_failure_fail_closed_false_keeps_fail_open() {
 
     let cache = checker.memory_cache.lock().await;
     let entry = cache
+        .entries
         .get("http://8.8.8.8:80/robots.txt")
         .expect("失败后仍应缓存空内容");
     assert!(!entry.fetch_failed, "fail-open 失败缓存的是普通空内容条目");

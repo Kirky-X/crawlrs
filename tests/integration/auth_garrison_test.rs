@@ -322,6 +322,16 @@ async fn test_rate_limit_returns_429() {
     let _guard = GARRISON_TEST_LOCK.lock().await;
 
     let (pool, _plaintext_key, _, _) = setup_garrison_env().await;
+    // 随机公网 IP：避免持久化封禁记录跨运行残留（300s 封禁窗口）。
+    let client_ip = format!(
+        "203.0.113.{}",
+        (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .subsec_nanos()
+            % 200)
+            + 10
+    );
 
     // 前 5 次失败请求应返回 401
     for i in 1..=5 {
@@ -332,6 +342,9 @@ async fn test_rate_limit_returns_429() {
                     .method("GET")
                     .uri("/v1/protected")
                     .header(header::AUTHORIZATION, "Bearer invalid.key.format")
+                    // 可信代理 + 公网跳：模拟生产边缘代理，secure IP 才能
+                    // 得到可计数的客户端 IP。
+                    .header("x-forwarded-for", client_ip.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -353,6 +366,7 @@ async fn test_rate_limit_returns_429() {
                 .method("GET")
                 .uri("/v1/protected")
                 .header(header::AUTHORIZATION, "Bearer invalid.key.format")
+                .header("x-forwarded-for", client_ip.clone())
                 .body(Body::empty())
                 .unwrap(),
         )

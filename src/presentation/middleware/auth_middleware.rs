@@ -26,8 +26,6 @@ use crate::infrastructure::database::entities::api_key;
 // Re-export 共享类型（决策 3：从 auth_types 导入，避免循环依赖）。
 // auth-off 构建面（web-axum）同样需要 AuthState——default_identity_middleware 注入它。
 pub use crate::presentation::middleware::auth_types::{AuthError, AuthState};
-#[cfg(feature = "auth")]
-use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 use axum::extract::State;
 #[cfg(feature = "auth")]
 use axum::response::IntoResponse;
@@ -296,9 +294,8 @@ pub async fn auth_middleware_inner(
     let path = req.uri().path().to_string();
     debug!("AuthMiddleware (garrison) processing path: {}", path);
 
-    // 1. 公开端点跳过认证（规范化尾部斜杠后比较，/health/ 也匹配）
-    let normalized_path = path.trim_end_matches('/');
-    if PUBLIC_ENDPOINTS.contains(&normalized_path) {
+    // 1. 公开端点跳过认证（与限流共用同一谓词；尾部斜杠已归一化）
+    if crate::presentation::middleware::is_public_endpoint(&path) {
         debug!("Public endpoint {}, skipping auth", path);
         return next.run(req).await;
     }

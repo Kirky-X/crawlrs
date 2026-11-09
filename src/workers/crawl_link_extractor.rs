@@ -444,6 +444,15 @@ async fn score_and_enqueue(
         .unwrap_or(false);
 
     while let Some(scored) = frontier.pop() {
+        // 归一化可能放大 URL（例如 query 中的 '+' 被重新编码为 '%20'）。
+        // 入队前按最终字符串再查一次 2048 字节，避免 PG btree 元组超限。
+        if scored.url.len() > 2048 {
+            log::debug!(
+                "skip oversized normalized child url: {} bytes (limit 2048)",
+                scored.url.len()
+            );
+            continue;
+        }
         // 出队按 priority ASC（小值先出）。
         // DFS（栈语义）：子链接键 = 父 priority - (子深度)，i32 负空间
         // 保证默认 priority=0 与超深链路下仍严格随深度递减（复查

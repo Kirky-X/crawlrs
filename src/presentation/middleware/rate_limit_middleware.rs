@@ -20,7 +20,6 @@
 
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::infrastructure::security::secure_ip::{get_secure_client_ip, TrustedProxyConfig};
-use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 use axum::{body::Body, extract::Request, http::StatusCode, middleware::Next, response::Response};
 use limiteron::sync::SyncFixedWindowLimiter;
 use log::{debug, warn};
@@ -195,12 +194,8 @@ fn apply_ip_rate_limit_for(
             "Retry-After",
             axum::http::HeaderValue::from(IP_RATE_LIMIT_WINDOW_SECS),
         );
-        // 浏览器跨域客户端需要 CORS 头才能读到 429；限流层在 CORS 外层，
-        // 内层 CORS 不会为短路响应补头。
-        response.headers_mut().insert(
-            axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            axum::http::HeaderValue::from_static("*"),
-        );
+        // CORS 头由 rate_limit_middleware 统一补（需要请求 Origin 与
+        // [cors].allowed_origins 才能决定回显值，本函数拿不到请求）。
 
         return Err(Box::new(response));
     }
@@ -227,6 +222,9 @@ pub struct RateLimitRuntimeConfig {
     pub auth_limiter: Arc<RateLimiter>,
     /// `[trusted_proxies]`：可信代理判定（XFF 信任边界）
     pub trusted_proxies: TrustedProxyConfig,
+    /// `[cors].allowed_origins`（逗号分隔；`*` 或空 = 通配）。
+    /// 仅用于为 429 短路响应补 CORS 头。
+    pub cors_allowed_origins: Vec<String>,
 }
 
 impl Default for RateLimitRuntimeConfig {
@@ -240,6 +238,7 @@ impl Default for RateLimitRuntimeConfig {
             anon_limiter: Arc::new(RateLimiter::new_for_ip_limit(anon_limit)),
             auth_limiter: Arc::new(RateLimiter::new_for_ip_limit(auth_limit)),
             trusted_proxies: TrustedProxyConfig::default(),
+            cors_allowed_origins: vec!["*".to_string()],
         }
     }
 }
@@ -255,10 +254,11 @@ impl RateLimitRuntimeConfig {
             auth_limit,
             anon_limiter: Arc::new(RateLimiter::new_for_ip_limit(anon_limit)),
             auth_limiter: Arc::new(RateLimiter::new_for_ip_limit(auth_limit)),
-            trusted_proxies: TrustedProxyConfig {
-                enabled: settings.trusted_proxies.enabled,
-                proxies: settings.trusted_proxies.proxies.clone(),
-            },
+            trusted_proxies: TrustedProxyConfig::from_settings(
+                settings.trusted_proxies.enabled,
+                settings.trusted_proxies.proxies.clone(),
+            ),
+            cors_allowed_origins: settings.cors.allowed_origins_list(),
         }
     }
 }
@@ -287,12 +287,13 @@ fn has_bearer_credentials(req: &Request) -> bool {
         .unwrap_or(false)
 }
 
-/// 限流豁免判定：公开端点精确名单 + `/health/*` 前缀（K8s 探针）。
+/// 限流豁免判定：复用 [`crate::presentation::middleware::is_public_endpoint`]
+/// （与认证同一真源）。
 ///
 /// `/metrics` 保持免限流：Prometheus 常用 5s 抓取间隔，10/min 匿名桶会
 /// 造成指标缺口；租户级敏感标签已移除（见 team_semaphore）。
 fn is_rate_limit_exempt(path: &str) -> bool {
-    PUBLIC_ENDPOINTS.contains(&path) || path.starts_with("/health/")
+    crate::presentation::middleware::is_public_endpoint(path)
 }
 
 /// 速率限制中间件。
@@ -346,7 +347,48 @@ pub async fn rate_limit_middleware(
 
     match result {
         Ok(()) => next.run(req).await,
-        Err(response) => *response,
+        Err(mut response) => {
+            apply_429_cors_headers(&mut response, &req, &config.cors_allowed_origins);
+            *response
+        }
+    }
+}
+
+/// 为限流 429 短路响应补 CORS 头（限流层在 CORS 外层，内层不会补）。
+///
+/// 通配配置回 `*`；白名单配置只在请求 Origin 命中时回显该 Origin，
+/// 避免对非白名单站点暴露通配 CORS。`Retry-After` 需显式 expose
+/// 才能被浏览器客户端读取。
+fn apply_429_cors_headers(response: &mut Response, req: &Request, allowed_origins: &[String]) {
+    use axum::http::header::{
+        HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, ORIGIN, VARY,
+    };
+
+    response.headers_mut().insert(
+        ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("Retry-After"),
+    );
+
+    let wildcard = allowed_origins.is_empty() || allowed_origins.iter().any(|o| o == "*");
+    if wildcard {
+        response
+            .headers_mut()
+            .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+        return;
+    }
+
+    let Some(origin) = req.headers().get(ORIGIN).and_then(|v| v.to_str().ok()) else {
+        return;
+    };
+    if allowed_origins.iter().any(|allowed| allowed == origin) {
+        if let Ok(value) = HeaderValue::from_str(origin) {
+            response
+                .headers_mut()
+                .insert(ACCESS_CONTROL_ALLOW_ORIGIN, value);
+            response
+                .headers_mut()
+                .insert(VARY, HeaderValue::from_static("Origin"));
+        }
     }
 }
 
@@ -734,5 +776,51 @@ mod tests {
 
         // IP rate limit should pass (first request for this IP)
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_429_cors_wildcard_and_allowlist() {
+        let req = Request::builder()
+            .uri("/v1/tasks")
+            .header("origin", "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        // 通配配置：回 *
+        let mut response = Response::new(Body::from("{}"));
+        apply_429_cors_headers(&mut response, &req, &["*".to_string()]);
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .unwrap(),
+            "*"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-expose-headers")
+                .unwrap(),
+            "Retry-After"
+        );
+
+        // 白名单命中：回显 Origin
+        let mut response = Response::new(Body::from("{}"));
+        apply_429_cors_headers(&mut response, &req, &["https://app.example".to_string()]);
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .unwrap(),
+            "https://app.example"
+        );
+
+        // 白名单未命中：不下发 ACAO
+        let mut response = Response::new(Body::from("{}"));
+        apply_429_cors_headers(&mut response, &req, &["https://other.example".to_string()]);
+        assert!(response
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none());
     }
 }

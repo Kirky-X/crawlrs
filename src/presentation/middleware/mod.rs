@@ -29,13 +29,16 @@ pub mod team_semaphore_middleware;
 /// Public endpoints that don't require authentication or rate limiting
 pub const PUBLIC_ENDPOINTS: &[&str] = &["/health", "/ready", "/metrics", "/v1/version"];
 
-/// Endpoints excluded from rate limiting
-pub const RATE_LIMIT_EXCLUDED_ENDPOINTS: &[&str] = &[
-    "/health",
-    "/ready",
-    "/metrics",
-    "/v1/version",
-    "/v1/extract",
-    "/v1/crawl",
-    "/v1/scrape",
-];
+/// 唯一公开端点判定：精确名单 + `/health/*` 探针前缀，尾部斜杠归一化。
+///
+/// 认证与限流必须共用本谓词；两份判定会让 `/metrics/`、`/health/live`
+/// 之类路径出现“认证豁免但限流不豁免”的分叉。
+pub fn is_public_endpoint(path: &str) -> bool {
+    let normalized = path.trim_end_matches('/');
+    let normalized = if normalized.is_empty() {
+        "/"
+    } else {
+        normalized
+    };
+    PUBLIC_ENDPOINTS.contains(&normalized) || normalized.starts_with("/health/")
+}

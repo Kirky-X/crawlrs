@@ -933,6 +933,15 @@ impl TaskRepository for TaskRepositoryImpl {
                 Expr::value(TaskStatus::Failed.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
+            .col_expr(
+                task_entity::Column::LockToken,
+                Expr::value(None::<uuid::Uuid>),
+            )
+            .col_expr(
+                task_entity::Column::LockExpiresAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
             .filter(stale_condition)
             .filter(lock_lease_free)
             .exec(conn)

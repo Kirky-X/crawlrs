@@ -352,7 +352,8 @@ async fn test_reset_stuck_tasks_with_real_db_resets_stuck_task() {
     let _count = result.unwrap();
 
     let found = repo.find_by_id(task.id).await.expect("find_by_id failed");
-    if let Some(found_task) = found {
+    let found_task = found.expect("stuck task must still exist");
+    {
         assert_eq!(
             found_task.status,
             TaskStatus::Queued,
@@ -471,6 +472,9 @@ async fn test_expire_tasks_with_real_db_expires_past_expires_at() {
     let mut task = make_test_task();
     // Set expires_at in the past so the task should be expired.
     task.expires_at = Some(Utc::now() - Duration::minutes(5));
+    // 同时持锁：过期终结必须清空锁字段，否则锁心跳仍会续期终态任务。
+    task.lock_token = Some(crate::domain::id::Id::generate());
+    task.lock_expires_at = Some(Utc::now() - Duration::minutes(1));
     repo.create(&task).await.expect("create failed");
 
     let result = repo.expire_tasks().await;
@@ -479,11 +483,24 @@ async fn test_expire_tasks_with_real_db_expires_past_expires_at() {
     assert!(count >= 1, "at least one task should be expired");
 
     let found = repo.find_by_id(task.id).await.expect("find_by_id failed");
-    if let Some(found_task) = found {
+    let found_task = found.expect("expired task must still exist");
+    {
         assert_eq!(
             found_task.status,
             TaskStatus::Failed,
             "expired task should be marked Failed"
+        );
+        assert!(
+            found_task.completed_at.is_some(),
+            "expired task must get completed_at"
+        );
+        assert!(
+            found_task.lock_token.is_none(),
+            "expired task must clear lock_token"
+        );
+        assert!(
+            found_task.lock_expires_at.is_none(),
+            "expired task must clear lock_expires_at"
         );
     }
 }

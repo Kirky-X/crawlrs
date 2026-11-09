@@ -48,6 +48,7 @@ pub mod retry;
 pub mod retry_after;
 pub mod retry_policy;
 pub mod robots;
+#[cfg(any(test, feature = "test-mocks"))]
 pub mod search_test;
 pub mod telemetry;
 pub mod text_processing;
