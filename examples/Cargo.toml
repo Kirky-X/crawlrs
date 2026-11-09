@@ -21,6 +21,7 @@ crawlrs = { path = "..", default-features = false, features = [
     "engine-flaresolverr",
     "engine-tls-fingerprint",
     "http",
+    "test-mocks",
 ] }
 
 # 异步运行时

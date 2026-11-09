@@ -75,8 +75,12 @@ cleanup() {
       kill -9 "$pid" 2>/dev/null || true
     fi
   done
+  # 端口清理：fuser（util-linux）与 lsof（BSD/macOS）各自可选，互不依赖
   if command -v fuser >/dev/null 2>&1; then
-    fuser -k "${SERVER_PORT}/tcp" 2>/dev/null || true
+    fuser -k "${SERVER_PORT}/tcp" >/dev/null 2>&1 || true
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti "tcp:${SERVER_PORT}" 2>/dev/null | xargs kill -9 2>/dev/null || true
   fi
   if [ "$OWN_COMPOSE" = "1" ] && [ "${KEEP_ENV:-0}" != "1" ]; then
     log_info "清理 Docker Compose 测试环境（含卷）..."
@@ -190,6 +194,14 @@ CRAWLRS__WEBHOOK__SECRET='${WEBHOOK_SECRET}'
 CRAWLRS__SERVER__PORT='${SERVER_PORT}'
 CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT='64'
 CRAWLRS__WORKERS__COUNT='64'
+# 宿主内存常态 >80% 时 worker MemoryScheduler 会把任务认领后 +30s 重排，
+# 活体套件的 crawl 终态等待会与机器负载耦合；测试实例把阈值抬到不可达区间。
+CRAWLRS__CONCURRENCY__MEM_PRESSURE_THRESHOLD='0.99'
+CRAWLRS__CONCURRENCY__MEM_CRITICAL_THRESHOLD='0.995'
+CRAWLRS__ENGINES__MEMORY_SCHEDULER__ENABLED='false'
+# 单引擎 MRT 默认 5s：64 worker 并发命中同一真实站点时易超时并触发
+# 引擎级熔断（一次慢请求会让所有站点 "No engines available"）。测试实例放宽。
+CRAWLRS__TIMEOUTS__ENGINES__FETCH_SECONDS='20'
 CRAWLRS_BOOTSTRAP_ADMIN='true'
 CRAWLRS__RATE_LIMITING__STORAGE_BACKEND='${CRAWLRS_TEST_STORAGE_BACKEND:-memory}'
 RUST_LOG='${RUST_LOG:-info}'
@@ -200,7 +212,9 @@ SERVER_LOG="test-results/liveapi-server.log"
 : > "$SERVER_LOG"
 # 团队信号量随 worker 提量：default_team_limit=10 会把并发在途钉在 10
 # （饥饿家族根因——64 worker 大半闲置），测试环境双侧提到 64
-script -qefc "bash -c 'set -a; . \"$ROOT/$LIVEAPI_ENV\"; exec \"$BIN\" api'" /dev/null > "$SERVER_LOG" 2>&1 &
+# 可移植调用：util-linux 与 BSD/macOS 的 script 均支持
+# `script [-q] <file> <command...>`；不使用 -e/-f/-c（BSD 不支持）。
+script -q /dev/null bash -c 'set -a; . "$1"; exec "$2" api' _ "$ROOT/$LIVEAPI_ENV" "$BIN" > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 log_info "等待 /health 就绪..."
@@ -241,7 +255,10 @@ if [ -z "$API_KEY" ] || [ -z "$TEAM_ID" ]; then
 fi
 log_pass "自举完成 (team=$TEAM_ID, key=${API_KEY:0:6}…<masked>)"
 # 掩码化留存服务日志（日志文件不得含明文凭证）
-sed -i "s|${API_KEY}|${API_KEY:0:6}…<masked>|g" "$SERVER_LOG"
+# BSD/macOS sed 的 -i 需要备份后缀参数；用临时文件实现可移植原地替换
+sed "s|${API_KEY}|${API_KEY:0:6}…<masked>|g" "$SERVER_LOG" > "${SERVER_LOG}.masked"
+cat "${SERVER_LOG}.masked" > "$SERVER_LOG"
+rm -f "${SERVER_LOG}.masked"
 
 # NebulaId Id 的 Display 对版本位非 4/7/8 的数值形态（自举 DEFAULT_TEAM_ID
 # 为 Id(1)）渲染为十进制短格式 "1"，而 credits.team_id 是 UUID 列，短格式直插

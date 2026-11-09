@@ -168,10 +168,25 @@ impl ScrapeWorker {
         }
     }
 
-    pub(super) async fn handle_failure(&self, task: &mut Task, error: &str) -> Result<()> {
+    /// 返回重试器结论：`Retried` 表示任务已回队（**不是终态**），
+    /// `Failed` 表示重试预算耗尽/不可重试（终态）。crawl 层据此只在
+    /// 终态失败时累加 failed_tasks，避免把“首次可重试失败”当终态
+    /// （会提前把 crawl 标 Failed 并取消重试）。
+    pub(super) async fn handle_failure(
+        &self,
+        task: &mut Task,
+        error: &str,
+    ) -> Result<crate::domain::services::retry_handler::HandleFailureResult> {
         match self.retry_handler.handle_failure(task, error).await {
-            crate::domain::services::retry_handler::HandleFailureResult::Retried { .. } => Ok(()),
-            crate::domain::services::retry_handler::HandleFailureResult::Failed => Ok(()),
+            outcome @ crate::domain::services::retry_handler::HandleFailureResult::Retried {
+                ..
+            } => Ok(outcome),
+            outcome @ crate::domain::services::retry_handler::HandleFailureResult::Failed => {
+                Ok(outcome)
+            }
+            outcome @ crate::domain::services::retry_handler::HandleFailureResult::Stale => {
+                Ok(outcome)
+            }
             crate::domain::services::retry_handler::HandleFailureResult::Error(e) => Err(e),
         }
     }

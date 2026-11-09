@@ -34,44 +34,6 @@ class TestErrorResponses:
 
         assert result.response.status_code in [401, 403]
 
-    def test_rate_limit_exceeded(self, api_client):
-        """测试速率限制触发
-
-        限流为 handler 显式 opt-in（如 map/search/scrape/webhook 入口的
-        check_rate_limit），geo-restrictions 等查询端点不在计量范围；
-        /health 为公共端点按设计跳过限流（PUBLIC_ENDPOINTS）。这里以
-        POST /v1/map 作探针（限流在 SSRF 之前，请求体即被 400 拒绝、
-        零外网零积分消耗），并签发一次性 key 打满限流桶，避免污染共享
-        key 的配额导致同套件后续用例连坐 429。
-        """
-        me = api_client.get_team_info()
-        team_id = ((me.response.body or {}).get("data") or {}).get("id")
-        assert me.success and team_id, (
-            f"无法获取 team_id，无法签发限流测试专用 key: {me.response.status_code}"
-        )
-
-        issued = api_client.issue_api_key(team_id=str(team_id), scopes=["read"])
-        assert issued.response.status_code == 201, (
-            f"签发限流测试 key 失败: {issued.response.status_code} {issued.response.body}"
-        )
-        key = ((issued.response.body or {}).get("data") or {}).get("api_key")
-        assert key, f"签发响应缺少 api_key: {issued.response.body}"
-
-        probe = CrawlrsAPIClient(api_key=key)
-        statuses = []
-        for _ in range(200):
-            # 回环地址命中 SSRF 静态拒绝（400），探针快速返回且不触发外网抓取
-            result = probe.map_url("http://127.0.0.1:9/x")
-            statuses.append(result.response.status_code)
-            if 429 in statuses:
-                break
-            time.sleep(0.01)
-
-        assert 429 in statuses, (
-            f"未能触发速率限制（{len(statuses)} 次请求，末次状态 "
-            f"{statuses[-1] if statuses else None}，状态分布 "
-            f"{ {s: statuses.count(s) for s in set(statuses)} }）"
-        )
 
 
 class TestServiceResilience:
@@ -158,14 +120,15 @@ class TestSecurity:
     def test_sql_injection_prevention(self, api_client):
         """测试 SQL 注入防护"""
         malicious_input = "'; DROP TABLE users; --"
-        result = api_client.search(query=malicious_input)
+        # 单引擎：避免默认全引擎在 searxng 不可达时把超时误判成注入失败
+        result = api_client.search(query=malicious_input, engines=["bing"])
 
         assert result.response.status_code in [200, 400, 422]
 
     def test_xss_prevention(self, api_client):
         """测试 XSS 防护"""
         xss_input = "<script>alert('xss')</script>"
-        result = api_client.search(query=xss_input)
+        result = api_client.search(query=xss_input, engines=["bing"])
 
         assert result.response.status_code in [200, 400, 422]
 
@@ -175,6 +138,51 @@ class TestSecurity:
         result = no_auth_client.get_audit_logs()
 
         assert result.response.status_code in [401, 403]
+
+
+class TestRateLimitContamination:
+    """限流探针放在文件末尾：它会打满一次性 key 的桶并可能触发
+    同源限流状态，放在中间会让后续用例偶发 429（同文件顺序污染）。
+    """
+
+    def test_rate_limit_exceeded(self, api_client):
+        """测试速率限制触发
+
+        限流为 handler 显式 opt-in（如 map/search/scrape/webhook 入口的
+        check_rate_limit），geo-restrictions 等查询端点不在计量范围；
+        /health 为公共端点按设计跳过限流（PUBLIC_ENDPOINTS）。这里以
+        POST /v1/map 作探针（限流在 SSRF 之前，请求体即被 400 拒绝、
+        零外网零积分消耗），并签发一次性 key 打满限流桶，避免污染共享
+        key 的配额导致同套件后续用例连坐 429。
+        """
+        me = api_client.get_team_info()
+        team_id = ((me.response.body or {}).get("data") or {}).get("id")
+        assert me.success and team_id, (
+            f"无法获取 team_id，无法签发限流测试专用 key: {me.response.status_code}"
+        )
+
+        issued = api_client.issue_api_key(team_id=str(team_id), scopes=["read"])
+        assert issued.response.status_code == 201, (
+            f"签发限流测试 key 失败: {issued.response.status_code} {issued.response.body}"
+        )
+        key = ((issued.response.body or {}).get("data") or {}).get("api_key")
+        assert key, f"签发响应缺少 api_key: {issued.response.body}"
+
+        probe = CrawlrsAPIClient(api_key=key)
+        statuses = []
+        for _ in range(200):
+            # 回环地址命中 SSRF 静态拒绝（400），探针快速返回且不触发外网抓取
+            result = probe.map_url("http://127.0.0.1:9/x")
+            statuses.append(result.response.status_code)
+            if 429 in statuses:
+                break
+            time.sleep(0.01)
+
+        assert 429 in statuses, (
+            f"未能触发速率限制（{len(statuses)} 次请求，末次状态 "
+            f"{statuses[-1] if statuses else None}，状态分布 "
+            f"{ {s: statuses.count(s) for s in set(statuses)} }）"
+        )
 
 
 if __name__ == "__main__":

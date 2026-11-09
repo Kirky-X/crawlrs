@@ -640,7 +640,7 @@ mod tests {
                 panic!("Bypass waiter must not adopt a cache-reading leader's result")
             }
         };
-        let _disabled_guard = match coalescer.try_start(&disabled, Id::generate()) {
+        match coalescer.try_start(&disabled, Id::generate()) {
             // Disabled 与 Bypass 同属"禁止读缓存"，彼此合并（但不与 Enabled 合并）
             CoalesceResult::Wait(..) => (),
             CoalesceResult::Proceed(_) => {

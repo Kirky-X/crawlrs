@@ -5061,6 +5061,7 @@ struct ConfigurableCrawlRepo {
     fail_increment_failed: AtomicBool,
     fail_update_status: AtomicBool,
     update_status_count: AtomicU32,
+    failed_increment_count: AtomicU32,
 }
 
 impl ConfigurableCrawlRepo {
@@ -5072,6 +5073,7 @@ impl ConfigurableCrawlRepo {
             fail_increment_failed: AtomicBool::new(false),
             fail_update_status: AtomicBool::new(false),
             update_status_count: AtomicU32::new(0),
+            failed_increment_count: AtomicU32::new(0),
         }
     }
 
@@ -5081,6 +5083,10 @@ impl ConfigurableCrawlRepo {
 
     fn update_status_count(&self) -> u32 {
         self.update_status_count.load(Ordering::SeqCst)
+    }
+
+    fn failed_increment_count(&self) -> u32 {
+        self.failed_increment_count.load(Ordering::SeqCst)
     }
 }
 
@@ -5118,6 +5124,7 @@ impl CrawlRepository for ConfigurableCrawlRepo {
         &self,
         _id: crate::domain::id::Id,
     ) -> Result<(), RepositoryError> {
+        self.failed_increment_count.fetch_add(1, Ordering::SeqCst);
         if self.fail_increment_failed.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock increment_failed error"
@@ -6590,6 +6597,9 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
     });
 
     let mut task = make_task(json!({}));
+    // 重试耗尽 → Failed 终态分支才会调用 increment_failed_tasks
+    task.attempt_count = 100;
+    task.max_retries = 1;
     let config = make_crawl_config(None, None);
     let request = worker.build_crawl_request(&task, &config);
     let result = worker
@@ -6605,6 +6615,94 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
         result.is_ok(),
         "handle_crawl_failure should not fail when increment_failed_tasks errors"
     );
+}
+
+/// H2 回归：可重试失败（Retried）不得累加 crawl failed_tasks，
+/// 否则 total=1 的 crawl 会在首次失败即被判 Failed 并取消重试。
+#[tokio::test]
+async fn test_handle_crawl_failure_retried_does_not_increment_failed_tasks() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        crawl_repo.clone(),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+
+    let mut task = make_task(json!({}));
+    task.attempt_count = 0;
+    task.max_retries = 3;
+    let config = make_crawl_config(None, None);
+    let request = worker.build_crawl_request(&task, &config);
+    let result = worker
+        .handle_crawl_failure(
+            &mut task,
+            anyhow::anyhow!("transient network error"),
+            crate::domain::id::Id::generate(),
+            &request,
+        )
+        .await;
+    assert!(result.is_ok());
+    assert_eq!(
+        crawl_repo.failed_increment_count(),
+        0,
+        "retried failure must not increment crawl failed_tasks"
+    );
+    assert_eq!(task.status, TaskStatus::Queued, "task should be requeued");
+}
+
+/// H2 回归：重试耗尽（Failed）必须计一次 crawl failed_tasks。
+#[tokio::test]
+async fn test_handle_crawl_failure_terminal_increments_failed_tasks_once() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+    let crawl_id = crate::domain::id::Id::generate();
+    let crawl = Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "terminal".into(),
+        "https://example.com".into(),
+        "https://example.com".into(),
+        CrawlStatus::Processing,
+        json!({}),
+        1,
+        0,
+        1,
+        Utc::now(),
+        Utc::now(),
+        None,
+    );
+    crawl_repo.set_crawl(crawl);
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        crawl_repo.clone(),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+
+    let mut task = make_task(json!({}));
+    task.attempt_count = 100;
+    task.max_retries = 1;
+    let config = make_crawl_config(None, None);
+    let request = worker.build_crawl_request(&task, &config);
+    let result = worker
+        .handle_crawl_failure(
+            &mut task,
+            anyhow::anyhow!("permanent failure"),
+            crawl_id,
+            &request,
+        )
+        .await;
+    assert!(result.is_ok());
+    assert_eq!(
+        crawl_repo.failed_increment_count(),
+        1,
+        "terminal failure must increment crawl failed_tasks exactly once"
+    );
+    assert_eq!(crawl_repo.update_status_count(), 1);
 }
 
 // process_crawl_task: robots.txt denial path
@@ -7469,6 +7567,9 @@ async fn test_handle_crawl_failure_increment_failed_error_logs_and_continues() {
     .await;
 
     let mut task = make_task(json!({}));
+    // 重试耗尽 → Failed 终态分支才会调用 increment_failed_tasks
+    task.attempt_count = 100;
+    task.max_retries = 1;
     let config = make_crawl_config(None, None);
     let request = worker.build_crawl_request(&task, &config);
     let result = worker
@@ -7485,6 +7586,44 @@ async fn test_handle_crawl_failure_increment_failed_error_logs_and_continues() {
         result.is_ok(),
         "handle_crawl_failure should not fail when increment_failed_tasks errors"
     );
+}
+
+/// H2/Stale 回归：守卫写 0 行（锁被接管）时返回 Stale，不是 Failed。
+#[tokio::test]
+async fn test_handle_failure_guard_loss_returns_stale() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    task_repo.reject_guarded_update();
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        Arc::new(ConfigurableCrawlRepo::new()),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+
+    let mut task = make_task(json!({}));
+    task.attempt_count = 0;
+    task.max_retries = 3;
+    let outcome = worker
+        .handle_failure(&mut task, "guard lost on retry")
+        .await
+        .expect("guard loss must not be an Err");
+    assert!(matches!(
+        outcome,
+        crate::domain::services::retry_handler::HandleFailureResult::Stale
+    ));
+
+    let mut terminal = make_task(json!({}));
+    terminal.attempt_count = 100;
+    terminal.max_retries = 1;
+    let outcome = worker
+        .handle_failure(&mut terminal, "guard lost on terminal")
+        .await
+        .expect("guard loss must not be an Err");
+    assert!(matches!(
+        outcome,
+        crate::domain::services::retry_handler::HandleFailureResult::Stale
+    ));
 }
 
 // update_crawl_completion_status: update_status error (line 569)

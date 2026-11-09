@@ -599,6 +599,8 @@ fn build_db_config(
         retry_policy: Some(dbnexus::RetryPolicy::default()),
         failover_config: None,
         replica_config: None,
+        #[cfg(feature = "db-sqlite")]
+        sqlite_pragmas: None,
     }
 }
 

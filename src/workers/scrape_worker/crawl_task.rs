@@ -71,6 +71,33 @@ impl ScrapeWorker {
         }
     }
 
+    /// 早期拒绝的统一终态：标记任务失败 + crawl 失败计数 + 完成状态 + webhook。
+    ///
+    /// 此前 robots/SSRF/payload 三条早期拒绝路径只 mark_failed，漏掉
+    /// `increment_failed_tasks` 与完成判定——crawl 行会永久停在 queued
+    /// （E2E liveapi: robots 全站 Disallow 的种子站 120s 不变终态）。
+    /// 守卫写返回 0 表示任务已被并发终结，跳过计数避免重复累加。
+    async fn finalize_crawl_rejection(&self, task: &Task, reason: &str) -> Result<()> {
+        let rows = self
+            .repository
+            .mark_failed_with_reason(task, reason)
+            .await?;
+        if rows == 0 {
+            return Ok(());
+        }
+        if let Some(crawl_id) = task.crawl_id {
+            if let Err(e) = self.crawl_repository.increment_failed_tasks(crawl_id).await {
+                error!(
+                    "Failed to increment failed tasks for crawl {}: {}",
+                    crawl_id, e
+                );
+            }
+            update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
+        }
+        self.trigger_webhook(task, Some(reason.to_string())).await;
+        Ok(())
+    }
+
     /// 解析 Crawl 任务 Payload（自 [`ScrapeWorker::process_crawl_task`] 提取）；
     /// 解析失败时标记任务失败并返回 `None`（调用方直接返回 Ok(())）。
     async fn parse_crawl_task_payload(
@@ -81,8 +108,7 @@ impl ScrapeWorker {
             Ok(result) => Ok(Some(result)),
             Err(e) => {
                 error!("Failed to parse crawl payload: {}", e);
-                self.repository
-                    .mark_failed_with_reason(task, &format!("Invalid crawl payload: {e}"))
+                self.finalize_crawl_rejection(task, &format!("Invalid crawl payload: {e}"))
                     .await?;
                 Ok(None)
             }
@@ -100,15 +126,11 @@ impl ScrapeWorker {
         )
         .await
         {
-            self.repository
-                .mark_failed_with_reason(
-                    task,
-                    &format!(
-                        "Blocked by robots.txt: URL disallowed for user-agent '{}'",
-                        self.settings.robots.user_agent
-                    ),
-                )
-                .await?;
+            let reason = format!(
+                "Blocked by robots.txt: URL disallowed for user-agent '{}'",
+                self.settings.robots.user_agent
+            );
+            self.finalize_crawl_rejection(task, &reason).await?;
             return Ok(false);
         }
         Ok(true)
@@ -153,12 +175,11 @@ impl ScrapeWorker {
                     task.id,
                     task.team_id
                 );
-                self.repository
-                    .mark_failed_with_reason(
-                        task,
-                        "Blocked: proxy target is an internal address (SSRF protection)",
-                    )
-                    .await?;
+                self.finalize_crawl_rejection(
+                    task,
+                    "Blocked: proxy target is an internal address (SSRF protection)",
+                )
+                .await?;
                 return Ok(true);
             }
         }
@@ -620,18 +641,26 @@ impl ScrapeWorker {
 
         error!("Crawl step failed: {}", error);
         let err_msg = error.to_string();
-        self.handle_failure(task, &err_msg).await?;
+        let outcome = self.handle_failure(task, &err_msg).await?;
 
-        if let Err(e) = self.crawl_repository.increment_failed_tasks(crawl_id).await {
-            error!(
-                "Failed to increment failed tasks for crawl {}: {}",
-                crawl_id, e
-            );
+        // 只有重试预算耗尽/不可重试（Failed）才是 crawl 子任务的终态；
+        // Retried 不计 failed_tasks，否则 completed+failed==total 会提前
+        // 成立，把 crawl 标 Failed 并取消仍在排队的重试。
+        if matches!(
+            outcome,
+            crate::domain::services::retry_handler::HandleFailureResult::Failed
+        ) {
+            if let Err(e) = self.crawl_repository.increment_failed_tasks(crawl_id).await {
+                error!(
+                    "Failed to increment failed tasks for crawl {}: {}",
+                    crawl_id, e
+                );
+            }
+            update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
+            // 失败 webhook 只在终态发出：可重试失败若也发，外部消费者会把
+            // “将重试”误读为终态失败（架构复核 LOW）。
+            self.trigger_webhook(task, Some(error.to_string())).await;
         }
-
-        update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
-
-        self.trigger_webhook(task, Some(error.to_string())).await;
 
         Ok(())
     }

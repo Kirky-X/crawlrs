@@ -78,17 +78,25 @@ pub async fn update_crawl_completion_status(
 ) {
     match crawl_repository.find_by_id(crawl_id).await {
         Ok(Some(c)) => {
-            if c.completed_tasks() + c.failed_tasks() == c.total_tasks() {
+            // total=0 的爬取不判完成（避免空 crawl 被误标 completed）；
+            // 全部失败（completed=0）标 Failed，而不是 completed+空结果
+            // （E2E 语义用例：防“静默空结果”的假成功）。
+            let total = c.total_tasks();
+            let completed = c.completed_tasks();
+            let failed = c.failed_tasks();
+            if total > 0 && completed + failed == total {
+                let status = if completed == 0 {
+                    CrawlStatus::Failed
+                } else {
+                    CrawlStatus::Completed
+                };
                 info!(
-                    "All tasks completed for crawl {}, marking as completed",
-                    crawl_id
+                    "All tasks terminal for crawl {} (completed={}, failed={}), marking as {}",
+                    crawl_id, completed, failed, status
                 );
-                if let Err(e) = crawl_repository
-                    .update_status(crawl_id, CrawlStatus::Completed)
-                    .await
-                {
+                if let Err(e) = crawl_repository.update_status(crawl_id, status).await {
                     error!(
-                        "Failed to update crawl status to completed for crawl {}: {}",
+                        "Failed to update crawl status for crawl {}: {}",
                         crawl_id, e
                     );
                 }
@@ -649,6 +657,7 @@ mod tests {
     struct ConfigurableCrawlRepo {
         crawl: Option<Crawl>,
         update_status_count: AtomicU32,
+        last_status: std::sync::Mutex<Option<CrawlStatus>>,
     }
 
     impl ConfigurableCrawlRepo {
@@ -656,7 +665,12 @@ mod tests {
             Self {
                 crawl: Some(c),
                 update_status_count: AtomicU32::new(0),
+                last_status: std::sync::Mutex::new(None),
             }
+        }
+
+        fn last_status(&self) -> Option<CrawlStatus> {
+            *self.last_status.lock().expect("status mutex poisoned")
         }
     }
 
@@ -689,8 +703,9 @@ mod tests {
         async fn update_status(
             &self,
             _id: crate::domain::id::Id,
-            _status: CrawlStatus,
+            status: CrawlStatus,
         ) -> Result<(), RepositoryError> {
+            *self.last_status.lock().expect("status mutex poisoned") = Some(status);
             self.update_status_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -1228,6 +1243,35 @@ mod tests {
             repo.update_status_count.load(Ordering::SeqCst),
             1,
             "should mark completed when all tasks done"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_crawl_completion_status_all_failed_marks_failed() {
+        // completed(0) + failed(5) == total(5) → 全部失败必须标 Failed，
+        // 不能 completed + 空结果（防静默假成功）
+        let crawl = Crawl::with_all_fields(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            "test".into(),
+            "https://example.com".into(),
+            "https://example.com".into(),
+            CrawlStatus::Processing,
+            json!({}),
+            5,
+            0,
+            5,
+            Utc::now(),
+            Utc::now(),
+            None,
+        );
+        let repo = ConfigurableCrawlRepo::with_crawl(crawl);
+        update_crawl_completion_status(crate::domain::id::Id::generate(), &repo).await;
+        assert_eq!(repo.update_status_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            repo.last_status(),
+            Some(CrawlStatus::Failed),
+            "all-failed crawl must be marked Failed"
         );
     }
 

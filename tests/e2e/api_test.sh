@@ -265,8 +265,8 @@ run_test "Crawl 空 body (400)"              400 POST "/v1/crawl"  "" "auth"
 run_test "Crawl 无效 URL (400)"             400 POST "/v1/crawl"  '{"url":"","config":{"max_depth":1}}' "auth"
 run_test "Crawl max_depth=0 (边界)"         "201|202" POST "/v1/crawl"  '{"url":"https://text.npr.org","config":{"max_depth":0}}' "auth"
 run_test "Crawl max_depth=101 (超限 422)"     422 POST "/v1/crawl"  '{"url":"https://text.npr.org","config":{"max_depth":101}}' "auth"
-# max_concurrency=51 在当前实现中未被拒绝（验证上限 >51 或未设上限），实际返回 202
-run_test "Crawl max_concurrency=51 (接受)"  "201|202" POST "/v1/crawl"  '{"url":"https://text.npr.org","config":{"max_depth":1,"max_concurrency":51}}' "auth"
+# D6 契约：max_concurrency 上限 50，51 → 422
+run_test "Crawl max_concurrency=51 (拒绝 422)"  "422" POST "/v1/crawl"  '{"url":"https://text.npr.org","config":{"max_depth":1,"max_concurrency":51}}' "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 5. Search 端点
@@ -300,8 +300,8 @@ run_test_timeout "Extract with sync_wait_ms"       "201|202" POST "/v1/extract" 
     '{"urls":["https://text.npr.org"],"rules":{"title":{"selector":"h1","attr":null,"is_array":false}},"sync_wait_ms":15000}' "auth"
 
 # Extract 错误输入
-run_test "Extract 空 urls (400)"              400 POST "/v1/extract"  '{"urls":[]}' "auth"
-run_test "Extract 无效 URL (400)"             400 POST "/v1/extract"  '{"urls":["not-a-url"]}' "auth"
+run_test "Extract 空 urls (422)"              422 POST "/v1/extract"  '{"urls":[]}' "auth"
+run_test "Extract 无效 URL (422)"             422 POST "/v1/extract"  '{"urls":["not-a-url"]}' "auth"
 run_test "Extract 空 body (400)"              400 POST "/v1/extract"  '' "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -426,7 +426,8 @@ done
 
 # sync_wait_ms 边界
 run_test "sync_wait_ms=0 (边界)"              201 POST "/v1/scrape" '{"url":"https://text.npr.org","sync_wait_ms":0}' "auth"
-run_test "sync_wait_ms=30000 (上限)"          201 POST "/v1/scrape" '{"url":"https://text.npr.org","sync_wait_ms":30000}' "auth"
+# 同步等待超时后 202（任务保持异步执行）是文档化语义；负载下可能未在窗口内完成
+run_test "sync_wait_ms=30000 (上限)"          "201|202" POST "/v1/scrape" '{"url":"https://text.npr.org","sync_wait_ms":30000}' "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 15. 取消任务测试

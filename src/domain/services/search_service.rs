@@ -229,18 +229,12 @@ impl SearchService {
                 extraction_rules: None,
             });
 
-            let _now = chrono::Utc::now();
-            let crawl = Crawl::new(
-                cid,
-                team_id,
-                format!("Search Crawl: {}", query.query),
-                "search://".to_string() + &query.query,
-                "search://".to_string() + &query.query,
-                json!(config),
-            );
-
-            self.crawl_repo.create(&crawl).await?;
-
+            let now = chrono::Utc::now();
+            // 先过滤超长 URL 并去重，再一次性写入 total_tasks：
+            // 逐任务自增会让 worker 在循环中途看到“部分 total”，
+            // 快失败时提前满足 completed+failed==total 并取消剩余任务。
+            let mut seen_urls = std::collections::HashSet::new();
+            let mut eligible = Vec::new();
             for result in &results {
                 // tasks.url 的普通 btree 索引有行上限：与 crawl/scrape/extract
                 // 同口径过滤超长 URL（字节）。
@@ -253,20 +247,63 @@ impl SearchService {
                     metrics::counter!("crawlrs_search_oversized_url_total").increment(1);
                     continue;
                 }
-                let mut task = Task::new(
-                    crate::domain::id::Id::generate(),
-                    TaskType::Crawl,
-                    team_id,
-                    api_key_id,
-                    result.url.clone(),
-                    json!({ "crawl_id": cid, "depth": 0, "config": config }),
-                );
-                task.priority = 100;
-                task.crawl_id = Some(cid);
-                self.task_repo.create(&task).await?;
+                if seen_urls.insert(result.url.clone()) {
+                    eligible.push(result);
+                }
             }
 
-            crawl_id = Some(cid);
+            // 无可用结果时不创建 crawl：total=0 的空 crawl 永远无法进入终态。
+            if !eligible.is_empty() {
+                let crawl = Crawl::with_all_fields(
+                    cid,
+                    team_id,
+                    format!("Search Crawl: {}", query.query),
+                    "search://".to_string() + &query.query,
+                    "search://".to_string() + &query.query,
+                    crate::domain::models::CrawlStatus::Queued,
+                    json!(config),
+                    eligible.len() as i32,
+                    0,
+                    0,
+                    now,
+                    now,
+                    None,
+                );
+
+                self.crawl_repo.create(&crawl).await?;
+
+                for result in eligible {
+                    let mut task = Task::new(
+                        crate::domain::id::Id::generate(),
+                        TaskType::Crawl,
+                        team_id,
+                        api_key_id,
+                        result.url.clone(),
+                        json!({ "crawl_id": cid, "depth": 0, "config": config }),
+                    );
+                    task.priority = 100;
+                    task.crawl_id = Some(cid);
+                    if let Err(e) = self.task_repo.create(&task).await {
+                        // 已写 total=N 但任务只落了部分：显式把 crawl 标 Failed，
+                        // 避免 completed+failed 永不达 total 的永久 queued。
+                        log::error!("Failed to enqueue search crawl task (crawl {}): {}", cid, e);
+                        if let Err(mark_err) = self
+                            .crawl_repo
+                            .update_status(cid, crate::domain::models::CrawlStatus::Failed)
+                            .await
+                        {
+                            log::error!(
+                                "Failed to mark incomplete search crawl {} as Failed: {}",
+                                cid,
+                                mark_err
+                            );
+                        }
+                        return Err(e.into());
+                    }
+                }
+
+                crawl_id = Some(cid);
+            }
         }
 
         // Deduct credits for the search operation

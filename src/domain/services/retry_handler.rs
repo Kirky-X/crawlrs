@@ -22,6 +22,9 @@ pub enum HandleFailureResult {
     },
     /// Task exceeded max retries and was marked as failed
     Failed,
+    /// 守卫写未生效（锁被其他 worker 接管/任务已被并发迁移）：
+    /// 本 worker 没有终结该任务，调用方不得按终态计数。
+    Stale,
     /// Error occurred during handling
     Error(anyhow::Error),
 }
@@ -117,6 +120,7 @@ impl RetryHandler {
                 "Task {} terminal-fail not written (guard failed: migrated by another worker)",
                 task.id
             );
+            return HandleFailureResult::Stale;
         }
         HandleFailureResult::Failed
     }
@@ -145,7 +149,7 @@ impl RetryHandler {
                 "Task {} retry requeue not written (guard failed: migrated by another worker)",
                 task.id
             );
-            return HandleFailureResult::Failed;
+            return HandleFailureResult::Stale;
         }
 
         info!(

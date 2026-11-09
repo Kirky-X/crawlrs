@@ -459,7 +459,7 @@ pub(crate) fn ssrf_protection_disabled() -> bool {
         let _guard = crate::common::test_support::ENV_MUTEX
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        return std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok();
+        std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok()
     }
     #[cfg(not(test))]
     {

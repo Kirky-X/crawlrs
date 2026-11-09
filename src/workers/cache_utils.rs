@@ -289,8 +289,10 @@ mod tests {
         // 单一实现来源：缓存键指纹必须与 `request_fingerprint` 逐位一致，
         // 防止缓存链路私自维护第二份字段清单。合并键另叠加
         // `cache_read_allowed` 投影（见 coalesce_coordinator::key），不与缓存键相等。
-        let mut opts = ScrapeOptions::default();
-        opts.needs_js = true;
+        let mut opts = ScrapeOptions {
+            needs_js: true,
+            ..Default::default()
+        };
         opts.headers
             .insert("X-Trace".to_string(), "abc".to_string());
 

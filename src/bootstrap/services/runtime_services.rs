@@ -197,7 +197,12 @@ fn select_rate_limit_storage(
     match settings.rate_limiting.storage_backend.as_str() {
         "memory" => Ok(StorageHandle::Memory),
         "database" => {
-            #[cfg(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql"))]
+            // crawlrs 当前只接线 Postgres 共享限流存储（ensure_storage_schema
+            // 为 Postgres DDL）；sqlite/mysql 构建或 platform 关闭时选择
+            // database 后端必须显式报错，不得回退内存。
+            // cfg 必须与 StorageHandle::Database 的变体条件完全一致
+            // （all(db-postgres, platform)），否则 web-axum 构建会编译失败。
+            #[cfg(all(feature = "db-postgres", feature = "platform"))]
             match db_pool {
                 Some(pool) => Ok(StorageHandle::Database(pool)),
                 None => {
@@ -207,13 +212,13 @@ fn select_rate_limit_storage(
                     );
                 }
             }
-            #[cfg(not(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql")))]
+            #[cfg(not(all(feature = "db-postgres", feature = "platform")))]
             {
                 let _ = db_pool;
                 anyhow::bail!(
-                    "rate_limiting.storage_backend=database requires a compiled db dialect \
-                     (db-postgres/db-sqlite/db-mysql); refusing to fall back to memory \
-                     storage (config error)"
+                    "rate_limiting.storage_backend=database requires db-postgres + platform \
+                     (crawlrs wires the Postgres shared-storage adapter only); \
+                     refusing to fall back to memory storage"
                 );
             }
         }
