@@ -15,6 +15,7 @@ publish = false
 
 [dependencies]
 # 从父目录引用主项目；仅显式启用 metrics 以运行 metrics_export 示例
+# （不含 `alchemize`：其 path 依赖 ../alchemize 指向本 checkout 之外，干净环境无法解析）
 crawlrs = { path = "..", default-features = false, features = [
     "metrics",
     "engine-playwright",

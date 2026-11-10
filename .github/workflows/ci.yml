@@ -29,6 +29,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: rustfmt, clippy
@@ -48,6 +50,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: rustfmt, clippy
@@ -71,6 +75,8 @@ jobs:
     needs: check-default
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -116,6 +122,8 @@ jobs:
             expect-garrison: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -191,6 +199,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: rustfmt
@@ -203,6 +213,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: clippy
@@ -251,6 +263,8 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: ${{ matrix.rust }}
@@ -286,6 +300,8 @@ jobs:
       RUSTDOCFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -301,6 +317,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
   integration-test:
@@ -328,6 +346,8 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -374,6 +394,8 @@ jobs:
       CRAWLRS_ACCEPTANCE_OFFLINE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -421,6 +443,8 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -474,6 +498,8 @@ jobs:
       MYSQL: mysql -h127.0.0.1 -uroot -proot crawlrs_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # alchemize path 依赖在解析期读 ../alchemize（含 --no-default-features），须先检出 sibling
+      - uses: ./.github/actions/alchemize-sibling
       - name: Apply migrations 001→010
         run: |
           set -euo pipefail
