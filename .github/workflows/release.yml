@@ -217,7 +217,7 @@ jobs:
       - name: Detect git dependencies
         id: gitdeps
         run: |
-          if grep -qE '^\s*git\s*=' Cargo.toml; then
+          if grep -qE '\bgit[[:space:]]*=' Cargo.toml; then
             echo "git dependencies present -> crates.io publish deferred (upstream not on registry yet)"
             echo "has=true" >> $GITHUB_OUTPUT
           else
