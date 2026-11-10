@@ -21,11 +21,12 @@
 ### Fixed（发布流水线全量补跑：CI 复绿与卫生清理）
 
 - **CI 修复**：Feature Matrix 五组合的 6 处 no-default 告警（`RetryReason` cfg 门控、race/sequential 未用参数、url_redaction 三处按特性归属 allow）；engine-moli 内存门控测试跨子模块访问改 `state_for_test()`（并修 `_available_mib` 告警）；BDD 作业补齐 PostgreSQL service 与 migrations 步骤（此前 TEST_DATABASE_URL 指向不存在的服务，bootstrap 因 "Connection closed" 全红）
+- **队列指标修复**：`PostgresTaskQueue` 深度计数器钳 0 下限——crawl 子任务经 `repository.create` 直写入队而 worker 走 `queue.dequeue` 扣减，负向漂移使 u64 回绕：debug 构建下后续 enqueue 溢出 panic（BDD acceptance 间歇 "connection closed before message completed" 的根因），release 静默输出垃圾 `crawlrs_queue_depth`；附回归单测
 - **安全通道**：新增 `.cargo/audit.toml` 与 `deny.toml` 同源豁免（含 RUSTSEC-2026-0459，sqlx 0.9 的 `<0.38` 约束挡住修复版 0.39）；CodeQL 18 条 open 告警逐条裁决归零（9 条标识符/掩码日志 FP、2 条高熵 key 摘要 FP、2 条按请求 TLS 选项 won't-fix、5 条测试夹具 used-in-tests）
 - **注释与文档**：清理任务号/评审戳注释（CI 与 worker/引擎/处理器注释）；修复 3 处 doctest 错误（`record_block()`/`intercepted_count()`/`HtmdMarkdownService` 路径）；API_REFERENCE/FAQ/USER_GUIDE 版本与健康示例对齐；README 统计按实重测（230,418 行）
 - **示例**：18 个示例此前 `EngineClient::new()` 注册零引擎恒失败；新增 `crawlrs_examples::default_engine_client()`（ReqwestEngine），17 个示例接入（`mllm_scrape` 需完整 LLM DI，刻意保留显式零引擎以避免普通 HTTP 成功冒充 MLLM 成功）；`basic_scrape` 实测 example.com HTTP 200；全示例 `-D warnings` 编译通过
 - **依赖**：html-escape 0.3.1、toml 1.2.1、uuid 1.29.2（cargo-outdated 仅余 testcontainers 链约束项，维持钉版）
-- **验证**：lib 6378/0、integration 170/170、main 790 passed/16 ignored、sdk 8/8、doctest 10/10、行覆盖率 90.13%（流水线 Step 9 目标 ≥90 达标；CI 阈值仍为 80%）、E2E matrix/static/unit/integration/bench/liveapi 六阶段 PASS（report 汇总按设计 SKIPPED）、clippy(default/full/agent-lib)+doc+deny+audit 全绿
+- **验证**：lib 6379/0、integration 170/170、main 790 passed/16 ignored、sdk 8/8、doctest 10/10、行覆盖率 90.13%（流水线 Step 9 目标 ≥90 达标；CI 阈值仍为 80%）、E2E matrix/static/unit/integration/bench/liveapi 六阶段 PASS（report 汇总按设计 SKIPPED）、BDD acceptance 连跑 5×59/59、clippy(default/full/agent-lib)+doc+deny+audit 全绿
 
 ## [0.2.0-rc.3] - 2026-11-10
 

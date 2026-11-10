@@ -44,6 +44,10 @@ pub struct PostgresTaskQueue {
     /// 任务仓库
     pub repository: Arc<dyn TaskRepository>,
     /// 近似队列深度计数器（enqueue +1, dequeue -1）
+    ///
+    /// 下限钳 0：crawl 子任务经 repository.create 直写入队（不走 queue.enqueue），
+    /// worker 的 dequeue 扣减若无下限会回绕为 u64::MAX，后续 enqueue 的
+    /// `old + 1` 在 debug 构建即溢出 panic，release 则静默输出垃圾指标。
     depth: AtomicU64,
 }
 
@@ -99,7 +103,20 @@ impl TaskQueue for PostgresTaskQueue {
         debug!("worker_id={}", worker_id);
         let task = self.repository.acquire_next(worker_id).await?;
         if task.is_some() {
-            self.depth.fetch_sub(1, Ordering::Relaxed);
+            // 深度下限钳 0（CAS 循环容忍并发入队），防止负向漂移回绕
+            let mut observed = self.depth.load(Ordering::Relaxed);
+            loop {
+                let next = observed.saturating_sub(1);
+                match self.depth.compare_exchange_weak(
+                    observed,
+                    next,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(now) => observed = now,
+                }
+            }
         }
         let current = self.depth.load(Ordering::Relaxed);
         gauge!("crawlrs_queue_depth", "queue_type" => "task").set(current as f64);
@@ -478,6 +495,29 @@ mod tests {
         assert_eq!(dequeued.id, task.id);
         // Verify the worker_id was forwarded to the repository.
         assert_eq!(*mock.last_worker_id.lock(), Some(worker_id));
+    }
+
+    #[tokio::test]
+    async fn test_depth_counter_clamps_at_zero_for_repository_direct_enqueues() {
+        // crawl 子任务经 repository.create 直写入队（不经 queue.enqueue），
+        // worker 仍走 queue.dequeue 扣减深度。负向漂移必须钳在 0：
+        // u64 回绕会让后续 enqueue 的 `old + 1` 在 debug 构建溢出 panic
+        // （BDD acceptance 曾表现为 connection closed before message completed），
+        // release 则静默输出垃圾 queue_depth 指标。
+        let mock = Arc::new(MockTaskRepository::with_next_task(sample_task()));
+        let queue = make_queue(mock.clone());
+        // 零入队先出队：深度不得回绕
+        queue
+            .dequeue(crate::domain::id::Id::generate())
+            .await
+            .expect("dequeue should succeed");
+        assert_eq!(queue.depth.load(Ordering::Relaxed), 0);
+        // 回绕已钳制后，正常入队深度回到 1（而非 panic）
+        queue
+            .enqueue(sample_task())
+            .await
+            .expect("enqueue should succeed");
+        assert_eq!(queue.depth.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]

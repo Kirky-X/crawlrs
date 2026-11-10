@@ -456,7 +456,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 Test Scale
 
-As of 0.2.0-rc.4: 6,558 inline test attributes in `src/` (476 source files, 230,418 lines), 994 tests in `tests/` (124 `.rs` files, incl. 71 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
+As of 0.2.0-rc.4: 6,559 inline test attributes in `src/` (476 source files, 230,418 lines), 994 tests in `tests/` (124 `.rs` files, incl. 71 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
 
 ---
 
