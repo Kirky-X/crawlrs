@@ -257,7 +257,18 @@ jobs:
         with:
           shared-key: release-full-deps
 
+      # cargo package 同样拒绝 git 依赖：有 git 依赖时改用 tag 源码归档
+      - name: Detect git dependencies
+        id: gitdeps
+        run: |
+          if grep -qE '\bgit[[:space:]]*=' Cargo.toml; then
+            echo "has=true" >> $GITHUB_OUTPUT
+          else
+            echo "has=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build source package (.crate)
+        if: steps.gitdeps.outputs.has == 'false'
         run: |
           cargo package --no-verify
           CRATE_FILE=$(find target/package -name "*.crate" -type f | head -1)
@@ -265,8 +276,21 @@ jobs:
             echo "::error::No .crate file found"
             exit 1
           fi
+          shasum -a 256 "$CRATE_FILE" > "$CRATE_FILE.sha256"
           echo "CRATE_FILE=$CRATE_FILE" >> $GITHUB_ENV
+          echo "CRATE_SUM=$CRATE_FILE.sha256" >> $GITHUB_ENV
           echo "Built: $CRATE_FILE"
+
+      - name: Build tagged source archive (git deps present)
+        if: steps.gitdeps.outputs.has == 'true'
+        run: |
+          VERSION="${{ needs.version-consistency.outputs.version }}"
+          ARTIFACT="crawlrs-${VERSION}.tar.gz"
+          git archive --format=tar.gz --output="$ARTIFACT" "v${VERSION}"
+          shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
+          echo "CRATE_FILE=$ARTIFACT" >> $GITHUB_ENV
+          echo "CRATE_SUM=$ARTIFACT.sha256" >> $GITHUB_ENV
+          echo "Built: $ARTIFACT (tagged source; .crate unavailable while git deps exist)"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -279,6 +303,7 @@ jobs:
           prerelease: ${{ contains(needs.version-consistency.outputs.version, '-') }}
           files: |
             ${{ env.CRATE_FILE }}
+            ${{ env.CRATE_SUM }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -337,6 +362,12 @@ jobs:
         env:
           VERSION: ${{ steps.extract-version.outputs.version }}
         run: |
+          # git 依赖未 registry 化时发布侧已显式跳过 crates.io（见 publish-crates-io
+          # 的 Detect git dependencies），此处不把"未上 crates"判为失败。
+          if grep -qE '\bgit[[:space:]]*=' Cargo.toml; then
+            echo "::notice::crates.io verification skipped: git dependencies defer registry publish"
+            exit 0
+          fi
           PUBLISHED=""
           for i in 1 2 3 4 5 6; do
             PUBLISHED=$(curl -sS -H "User-Agent: crawlrs-release-verify" "https://crates.io/api/v1/crates/crawlrs" | grep -o "\"newest_version\":\"[^\"]*\"" | head -1)
