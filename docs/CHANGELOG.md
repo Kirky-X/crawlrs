@@ -26,6 +26,8 @@
 - **构建面**：`web-axum` 不再硬编码 inklog/postgres 驱动，db-postgres/sqlite/mysql 三组合编译矩阵全绿；缺驱动守卫覆盖 platform/web-axum
 - **验证**：三维审查（安全/架构/性能）三轮 PASS；fmt/clippy(default,full)/`-D warnings` 测试编译/pre-commit 13 项/cargo deny 全绿；真实 PG：lib 6402 通过（本机无 Chrome 时 5 个 Playwright XHR 用例仅在 --include-ignored 下失败）、integration 170/170、main 806/806、sdk 8/8
 
+- **发布通道**：release.yml Version Consistency 的 CHANGELOG 路径对齐 `docs/`（迁移遗留断裂）；检测到 git 依赖（moli-html2md / fluxweir 尚未 registry 化）时显式跳过 crates.io 发布并放行 GitHub Release——上游发 registry 版本后自动恢复双通道；ci.yml 遗留 `checkout@v4` 钉 SHA
+
 ### Changed（依赖全量升级 deps-refresh）
 
 - **全量升级到最新 minor**：tokio 1.53→1.54、uuid 1.27→1.29、sysinfo 0.39→0.40、scraper 0.27→0.29、dom_smoothie 0.18→0.19、lru 0.18→0.19、html-escape 0.2→0.3、parking_lot 0.12→0.13、toml 1.1→1.2、utoipa 5.5→6.0（与 sdforge 0.5.0-rc.10 的 `pub use utoipa` re-export 同版）；其余直接依赖的最新 minor 与既有约束一致，无需改动

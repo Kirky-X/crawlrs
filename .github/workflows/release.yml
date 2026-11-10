@@ -211,11 +211,29 @@ jobs:
           echo "crawlrs ${VERSION}: HTTP ${CODE}"
           echo "exists=$([[ "$CODE" == "200" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
+      # crates.io 不接受 git 依赖：moli-html2md / fluxweir 尚未发 registry 版本时
+      # cargo publish 必败（"no matching package found"）。检测到 git 依赖即显式跳过
+      # 并放行 GitHub Release（源码发布）；上游 registry 化后本守卫自动放行发布。
+      - name: Detect git dependencies
+        id: gitdeps
+        run: |
+          if grep -qE '^\s*git\s*=' Cargo.toml; then
+            echo "git dependencies present -> crates.io publish deferred (upstream not on registry yet)"
+            echo "has=true" >> $GITHUB_OUTPUT
+          else
+            echo "has=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish to crates.io
-        if: steps.published.outputs.exists == 'false'
+        if: steps.published.outputs.exists == 'false' && steps.gitdeps.outputs.has == 'false'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish
+
+      - name: Notice skipped crates.io publish
+        if: steps.published.outputs.exists == 'false' && steps.gitdeps.outputs.has == 'true'
+        run: |
+          echo "::notice::crates.io publish skipped: git dependencies (see Detect git dependencies) block cargo publish until upstream crates are published"
 
   github-release:
     name: GitHub Release
