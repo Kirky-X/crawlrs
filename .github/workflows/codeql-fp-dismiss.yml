@@ -52,18 +52,14 @@ jobs:
         run: |
           set -euo pipefail
           for n in ${{ inputs.alert_numbers }}; do
-            echo "== GET alert #$n =="
-            gh api "repos/${{ github.repository }}/code-scanning/alerts/$n" \
-              --jq '{number, state, url: .url, ref: .most_recent_instance.ref, rule: .rule.id}' || true
-            echo "== PUT dismiss alert #$n =="
-            code=$(gh api -i -X PATCH "repos/${{ github.repository }}/code-scanning/alerts/$n" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              -f state=dismissed \
-              -f dismissed_reason="${{ inputs.reason }}" \
-              -f dismissed_comment="${{ inputs.comment }}" \
-              2>&1 | head -1 || true)
-            echo "first line: $code"
+            state=$(gh api "repos/${{ github.repository }}/code-scanning/alerts/$n" --jq '.state')
+            if [ "$state" = "dismissed" ]; then
+              echo "alert #$n already dismissed, skipping"
+              continue
+            fi
+            echo "dismissing alert #$n ..."
             gh api -X PATCH "repos/${{ github.repository }}/code-scanning/alerts/$n" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
               -f state=dismissed \
               -f dismissed_reason="${{ inputs.reason }}" \
               -f dismissed_comment="${{ inputs.comment }}" \
