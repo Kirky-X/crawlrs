@@ -113,8 +113,14 @@ mod tests {
             result.unwrap_err().code.to_string(),
             "invalid_markdown_converter"
         );
-        // 合法值：moli 与 htmd（大小写不敏感）
-        for ok in ["moli", "htmd", "HTMD"] {
+        // 合法值：moli 与 htmd（大小写不敏感）；alchemize 随特性加入
+        for ok in [
+            "moli",
+            "htmd",
+            "HTMD",
+            #[cfg(feature = "alchemize")]
+            "alchemize",
+        ] {
             settings.markdown.converter = ok.to_string();
             assert!(validate_values(&settings).is_ok(), "{ok} 应通过");
         }
