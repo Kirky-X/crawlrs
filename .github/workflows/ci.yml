@@ -306,7 +306,9 @@ jobs:
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 实测基线 ~25m15s（`--features full,test-mocks --tests` 全测试目标冷编译+运行），
+    # 25 分钟阈值边缘超时（395de938 CI 作业被 cancelled），抬高到 40 分钟留波动余量
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
