@@ -67,6 +67,8 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
+      # 与 ci.yml BDD 口径一致：外部搜索引擎结果不可控，离线跳过 @requires-internet
+      CRAWLRS_ACCEPTANCE_OFFLINE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
