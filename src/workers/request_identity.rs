@@ -5,8 +5,8 @@
 //!
 //! 本模块是全仓唯一的 `ScrapeOptions` 身份编码实现：抓取缓存键
 //! （[`crate::workers::cache_utils::generate_scrape_cache_key`]）直接复用
-//! [`request_fingerprint`]，合并键（[`crate::workers::coalesce_coordinator::CoalesceKey`]）
-//! 复用 [`coalesce_fingerprint`]，不得另建字段清单。`ScrapeOptions` 新增字段会
+//! `request_fingerprint`，合并键（[`crate::workers::coalesce_coordinator::CoalesceKey`]）
+//! 复用 `coalesce_fingerprint`，不得另建字段清单。`ScrapeOptions` 新增字段会
 //! 自动进入缓存键与合并键，避免两条链路对"请求身份"的定义漂移（控制开关类字段
 //! 按下方归一例外处理）。
 //!
@@ -38,7 +38,7 @@ use crate::engines::types::ScrapeOptions;
 /// - `None` 与 `Some(Enabled)` 生成双 key，缓存与合并都被拆散
 ///
 /// 因此规范化投影把该字段固定为 `null`，四种模式得到同一缓存键。
-/// 合并键改用 [`coalesce_fingerprint`]，在该投影之上叠加由 `cache_mode`
+/// 合并键改用 `coalesce_fingerprint`，在该投影之上叠加由 `cache_mode`
 /// 派生的 `cache_read_allowed` 布尔字段（见该函数文档）。
 ///
 /// 该归一不是第二份字段清单：除 headers 的确定性替换外，其余字段仍由
@@ -67,7 +67,7 @@ pub(crate) fn request_fingerprint(options: &ScrapeOptions) -> u64 {
 /// 默认值编码。
 ///
 /// 布尔字段由 `cache_mode` 派生，不是新增的字段清单；缓存键仍走
-/// [`request_fingerprint`]，四种模式保持同一键。
+/// `request_fingerprint`，四种模式保持同一键。
 #[must_use]
 pub(crate) fn coalesce_fingerprint(options: &ScrapeOptions) -> u64 {
     const CACHE_READ_ALLOWED_FIELD: &str = "cache_read_allowed";

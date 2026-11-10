@@ -3,7 +3,7 @@
 
 //! SearXNG 搜索引擎 — 公共实例 JSON API 适配器
 //!
-//! 引擎不直连实例数据库与 searx.space 数据集：实例经 [`SearxngInstanceService`]
+//! 引擎不直连实例数据库与 searx.space 数据集：实例经 `SearxngInstanceService`
 //! 端口轮转获取，请求结果同样回填给该端口（熔断记账 + 逐出晋升）。单次 `search()`
 //! 最多消费 `max_failover_attempts` 个不同实例。
 

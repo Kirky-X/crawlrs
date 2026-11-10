@@ -376,7 +376,7 @@ pub mod garrison_health {
 
     /// 单引擎 garrison 健康检查项
     ///
-    /// 内部委托 [`EngineHealthMonitor::check_engine_health`] 的领域探活逻辑，
+    /// 内部委托 `EngineHealthMonitor::check_engine_health` 的领域探活逻辑，
     /// 结果写回监控器共享状态表（`get_healthy_engines`/`get_engine_health`
     /// 等既有消费方无需改动）。引擎列表构造后不可变，index 稳定。
     pub struct EngineHealthCheck {

@@ -163,11 +163,11 @@ jobs:
         env:
           VERSION: ${{ steps.extract-version.outputs.version }}
         run: |
-          if ! grep -qE "^## \[${VERSION}\] " CHANGELOG.md; then
-            echo "::error::CHANGELOG.md missing ## [${VERSION}] section"
+          if ! grep -qE "^## \[${VERSION}\] " docs/CHANGELOG.md; then
+            echo "::error::docs/CHANGELOG.md missing ## [${VERSION}] section"
             exit 1
           fi
-          echo "CHANGELOG.md contains ## [${VERSION}] OK"
+          echo "docs/CHANGELOG.md contains ## [${VERSION}] OK"
 
       - name: Extract CHANGELOG body
         id: changelog-body
@@ -178,9 +178,9 @@ jobs:
             index($0, ver) == 1 {flag=1; next}
             /^## \[/ {if (flag) exit}
             flag {print}
-          ' CHANGELOG.md)
+          ' docs/CHANGELOG.md)
           if [[ -z "$BODY" ]]; then
-            echo "::error::No content found for ## [${VERSION}] in CHANGELOG.md"
+            echo "::error::No content found for ## [${VERSION}] in docs/CHANGELOG.md"
             exit 1
           fi
           echo "body<<EOF" >> $GITHUB_OUTPUT

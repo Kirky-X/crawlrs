@@ -14,7 +14,7 @@
 //! # 值语义对齐 NebulaId
 //!
 //! [`Id::to_uuid_v8`] / [`Id::from_uuid_v8`] 与 NebulaId 的 [`nebulaid::core::Id`]
-//! 同名方法逐字等价（`Uuid::from_u128` / `uuid.as_u128`）；[`Display`]/[`FromStr`]
+//! 同名方法逐字等价（`Uuid::from_u128` / `uuid.as_u128`）；`Display`/`FromStr`
 //! 委托给 NebulaId 的对应实现，保证「version 位 ∈ {4,7,8} → 渲染为 UUID 字符串，
 //! 否则渲染为十进制」的口径与 NebulaId 完全一致。
 //!
@@ -41,7 +41,7 @@ pub mod generator;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id(u128);
 
-/// [`FromStr`] 解析失败错误。
+/// `FromStr` 解析失败错误。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseIdError(pub String);
 

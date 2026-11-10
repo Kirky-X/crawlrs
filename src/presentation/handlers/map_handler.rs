@@ -4,7 +4,7 @@
 //! `POST /v1/map` handler（F11：sitemap 流式一等请求源；feature `sitemap` 门控）
 //!
 //! 链路：限流 → SSRF 验证（`payload.url` 即抓取目标 origin）→
-//! [`MapUseCase::execute_streaming`] 流式拉取解析 → [`finalize_links`]
+//! `MapUseCase::execute_streaming` 流式拉取解析 → [`finalize_links`]
 //! 聚合（去重/include/exclude/limit，语义与 `MapUseCase::execute` 一致）。
 
 use axum::{

@@ -150,7 +150,7 @@ cargo run --bin crawlrs
 ```bash
 # 4. 验证安装
 curl http://localhost:8899/health
-# {"status":"healthy","version":"0.2.0-rc.2"}
+# {"status":"healthy","version":"0.2.0-rc.3"}
 ```
 
 </details>
@@ -456,7 +456,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 测试规模
 
-截至 0.2.0-rc.2：`src/` 内联测试 6,310 处（408 个源文件、206,781 行），`tests/` 目录 967 个测试（116 个 `.rs` 文件，含 `tests/unit/` 70 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
+截至 0.2.0-rc.3：`src/` 内联测试 6,566 处（476 个源文件、230,408 行），`tests/` 目录 996 个测试（124 个 `.rs` 文件，含 `tests/unit/` 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
 
 ---
 
@@ -490,6 +490,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
 <tr><td align="center">✅</td><td>核心平台（0.1.0）</td><td>搜索/抓取/爬取/提取/映射五大能力 API、DDD 四层、多租户与限流、Webhook 通知</td></tr>
+<tr><td align="center">✅</td><td>发布前收口（0.2.0-rc.3）</td><td>crawl 终态对账与崩溃恢复、团队域名黑名单全链路执行、SDK 建爬与搜索派生上限、Host 头丢弃等安全加固、web-axum 三驱动矩阵</td></tr>
 <tr><td align="center">✅</td><td>平台加固与智能引擎（0.2.0-rc.2）</td><td>garrison 认证、反爬检测、TLS 指纹与 MLLM 引擎、RAG/KG/DRL 智能增强、Prometheus 可观测性、E2E 质量套件</td></tr>
 <tr><td align="center">✅</td><td>数据库多驱动</td><td><code>db-sqlite</code> / <code>db-mysql</code> 覆盖到运行时 schema 供给：<code>migrations/{postgres,sqlite,mysql}/</code> 三方言建表目录按编译 feature 选择，<code>[database] auto_migrate</code>（缺省 false）接线，三方一致性由测试看护</td></tr>
 <tr><td align="center">✅</td><td>架构演进</td><td>事件驱动内部总线（已交付 <code>tokio::sync::broadcast</code>）、WebSocket 实时任务状态（<code>GET /v1/tasks/{id}/ws</code>）、Redis 共享缓存层（<code>[cache] backend=redis</code>，多实例部署）</td></tr>
@@ -551,6 +552,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| 0.2.0-rc.3 | 2026-11-10 | 终态对账/崩溃恢复重算、团队域名黑名单全链路（归一化+上限+fail-closed+sitemap/proxy 同口径）、SDK 建爬与搜索派生 200 上限/深度 ≤5、Host 头丢弃、web-axum 三驱动矩阵；三维审查三轮 PASS |
 | 0.2.0-rc.2 | 2026-09-21 | TLS 指纹引擎（WreqEngine）、MLLM 视觉导航引擎、RAG 增强提取、知识图谱覆盖感知、DRL 自适应策略、5 个新 Prometheus 指标；功能吸收 F1–F12（AutoThrottle、Session 身份、失败快照、sitemap 请求源、XHR 捕获、提取质量门、LLM 分块与溯源、AIMD 内存联动、软 404、AX 树快照） |
 | Unreleased | - | auth-off 恢复默认 401、`web-axum` 构建面恢复、`crawlrs migrate` 子命令、`POST /v1/scrape/{id}/_cancel` 生产路由、ScrapeOptionsDto 暴露 `block_ads`/`block_media`/`needs_mllm`、forge-full 停机坪、i18n/Fluent 接入等，完整清单见 [📋 更新日志](docs/CHANGELOG.md) |
 | 0.2.0 | 2026-07-29 | garrison RBAC 认证集成、bootstrap admin key、`DELETE /v1/crawl/{id}`、暴力破解防护加固 |

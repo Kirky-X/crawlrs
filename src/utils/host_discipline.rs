@@ -306,7 +306,7 @@ impl HostDiscipline {
     /// 抖动（`jitter_ratio` > 0）只作用于**实际放行时刻**，不回写时刻表：
     /// 抖动若参与预约推进，会在批内序列上随机游走、侵蚀间隔下界。
     ///
-    /// 随后 sleep 到放行时刻，单次等待钳制 ≤ [`MAX_GATE_WAIT`]：
+    /// 随后 sleep 到放行时刻，单次等待钳制 ≤ `MAX_GATE_WAIT`：
     /// 冷却是礼貌信号而非硬门禁，不能把 worker 无限期占住。钳制只缩短
     /// 实际睡眠时长，不回改时刻表——批内间隔仍由预约序列保证。
     pub async fn gate(&self, host: &str) {

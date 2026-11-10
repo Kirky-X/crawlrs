@@ -5,7 +5,7 @@
 //!
 //! 合并键 = 租户 + 规范化 URL + 请求身份指纹。键构造依赖 `domain::id::Id`
 //! 与 `engines::types::ScrapeOptions`，指纹实现位于
-//! [`crate::workers::request_identity`]；`utils::coalesce` 只保留与业务无关的
+//! `crate::workers::request_identity`；`utils::coalesce` 只保留与业务无关的
 //! 泛型 single-flight 原语，避免 `utils` → `domain`/`engines` 的反向依赖（M3）。
 //!
 //! # 安全约束（M-2：跨租户内容泄露）
@@ -22,7 +22,7 @@
 //! # cache_mode 与合并语义
 //!
 //! 缓存键的 `request_fingerprint` 把 `cache_mode` 归一为 `null`（四种模式同一键）；
-//! 合并键改用 [`coalesce_fingerprint`]，在相同投影上叠加由 `cache_mode` 派生的
+//! 合并键改用 `coalesce_fingerprint`，在相同投影上叠加由 `cache_mode` 派生的
 //! `cache_read_allowed` 布尔字段：
 //! - `Enabled` / `None` / `ReadOnly`（允许读缓存）→ 同一合并键
 //! - `Bypass` / `Disabled`（禁止读缓存）→ 另一合并键，两者彼此相同
@@ -88,7 +88,7 @@ impl CoalesceKey {
     ///   screenshot_config/actions/wait_for/block_ads/block_media/
     ///   use_fire_engine/needs_mllm/skip_tls_verification/headers/proxy 等），
     ///   新增字段自动纳入；`cache_mode` 本身归一为 `None`，但由它派生的
-    ///   `cache_read_allowed` 布尔投影参与（见 [`coalesce_fingerprint`]）
+    ///   `cache_read_allowed` 布尔投影参与（见 `coalesce_fingerprint`）
     /// - **proxy 边界**：只有请求级 `options.proxy` 参与指纹；`ProxyProvider`
     ///   运行时选路（round-robin/sticky）不入键
     /// - **确定性**：序列化为结构化 JSON 后递归按键排序，headers 名先小写再按

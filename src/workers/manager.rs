@@ -110,7 +110,7 @@ pub struct WorkerManagerDeps {
     pub http_client: Arc<reqwest::Client>,
     pub extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
-    /// 带质量门的内容提取 Facade（bootstrap 按 [content_extraction] 装配）
+    /// 带质量门的内容提取 Facade（bootstrap 按 `content_extraction` 装配）
     #[cfg(feature = "content")]
     pub content_extractor: Arc<crate::domain::services::content_extractor::ContentExtractionFacade>,
     /// 高级缓存服务

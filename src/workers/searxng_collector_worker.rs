@@ -3,7 +3,7 @@
 
 //! SearXNG 实例采集周期 worker
 //!
-//! 每个周期调用 [`SearxngInstanceService::collect`]：拉取 searx.space 数据集、
+//! 每个周期调用 `SearxngInstanceService::collect`：拉取 searx.space 数据集、
 //! 准入、幂等 upsert、缺席退役。api 与 worker 双进程都会拉起本 worker，
 //! 采集轮内的 PG advisory lock 保证同一时刻只执行一个采集体。
 

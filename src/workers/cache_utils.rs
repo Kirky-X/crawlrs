@@ -15,7 +15,7 @@
 //! 这些工具完成 cache key 计算与安全过滤，调用方在 `process_scrape_task`
 //! 中先用 `generate_scrape_cache_key` 计算 key，再传入读写方法。
 //!
-//! 请求身份指纹的唯一实现位于 [`crate::workers::request_identity::request_fingerprint`]，
+//! 请求身份指纹的唯一实现位于 `crate::workers::request_identity::request_fingerprint`，
 //! 本模块直接复用；禁止在缓存链路另建字段清单。
 
 use std::collections::HashMap;
@@ -32,9 +32,9 @@ use crate::workers::request_identity::request_fingerprint;
 ///
 /// # 格式
 ///
-/// ```text
+/// ``text
 /// scrape:{team_id}:{method}:{url}?fp={fingerprint}
-/// ```
+/// ``
 ///
 /// 四个维度共同定义"两个请求能否共享缓存结果"：
 /// - `team_id`：租户隔离边界。缓存条目不再跨租户共享
@@ -42,7 +42,7 @@ use crate::workers::request_identity::request_fingerprint;
 /// - `method`：HTTP 方法
 /// - `url`：目标 URL
 /// - `fingerprint`：`ScrapeOptions` 内容相关字段的结构化指纹，直接复用
-///   [`request_fingerprint`]，与请求合并键使用同一实现
+///   `request_fingerprint`，与请求合并键使用同一实现
 ///
 /// # 内容相关字段指纹
 ///
@@ -171,10 +171,10 @@ pub struct SanitizedScrapeResponse<'a> {
 ///
 /// 调用方在 `try_write_scrape_cache` 中：
 ///
-/// ```ignore
+/// ``ignore
 /// let sanitized = SanitizedScrapeResponse::from_response(&response);
 /// let json = serde_json::to_string(&sanitized)?;
-/// ```
+/// ``
 impl<'a> SanitizedScrapeResponse<'a> {
     #[must_use]
     pub fn from_response(response: &'a ScrapeResponse) -> Self {

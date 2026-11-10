@@ -18,7 +18,7 @@
 //! 差异由双门兜底，不引入 tokenizer 依赖（蓝图裁定）。
 //!
 //! 复杂度护栏：贪心 O(n+m)；LCS 仅在窗口词元数与 excerpt 词元数均不超过
-//! [`MAX_LCS_TOKENS`] 时运行（O(n·m) 在亿级比较会失控），超限只信第一层。
+//! `MAX_LCS_TOKENS` 时运行（O(n·m) 在亿级比较会失控），超限只信第一层。
 
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -278,7 +278,7 @@ fn gates(
 }
 
 /// 第二层滑窗：锚定贪心首个命中（无命中锚 excerpt 首词的首个出现），
-/// 覆盖贪心跨度并向两侧外扩 excerpt 字符长；词元数超 [`MAX_LCS_TOKENS`] → None
+/// 覆盖贪心跨度并向两侧外扩 excerpt 字符长；词元数超 `MAX_LCS_TOKENS` → None
 fn dp_window(
     src: &[Token],
     ex: &[Token],

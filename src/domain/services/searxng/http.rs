@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`SearxngTransport`] 的 reqwest 实现
+//! `SearxngTransport` 的 reqwest 实现
 //!
 //! 出站复用全局 `reqwest::Client`（自带 SSRF 安全重定向策略与 IPv4 解析），
 //! 本层只负责：统一 UA、逐请求超时、响应体大小上限、非 2xx 不解析。

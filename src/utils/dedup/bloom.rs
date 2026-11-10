@@ -5,7 +5,7 @@
 //!
 //! 原自研 `MmapBloom`（384 行：mmap(MAP_HUGETLB)→mmap→heap 三级降级链 +
 //! 单线程零锁位操作 + `unsafe impl Send/Sync`）已替换为 oxcache
-//! [`BloomFilter`]（`bloom` feature，底层 bloomfilter crate 维护）。
+//! `BloomFilter`（`bloom` feature，底层 bloomfilter crate 维护）。
 //!
 //! ## 取舍（显式记录）
 //!
@@ -25,7 +25,7 @@ pub const BLOOM_DEFAULT_CAPACITY: usize = 1_000_000;
 /// 目标假阳性率（名义 0.01；实测 <1.5% 由测试钉住，即名义值 +50% 余量）。
 pub const BLOOM_TARGET_FPR: f64 = 0.01;
 
-/// URL 去重布隆过滤器（oxcache `BloomFilter<str>`，Arc<RwLock> 线程安全）。
+/// URL 去重布隆过滤器（oxcache `BloomFilter<str>`，`Arc<RwLock>` 线程安全）。
 ///
 /// 注意库语义：`Clone` 只克隆内部 `Arc`（克隆体共享同一份位图状态）；
 /// `UrlInterner` 的深拷贝语义改由权威 HashSet 重放实现（见 interner.rs）。

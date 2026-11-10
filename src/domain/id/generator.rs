@@ -10,14 +10,14 @@
 //! 同步 mapper、以及测试夹具——这些上下文**无法 `.await`**（Rust 语言限制）。
 //! 为在不 async 传染全栈的前提下完成「所有生产 ID 均由 NebulaId 生成」的全量迁移，
 //! 这里提供一个**同步、免 await、可作为 `Uuid::new_v4()` 直接替换物**的门面
-//! [`generate`]：底层从启动期预取并后台补水的 NebulaId `uuid_v8` ID 池中弹出。
+//! `generate`：底层从启动期预取并后台补水的 NebulaId `uuid_v8` ID 池中弹出。
 //!
 //! # 生命周期
 //!
-//! - [`init`] 由 `IdModule` 在启动期 `async` 上下文调用一次：以 `batch_generate`
-//!   预取 [`SEED_BATCH`] 个 ID 注入池，并 spawn 周期补水任务（低于
-//!   [`LOW_WATER`] 时补至 [`TARGET`]）。
-//! - [`generate`] 弹出一个 ID。池耗尽或未初始化（如单元/集成测试期）时回退到
+//! - `init` 由 `IdModule` 在启动期 `async` 上下文调用一次：以 `batch_generate`
+//!   预取 `SEED_BATCH` 个 ID 注入池，并 spawn 周期补水任务（低于
+//!   `LOW_WATER` 时补至 `TARGET`）。
+//! - `generate` 弹出一个 ID。池耗尽或未初始化（如单元/集成测试期）时回退到
 //!   进程内全局唯一的 [`Id::test_new`]（仍保证非 nil、唯一，绝不返回错误、绝不
 //!   中断调用方）。
 

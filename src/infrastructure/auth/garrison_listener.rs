@@ -195,7 +195,7 @@ static TEST_MUTEX: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
 ///
 /// # 调用时序
 ///
-/// 在 [`crate::bootstrap::services::init_services`] 中创建 `audit_service` 之后调用，
+/// 在 `crate::bootstrap::services::init_services` 中创建 `audit_service` 之后调用，
 /// 早于 garrison 第一次广播事件（实际首次广播发生在第一个 HTTP 请求认证时，
 /// 远晚于 bootstrap 完成）。
 ///

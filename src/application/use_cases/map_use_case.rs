@@ -78,7 +78,7 @@ impl SitemapStream {
     }
 }
 
-/// [`MapUseCase::execute_streaming`] 的运行参数（来自 `settings.sitemap`）
+/// `MapUseCase::execute_streaming` 的运行参数（来自 `settings.sitemap`）
 #[cfg(feature = "sitemap")]
 #[derive(Debug, Clone)]
 pub struct SitemapStreamOptions {

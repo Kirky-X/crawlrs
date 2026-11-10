@@ -115,7 +115,7 @@ pub(super) async fn init_auth_and_audit(
 ///
 /// # Fail-Fast 语义
 ///
-/// 此函数返回 `Result<(), BootstrapError>`，调用方（[`init_auth_and_audit`]）通过
+/// 此函数返回 `Result<(), BootstrapError>`，调用方（`init_auth_and_audit`）通过
 /// `.expect()` 在失败时 panic，触发 bootstrap fail-fast：
 /// - 弱密钥 / 空密钥 → 启动失败（强制运维提供强密钥）
 /// - DAO oxcache 初始化失败 → 启动失败（内存资源不足）

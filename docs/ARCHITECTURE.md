@@ -6,7 +6,7 @@
 ![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs?label=version&style=for-the-badge)
 ![License](https://img.shields.io/github/license/Kirky-X/crawlrs?label=license&style=for-the-badge)
 
-**Version:** 0.2.0-rc.2 | **Last Updated:** 2026-10-15 | **Author:** Kirky.X
+**Version:** 0.2.0-rc.3 | **Last Updated:** 2026-11-10 | **Author:** Kirky.X
 
 </div>
 

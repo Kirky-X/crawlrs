@@ -3,7 +3,7 @@
 
 //! HTML → Markdown 转换抽象与 htmd 实现
 //!
-//! 提供 [`MarkdownConverter`] 窄 trait（链成员接口）与 `HtmdMarkdownService`
+//! 提供 `MarkdownConverter` 窄 trait（链成员接口）与 `HtmdMarkdownService`
 //! （htmd 实现，在转换器链中担任兜底；主转换器为 `markdown/` 子模块的
 //! moli-html2md）。`only_main_content` 语义由正文提取链
 //! （`content_extractor/facade.rs`）在转换前完成，转换器只做整页/正文 HTML → MD。

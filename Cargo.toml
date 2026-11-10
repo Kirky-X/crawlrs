@@ -3,7 +3,7 @@
 
 [package]
 name = "crawlrs"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 edition = "2021"
 rust-version = "1.97"
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
@@ -372,7 +372,7 @@ debug = true
 members = ["examples"]
 
 [workspace.package]
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 edition = "2021"
 rust-version = "1.97"
 authors = ["Kirky-X <Kirky-X@outlook.com>"]

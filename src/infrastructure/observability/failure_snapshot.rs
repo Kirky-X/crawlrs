@@ -13,7 +13,7 @@
 //! - **签名去重**：同签名键第二次命中只自增计数并刷新 `.meta.json` 的 count，
 //!   不重写 `.html`/`.jpg`（对齐 Crawlee 去重语义）
 //! - **磁盘护栏（滚动）**：全目录文件数达 `max_total` 后按最旧优先滚动删除腾位，
-//!   目录文件数有界；签名键内存表达 [`MAX_TRACKED_KEYS`] 上限，超限仅计指标
+//!   目录文件数有界；签名键内存表达 `MAX_TRACKED_KEYS` 上限，超限仅计指标
 //! - **权限收紧**：快照文件以 0600 落盘（unix；其他平台走进程默认 umask）
 //!
 //! 落盘形态（`{key}` = sha256(url|status|reason) 前 30 hex + 消毒 reason 前 30 字符）：
@@ -66,7 +66,7 @@ pub struct SnapshotInput<'a> {
 /// - `snapshot`：同键首次落盘 `.html` + `.meta.json`（+ 可选 `.jpg`），
 ///   后续命中只自增计数并刷新 meta 的 count
 /// - 内部全 `DashMap` + `AtomicU64`，无锁线程安全；`snapshot(&self)` 可并发调用
-/// - 磁盘按 `max_total` 滚动有界；签名键内存表按 [`MAX_TRACKED_KEYS`] 封顶
+/// - 磁盘按 `max_total` 滚动有界；签名键内存表按 `MAX_TRACKED_KEYS` 封顶
 #[derive(Debug)]
 pub struct FailureSnapshotter {
     /// 快照落盘目录
@@ -124,7 +124,7 @@ impl FailureSnapshotter {
     /// tokio worker 线程不被阻塞。
     pub async fn snapshot(&self, input: SnapshotInput<'_>) {
         let key = Self::signature_key(input.url, input.status_code, input.reason);
-        // 命中计数先于磁盘判断：内存表达 [`MAX_TRACKED_KEYS`] 上限，
+        // 命中计数先于磁盘判断：内存表达 `MAX_TRACKED_KEYS` 上限，
         // 超限后新键仅计指标（含 URL 的键不无限驻留内存）
         let Some(count) = self.track_hit(&key) else {
             return;
@@ -775,7 +775,7 @@ mod tests {
         }
     }
 
-    /// 签名键内存表达 [`MAX_TRACKED_KEYS`] 上限：超限后新键不入表（仅计指标），
+    /// 签名键内存表达 `MAX_TRACKED_KEYS` 上限：超限后新键不入表（仅计指标），
     /// 既有键不受影响
     #[tokio::test]
     async fn counts_map_caps_distinct_keys() {

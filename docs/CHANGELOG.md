@@ -1,10 +1,11 @@
 # 📋 Crawlrs 更新日志
 
-当前版本：0.2.0-rc.2（与 `Cargo.toml` `version` 一致）。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/spec/v2.0.0.html)。
+当前版本：0.2.0-rc.3（与 `Cargo.toml` `version` 一致）。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/spec/v2.0.0.html)。
 
 ## 📋 目录
 
 - [Unreleased](#unreleased)
+- [0.2.0-rc.3 - 2026-11-10](#020-rc3---2026-11-10)
 - [0.2.0-rc.2 - 2026-09-22](#020-rc2---2026-09-22)
 - [0.2.0-rc.1 - 2026-08-26](#020-rc1---2026-08-26)
 - [0.2.0 - 2026-07-29](#020---2026-07-29)
@@ -13,6 +14,17 @@
 ---
 
 ## [Unreleased]
+
+## [0.2.0-rc.3] - 2026-11-10
+
+### Fixed（发布前收口：终态对账与安全加固）
+
+- **crawl 终态与崩溃恢复**：终态判定收口单一 SQL 构造器（`terminal_status`，`status IN (queued,processing)` 走索引）；入队中断补偿写 `failed = max(total-completed, failed)` 保持 `completed+failed==total`；任务完成计数移到子链接入队之后（消除提前终态窗口）；过期 sweep 新增崩溃恢复重算（静默 >10 分钟且无 queued/active 任务的非终态 crawl 按 tasks 实况计数收口，最近任务活动守卫防误终结）
+- **团队域名黑名单全链路**：唯一载体 `crawl.config`（任务 payload 不再复制），归一化（host 提取/IDN/尾点/userinfo）+ 条数 1000/单条 253B 上限 + 不可归一化/通配符条目拒绝；执行期种子/重定向 final_url/链接/sitemap 顶层与子 sitemap/proxy 同口径校验，快照不可得 fail-closed；300s worker 缓存（Arc 共享）；滚动升级兼容旧 payload 顶层副本回退
+- **SDK 建爬与搜索派生**：`POST /api/v1/sdk/crawl`（name/url/seed_url、SSRF 预检、限流、补偿写）；搜索派生 crawl 结果 200 硬上限、深度 ≤5 双层校验、黑名单循环外归一化一次
+- **安全加固**：scrape/crawl 请求统一丢弃自定义 `Host` 头（vhost SSRF 旁路）；拒绝原因只含归一化 host（不带 path/query/userinfo）
+- **构建面**：`web-axum` 不再硬编码 inklog/postgres 驱动，db-postgres/sqlite/mysql 三组合编译矩阵全绿；缺驱动守卫覆盖 platform/web-axum
+- **验证**：三维审查（安全/架构/性能）三轮 PASS；fmt/clippy(default,full)/`-D warnings` 测试编译/pre-commit 13 项/cargo deny 全绿；真实 PG：lib 6402 通过（本机无 Chrome 时 5 个 Playwright XHR 用例仅在 --include-ignored 下失败）、integration 170/170、main 806/806、sdk 8/8
 
 ### Changed（依赖全量升级 deps-refresh）
 

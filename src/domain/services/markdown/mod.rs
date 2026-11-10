@@ -4,12 +4,12 @@
 //! Markdown 转换器链子模块（html2md-converter-chain 变更）
 //!
 //! 结构：`moli-html2md` 主转换器（`MoliHtml2MdConverter`）→ `htmd` 兜底
-//! （`HtmdMarkdownService`），由 [`ConverterChain`] 组合；与既有
+//! （`HtmdMarkdownService`），由 `ConverterChain` 组合；与既有
 //! 正文提取链（Trafilatura→DomSmoothie）同构——主路径失败/空输出时诚实降级。
 //!
-//! - [`moli_adapter::ScraperDom`]：`scraper::Html`（html5ever 树）→ `moli_html2md::Dom` 适配器
-//! - [`moli_converter::MoliHtml2MdConverter`]：主转换器实现
-//! - [`converter_chain::ConverterChain`]：链执行器（fallback 触发 + 日志 + 指标）
+//! - `moli_adapter::ScraperDom`：`scraper::Html`（html5ever 树）→ `moli_html2md::Dom` 适配器
+//! - `moli_converter::MoliHtml2MdConverter`：主转换器实现
+//! - `converter_chain::ConverterChain`：链执行器（fallback 触发 + 日志 + 指标）
 
 pub mod converter_chain;
 pub mod moli_adapter;

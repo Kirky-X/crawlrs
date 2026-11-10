@@ -16,7 +16,7 @@
 //! - `CoalesceGuard<K, L>`：RAII guard，Drop 时广播完成通知并移除条目
 //!
 //! `ScrapeOptions` 请求身份指纹（`request_fingerprint` / `coalesce_fingerprint`）
-//! 已迁至 [`crate::workers::request_identity`]：指纹实现依赖 `engines`/`common`，
+//! 已迁至 `crate::workers::request_identity`：指纹实现依赖 `engines`/`common`，
 //! 放在 worker 层避免 `utils` 反向依赖引擎类型。
 //!
 //! 设计要点：

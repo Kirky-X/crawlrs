@@ -344,7 +344,7 @@ impl SearxngInstanceServiceImpl {
 
     /// 探活一轮：热池全体 + 冷却期满的 cooldown + 前 `candidate_batch` 个候选。
     ///
-    /// 状态机迁移由 [`Self::apply_probe_outcome`] 统一承载（探活通过 → active 入池；
+    /// 状态机迁移由 `Self::apply_probe_outcome` 统一承载（探活通过 → active 入池；
     /// 失败 → cooldown 逐出；连续失败达 `failure_retire_threshold` → retired）。
     pub async fn health_cycle(&self) -> HealthReport {
         let mut report = HealthReport::default();

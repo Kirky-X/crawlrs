@@ -150,7 +150,7 @@ cargo run --bin crawlrs
 ```bash
 # 4. Verify the installation
 curl http://localhost:8899/health
-# {"status":"healthy","version":"0.2.0-rc.2"}
+# {"status":"healthy","version":"0.2.0-rc.3"}
 ```
 
 </details>
@@ -456,7 +456,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 Test Scale
 
-As of 0.2.0-rc.2: 6,310 inline test attributes in `src/` (408 source files, 206,781 lines), 967 tests in `tests/` (116 `.rs` files, incl. 70 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
+As of 0.2.0-rc.3: 6,566 inline test attributes in `src/` (476 source files, 230,408 lines), 996 tests in `tests/` (124 `.rs` files, incl. 71 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
 
 ---
 
@@ -490,6 +490,7 @@ Please do not report security vulnerabilities through public issues — use the 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
 <tr><td align="center">✅</td><td>Core platform (0.1.0)</td><td>Five-capability APIs (search/scrape/crawl/extract/map), DDD four layers, multi-tenancy & rate limiting, webhook notifications</td></tr>
+<tr><td align="center">✅</td><td>Pre-release hardening (0.2.0-rc.3)</td><td>crawl terminal reconciliation & crash recovery, end-to-end team domain blacklist enforcement, SDK crawl creation & search-derived caps, Host-header drop and other security hardening, web-axum tri-driver matrix</td></tr>
 <tr><td align="center">✅</td><td>Platform hardening & smart engines (0.2.0-rc.2)</td><td>garrison authentication, anti-bot detection, TLS-fingerprint & MLLM engines, RAG/KG/DRL intelligent enhancements, Prometheus observability, E2E quality suite</td></tr>
 <tr><td align="center">✅</td><td>Multi-driver databases</td><td><code>db-sqlite</code> / <code>db-mysql</code> now reach runtime schema provisioning: per-dialect DDL under <code>migrations/{postgres,sqlite,mysql}/</code> selected by compiled feature, wired via <code>[database] auto_migrate</code> (default false), cross-dialect consistency guarded by tests</td></tr>
 <tr><td align="center">✅</td><td>Architecture evolution</td><td>Event-driven internal bus (delivered on <code>tokio::sync::broadcast</code>), WebSocket real-time task status (<code>GET /v1/tasks/{id}/ws</code>), Redis shared cache layer (<code>[cache] backend=redis</code>, multi-instance deployments)</td></tr>
@@ -551,6 +552,7 @@ For the full version history see the [📋 Changelog](docs/CHANGELOG.md) (follow
 
 | Version | Date | Highlights |
 |------|------|------|
+| 0.2.0-rc.3 | 2026-11-10 | Terminal reconciliation & crash-recovery recompute, end-to-end team domain blacklist (normalization + caps + fail-closed + sitemap/proxy parity), SDK crawl & search-derived 200-cap/depth ≤5, Host-header drop, web-axum tri-driver matrix; three three-dimensional review rounds PASS |
 | 0.2.0-rc.2 | 2026-09-21 | TLS fingerprint engine (WreqEngine), MLLM vision-navigation engine, RAG-augmented extraction, knowledge-graph coverage awareness, DRL adaptive policy, 5 new Prometheus metrics; feature absorption F1–F12 (AutoThrottle, session identity, failure snapshots, sitemap request source, XHR capture, extraction quality gate, LLM chunking & provenance, AIMD memory coupling, soft 404, AX-tree snapshot) |
 | Unreleased | - | auth-off protected routes restore default 401, `web-axum` build surface restored, `crawlrs migrate` subcommand, production route for `POST /v1/scrape/{id}/_cancel`, ScrapeOptionsDto exposing `block_ads`/`block_media`/`needs_mllm`, forge-full staging feature, i18n/Fluent integration, etc. — full list in the [📋 Changelog](docs/CHANGELOG.md) |
 | 0.2.0 | 2026-07-29 | garrison RBAC authentication integration, bootstrap admin key, `DELETE /v1/crawl/{id}`, brute-force protection hardening |

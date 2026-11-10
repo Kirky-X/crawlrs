@@ -2,6 +2,10 @@
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
+# RUSTSEC-2026-0459: libsqlite3-sys 0.37.0 绑定的 C SQLite CVE-2026-119375（本地
+# 恶意 SQL 扩展加载向量）。修复版 0.39.0 被 sqlx-sqlite 0.9.0 的
+# `>=0.30.1, <0.38.0` 约束挡住，需等 sqlx/sea-orm 链升级；本 crate 仅在可选
+# db-sqlite feature 下引入该依赖。依赖链解锁后移除本条。
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
 # unmaintained 通告真实参与评估（默认不评估会让 ignore 列表里的 unmaintained 条目
@@ -40,7 +44,7 @@ unmaintained = "all"
 # 唯一引入路径 testcontainers 0.27.3 → testcontainers-modules 0.15.0，均 [dev-dependencies]，
 # 不进任何发布二进制；集成测试的容器镜像 tar 解包用。unmaintained 非漏洞，上游 testcontainers
 # 换 tar-codec 后移除本豁免（tracking: testcontainers-rs 上游 changelog）。
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2026-0387", "RUSTSEC-2026-0440"]
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2026-0387", "RUSTSEC-2026-0440", "RUSTSEC-2026-0459"]
 
 [licenses]
 allow = [

@@ -3,7 +3,7 @@
 
 //! SearXNG 实例健康探活周期 worker
 //!
-//! 每个周期调用 [`SearxngInstanceService::health_cycle`]：热池全体 + 冷却期满的
+//! 每个周期调用 `SearxngInstanceService::health_cycle`：热池全体 + 冷却期满的
 //! cooldown + 前 `candidate_batch` 个候选逐个探活，按状态机迁移并补齐热池。
 //! 探活幂等——api 与 worker 双进程各自维护内存热池，DB 是共享真相。
 

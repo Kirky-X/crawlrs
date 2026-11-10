@@ -3,7 +3,7 @@
 
 //! Sitemap 流式请求源（F11）：sitemap 作为 crawl 的一等 URL 发现源
 //!
-//! 消费 [`MapUseCase::execute_streaming`] 的 `<loc>` 有界通道，逐 URL 过
+//! 消费 `MapUseCase::execute_streaming` 的 `<loc>` 有界通道，逐 URL 过
 //! FilterChain（include/exclude 通配 + 域名黑名单）与分层去重
 //! （Bloom 预筛 → DB 精确校验，语义对齐 `extract_and_queue_links`）后
 //! 入队为 crawl Task 行（depth = 1，config 原样继承种子任务）。

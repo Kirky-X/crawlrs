@@ -94,7 +94,7 @@ fn migration_db_type() -> Option<dbnexus::DatabaseType> {
 
 /// crawlrs 专用迁移执行（fluxweir-llm-gateway D9：历史表分离 + 存量基线）。
 ///
-/// 流程：`crawlrs_migrations` 空表首跑时从 [`DBNEXUS_MIGRATIONS_TABLE`] 复制
+/// 流程：`crawlrs_migrations` 空表首跑时从 `DBNEXUS_MIGRATIONS_TABLE` 复制
 /// `file_path LIKE '%migrations/%'` 的行为基线（crawlrs 池历史跑的是文件迁移、
 /// 路径必含 `migrations/`；fluxweir 迁移为内存嵌入、合成路径不含该锚点），
 /// 表非空即视为已初始化、不再读默认表——fluxweir 后写入的 1..=9 行永不混入。
@@ -294,11 +294,11 @@ impl DatabasePool {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ``ignore
     /// let pool: Arc<DatabasePool> = /* ... */;
     /// let inner: Arc<DbPool> = pool.clone_inner();
     /// let repo = MyRepository::new(inner);
-    /// ```
+    /// ``
     #[inline]
     pub fn clone_inner(&self) -> Arc<DbPool> {
         Arc::clone(&self.inner)

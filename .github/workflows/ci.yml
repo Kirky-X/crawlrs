@@ -444,7 +444,7 @@ jobs:
     env:
       MYSQL: mysql -h127.0.0.1 -uroot -proot crawlrs_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Apply migrations 001→010
         run: |
           set -euo pipefail

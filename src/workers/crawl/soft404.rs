@@ -13,12 +13,12 @@
 //!
 //! 学习/命中的匹配键是**内容三元组** `(title_hash, content_length, body_hash)`，
 //! `status_code` 仅作为诊断信息随指纹记录——否则 200 壳永远无法命中
-//! 404 学到的指纹（测试 [`tests::learn_from_404_then_200_hits`] 固化此语义）。
+//! 404 学到的指纹（测试 `tests::learn_from_404_then_200_hits` 固化此语义）。
 //!
 //! # 生命周期
 //!
 //! 进程内（对齐 [`crate::utils::dedup::Deduplicator`] 语义），重启重学习
-//! 可接受——404 页会再次出现。指纹库容量达 [`Soft404Detector::max_fingerprints`]
+//! 可接受——404 页会再次出现。指纹库容量达 `Soft404Detector::max_fingerprints`
 //! 后按插入序淘汰最旧（FIFO），旧指纹淘汰后不再命中。
 
 use std::collections::VecDeque;
