@@ -214,7 +214,11 @@ pub trait TaskRepository: Send + Sync {
         &self,
         crawl_id: crate::domain::id::Id,
     ) -> Result<u64, RepositoryError>;
-    /// 标记过期任务为失败
+    /// 标记过期任务为失败，并对受影响 crawl 做失败计数增量与终态判定。
+    ///
+    /// 副作用：同一实现内按 `crawl_id` 聚合本批过期任务数，对 crawls 行执行
+    /// 相对增量（failed_tasks += n），并在满足 `total>0 && completed+failed==total`
+    /// 时原子写 Failed/Completed。调用方无需另做 crawl 对账。
     async fn expire_tasks(&self) -> Result<u64, RepositoryError>;
     /// 根据 Crawl ID 查找所有任务
     async fn find_by_crawl_id(

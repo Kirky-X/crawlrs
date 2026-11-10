@@ -92,9 +92,21 @@ impl DomainFilter {
     /// - `denied_domains`: 拒绝的域名列表（大小写不敏感，比较前小写化）
     #[must_use]
     pub fn denylist(denied_domains: Vec<String>) -> Self {
-        let normalized = denied_domains
+        // 构造期一次性归一（小写、去尾点、过滤空/超长条目），accept 内不再分配。
+        let normalized: Vec<String> = denied_domains
             .into_iter()
-            .map(|d| d.to_ascii_lowercase())
+            .filter_map(|d| {
+                let d = d.trim().trim_end_matches('.').to_ascii_lowercase();
+                if d.is_empty()
+                    || d.len()
+                        > crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRY_LEN
+                {
+                    None
+                } else {
+                    Some(d)
+                }
+            })
+            .take(crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRIES)
             .collect();
         Self {
             mode: DomainMode::Denylist(normalized),
@@ -125,6 +137,17 @@ impl DomainFilter {
     fn domain_in_list(domain: &str, list: &[String]) -> bool {
         list.iter().any(|d| d == domain)
     }
+
+    /// denylist 语义：命中条目本身或其子域（与团队黑名单校验一致）。
+    /// 条目在构造期已归一，此处零分配；allowlist 保持精确匹配，避免放宽准入。
+    fn domain_in_denylist(domain: &str, denied: &[String]) -> bool {
+        denied.iter().any(|entry| {
+            domain == entry
+                || (domain.len() > entry.len() + 1
+                    && domain.ends_with(entry.as_str())
+                    && domain.as_bytes()[domain.len() - entry.len() - 1] == b'.')
+        })
+    }
 }
 
 impl UrlFilter for DomainFilter {
@@ -144,7 +167,7 @@ impl UrlFilter for DomainFilter {
                 url_domain == source
             }
             DomainMode::Allowlist(allowed) => Self::domain_in_list(&url_domain, allowed),
-            DomainMode::Denylist(denied) => !Self::domain_in_list(&url_domain, denied),
+            DomainMode::Denylist(denied) => !Self::domain_in_denylist(&url_domain, denied),
         }
     }
 }
@@ -463,6 +486,17 @@ mod tests {
         let ctx = FilterContext::new();
         assert!(!filter.accept("https://facebook.com/share", &ctx));
         assert!(!filter.accept("https://twitter.com/tweet", &ctx));
+    }
+
+    #[test]
+    fn domain_filter_denylist_rejects_subdomains() {
+        // 与团队黑名单校验同语义：父域条目必须覆盖其子域。
+        let filter = DomainFilter::denylist(vec!["blocked.com.".to_string()]);
+        let ctx = FilterContext::new();
+        assert!(!filter.accept("https://blocked.com/page", &ctx));
+        assert!(!filter.accept("https://sub.blocked.com/page", &ctx));
+        assert!(!filter.accept("https://SUB.BLOCKED.COM/page", &ctx));
+        assert!(filter.accept("https://notblocked.com/page", &ctx));
     }
 
     #[test]

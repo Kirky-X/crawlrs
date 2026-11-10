@@ -6,14 +6,15 @@
 
 // 数据库后端：db-postgres/db-sqlite/db-mysql 三组互斥特性；platform 面必须恰好启用一个
 
-// platform 无驱动时 Settings/仓储代码无法编译——给出明确的单一错误而非级联报错
+// 带 DB 的服务面（platform / auth-off 的 web-axum）无驱动时 Settings/仓储代码
+// 无法编译——本守卫最先给出明确错误（仍可能伴随级联解析错误）
 #[cfg(all(
-    feature = "platform",
+    any(feature = "platform", feature = "web-axum"),
     not(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql"))
 ))]
 compile_error!(
-    "platform requires exactly one database driver feature: db-postgres / db-sqlite / db-mysql \
-     (see the db-* feature groups in Cargo.toml)"
+    "platform/web-axum requires exactly one database driver feature: db-postgres / \
+     db-sqlite / db-mysql (see the db-* feature groups in Cargo.toml)"
 );
 
 // db-* 互斥守卫：比 dbnexus 的深层 compile_error 更早、更清晰（default 已含 db-postgres，

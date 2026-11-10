@@ -31,10 +31,18 @@ use crate::{
 };
 
 /// 处理搜索请求
+#[allow(clippy::too_many_arguments)] // axum Extension 提取器：每个依赖独立参数
 pub async fn search(
     Extension(search_service): Extension<Arc<dyn SearchServiceTrait>>,
     Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
+    Extension(geo_restriction_repo): Extension<
+        Option<
+            Arc<
+                dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository,
+            >,
+        >,
+    >,
     Extension(auth_state): Extension<AuthState>,
     Extension(locale): Extension<Locale>,
     Extension(bundle): Extension<Arc<I18nBundle>>,
@@ -63,8 +71,45 @@ pub async fn search(
         .sync_wait_ms
         .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32);
 
-    // 将 DTO 转换为领域参数
-    let search_query = into_search_query(payload);
+    // 将 DTO 转换为领域参数；派生 crawl 必须携带团队当前黑名单，
+    // 否则执行期复核（worker）对搜索结果抓取失效。
+    let mut search_query = into_search_query(payload);
+    // crawl_results=true 时即使请求省略 crawl_config 也要派生默认配置：
+    // 否则派生任务拿不到团队黑名单（策略随“可选字段未传”失效）。
+    if search_query.crawl_results == Some(true) {
+        let config = search_query.crawl_config.get_or_insert_with(|| {
+            crate::domain::services::search_service::SearchCrawlConfig {
+                max_depth: 1,
+                include_patterns: None,
+                exclude_patterns: None,
+                strategy: "bfs".to_string(),
+                crawl_delay_ms: None,
+                max_concurrency: 10,
+                headers: None,
+                proxy: None,
+                extraction_rules: None,
+                domain_blacklist: Vec::new(),
+            }
+        });
+        if let Some(repo) = geo_restriction_repo.as_ref() {
+            match repo.get_team_restrictions(team_id).await {
+                Ok(restrictions) => match restrictions.effective_domain_blacklist() {
+                    Ok(list) => config.domain_blacklist = list,
+                    Err(message) => {
+                        error!("Invalid team domain blacklist: {}", message);
+                        return error_response(StatusCode::BAD_REQUEST, &message);
+                    }
+                },
+                Err(e) => {
+                    error!("Failed to load geo restrictions for search crawl: {}", e);
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Internal server error",
+                    );
+                }
+            }
+        }
+    }
 
     // SSRF 防护 (CWE-918)：验证 crawl_config.proxy 不指向内部网络
     if let Some(response) = check_search_proxy_ssrf(&search_query, team_id, api_key_id).await {
@@ -128,6 +173,7 @@ fn into_search_query(payload: SearchRequestDto) -> SearchQuery {
                 headers: c.headers,
                 proxy: c.proxy,
                 extraction_rules: c.extraction_rules,
+                domain_blacklist: Vec::new(),
             }
         }),
     }
@@ -660,6 +706,7 @@ mod tests {
                     headers: c.headers,
                     proxy: c.proxy,
                     extraction_rules: c.extraction_rules,
+                    domain_blacklist: Vec::new(),
                 }
             }),
         };
@@ -715,6 +762,7 @@ mod tests {
                     headers: c.headers,
                     proxy: c.proxy,
                     extraction_rules: c.extraction_rules,
+                    domain_blacklist: Vec::new(),
                 }
             }),
         };
@@ -772,6 +820,7 @@ mod tests {
                     headers: c.headers,
                     proxy: c.proxy,
                     extraction_rules: c.extraction_rules,
+                    domain_blacklist: Vec::new(),
                 }
             }),
         };
@@ -1188,6 +1237,7 @@ mod tests {
                     headers: c.headers,
                     proxy: c.proxy,
                     extraction_rules: c.extraction_rules,
+                    domain_blacklist: Vec::new(),
                 }
             }),
         };
@@ -1758,6 +1808,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1787,6 +1840,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1817,6 +1873,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1854,6 +1913,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1887,6 +1949,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1930,6 +1995,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1962,6 +2030,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1990,6 +2061,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2016,6 +2090,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2046,6 +2123,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2077,6 +2157,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2105,6 +2188,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2135,6 +2221,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2165,6 +2254,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2193,6 +2285,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2222,6 +2317,9 @@ mod tests {
             Extension(search_service),
             Extension(task_repo),
             Extension(rate_limit),
+            Extension(None::<
+                Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+            >),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),

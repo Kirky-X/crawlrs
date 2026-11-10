@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use scraper::{Html, Selector};
 use serde_json::json;
 use url::Url;
@@ -94,11 +94,24 @@ pub async fn update_crawl_completion_status(
                     "All tasks terminal for crawl {} (completed={}, failed={}), marking as {}",
                     crawl_id, completed, failed, status
                 );
-                if let Err(e) = crawl_repository.update_status(crawl_id, status).await {
-                    error!(
-                        "Failed to update crawl status for crawl {}: {}",
-                        crawl_id, e
-                    );
+                match crawl_repository
+                    .update_status_guarded(crawl_id, status)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        // 已是终态（并发取消/完成）：不得覆盖，也不再重试
+                        debug!(
+                            "crawl {} already terminal; skip {} transition",
+                            crawl_id, status
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to update crawl status for crawl {}: {}",
+                            crawl_id, e
+                        );
+                    }
                 }
             }
         }
@@ -579,7 +592,7 @@ fn build_child_crawl_task(
         payload: json!({
             "crawl_id": crawl_id.to_string(),
             "depth": current_depth + 1,
-            "config": config
+            "config": config,
         }),
         retry_count: 0,
         attempt_count: 0,
@@ -708,6 +721,24 @@ mod tests {
             *self.last_status.lock().expect("status mutex poisoned") = Some(status);
             self.update_status_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
+        }
+
+        async fn update_status_guarded(
+            &self,
+            _id: crate::domain::id::Id,
+            status: CrawlStatus,
+        ) -> Result<bool, RepositoryError> {
+            if self.crawl.as_ref().is_some_and(|c| {
+                matches!(
+                    c.status,
+                    CrawlStatus::Completed | CrawlStatus::Failed | CrawlStatus::Cancelled
+                )
+            }) {
+                return Ok(false);
+            }
+            *self.last_status.lock().expect("status mutex poisoned") = Some(status);
+            self.update_status_count.fetch_add(1, Ordering::SeqCst);
+            Ok(true)
         }
         async fn increment_total_tasks(
             &self,

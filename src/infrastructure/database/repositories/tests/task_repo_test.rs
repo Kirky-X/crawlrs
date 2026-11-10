@@ -505,6 +505,69 @@ async fn test_expire_tasks_with_real_db_expires_past_expires_at() {
     }
 }
 
+/// 批量过期后 crawl 计数/终态对账：过期子任务必须计入 failed 并使 crawl
+/// 进入 failed，而不是永久 queued。
+#[tokio::test]
+async fn test_expire_tasks_reconciles_crawl_counters_and_status() {
+    use crate::domain::models::crawl_model::{Crawl, CrawlStatus};
+    use crate::domain::repositories::crawl_repository::CrawlRepository;
+    use crate::infrastructure::database::repositories::crawl_repo_impl::CrawlRepositoryImpl;
+
+    if crate::common::test_helpers::skip_if_no_test_db() {
+        return;
+    }
+    let _guard = acquire_next_test_mutex().lock().await;
+    let pool = create_test_db_pool();
+    let crawl_repo = CrawlRepositoryImpl::new(pool.clone());
+    let crawl_id = crate::domain::id::Id::generate();
+    let now = Utc::now();
+    let crawl = Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "expire-reconcile".to_string(),
+        "https://example.com/".to_string(),
+        "https://example.com/".to_string(),
+        CrawlStatus::Queued,
+        json!({}),
+        1,
+        0,
+        0,
+        now,
+        now,
+        None,
+    );
+    crawl_repo
+        .create(&crawl)
+        .await
+        .expect("crawl create failed");
+
+    let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
+    let mut task = make_test_task();
+    task.crawl_id = Some(crawl_id);
+    task.expires_at = Some(Utc::now() - Duration::minutes(5));
+    repo.create(&task).await.expect("task create failed");
+
+    repo.expire_tasks().await.expect("expire_tasks failed");
+
+    let crawl = crawl_repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("find crawl failed")
+        .expect("crawl must exist");
+    assert_eq!(crawl.total_tasks(), 1, "total recomputed from tasks");
+    assert_eq!(crawl.failed_tasks(), 1, "expired task counted as failed");
+    assert_eq!(crawl.completed_tasks(), 0);
+    assert_eq!(
+        crawl.status,
+        CrawlStatus::Failed,
+        "all-failed crawl must be terminal Failed"
+    );
+    assert!(
+        crawl.completed_at.is_some(),
+        "terminal crawl gets completed_at"
+    );
+}
+
 #[tokio::test]
 async fn test_find_by_crawl_id_with_real_db_returns_empty_for_unknown() {
     if crate::common::test_helpers::skip_if_no_test_db() {

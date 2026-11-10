@@ -19,7 +19,7 @@ pub const MAX_CONCURRENCY: u32 = 50;
 /// URL scheme validation: only http and https are allowed (SSRF mitigation).
 static HTTP_URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^https?://").unwrap());
 
-fn is_http_url(value: &str) -> Result<(), sdforge::validator::ValidationError> {
+pub(crate) fn is_http_url(value: &str) -> Result<(), sdforge::validator::ValidationError> {
     if HTTP_URL_RE.is_match(value) {
         Ok(())
     } else {

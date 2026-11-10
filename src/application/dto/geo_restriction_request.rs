@@ -35,7 +35,7 @@ pub struct UpdateTeamGeoRestrictionsRequest {
     /// IP 白名单列表 (支持 CIDR 表示法)
     #[validate(custom(function = "validate_cidr_list"))]
     pub ip_whitelist: Option<Vec<String>>,
-    /// 域名黑名单列表
+    /// 域名黑名单列表（条数/长度上限由 handler 在写入前校验）
     pub domain_blacklist: Option<Vec<String>>,
 }
 

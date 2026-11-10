@@ -168,6 +168,50 @@ impl CrawlRepository for CrawlRepositoryImpl {
         Ok(())
     }
 
+    async fn update_status_guarded(
+        &self,
+        id: crate::domain::id::Id,
+        status: CrawlStatus,
+    ) -> Result<bool, RepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let now = chrono::Utc::now();
+        let mut update = crawl::Entity::update_many()
+            .col_expr(crawl::Column::Status, Expr::value(status.to_string()))
+            .col_expr(crawl::Column::UpdatedAt, Expr::value(now.naive_utc()))
+            .filter(crawl::Column::Id.eq(id))
+            // 终态守护：已完成/失败/取消的 crawl 不再被迟到事件覆盖
+            .filter(crawl::Column::Status.is_not_in([
+                CrawlStatus::Completed.to_string(),
+                CrawlStatus::Failed.to_string(),
+                CrawlStatus::Cancelled.to_string(),
+            ]));
+
+        if matches!(
+            status,
+            CrawlStatus::Completed | CrawlStatus::Failed | CrawlStatus::Cancelled
+        ) {
+            update = update.col_expr(
+                crawl::Column::CompletedAt,
+                Expr::value(Some(now.naive_utc())),
+            );
+        }
+
+        let result = update
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        Ok(result.rows_affected > 0)
+    }
+
     async fn update_status(
         &self,
         id: crate::domain::id::Id,

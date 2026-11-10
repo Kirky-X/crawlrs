@@ -253,10 +253,12 @@ if [ -z "$API_KEY" ] || [ -z "$TEAM_ID" ]; then
   log_fail "未能从服务启动日志解析自举 api_key/team_id（见 ${SERVER_LOG}）"
   exit 1
 fi
-log_pass "自举完成 (team=$TEAM_ID, key=${API_KEY:0:6}…<masked>)"
-# 掩码化留存服务日志（日志文件不得含明文凭证）
+log_pass "自举完成 (team=$TEAM_ID, key=<masked>)"
+# 掩码化留存服务日志（日志文件不得含明文凭证，也不保留任何前缀片段）
 # BSD/macOS sed 的 -i 需要备份后缀参数；用临时文件实现可移植原地替换
-sed "s|${API_KEY}|${API_KEY:0:6}…<masked>|g" "$SERVER_LOG" > "${SERVER_LOG}.masked"
+# perl 按字面量替换（sed 基础正则会把 key 中的元字符当模式；bootstrap key 虽为安全字符集，
+# 这里仍按字面量处理，避免掩码失败留下明文）
+API_KEY="$API_KEY" perl -pe 's/\Q$ENV{API_KEY}\E/<masked>/g' "$SERVER_LOG" > "${SERVER_LOG}.masked"
 cat "${SERVER_LOG}.masked" > "$SERVER_LOG"
 rm -f "${SERVER_LOG}.masked"
 

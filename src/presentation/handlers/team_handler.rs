@@ -220,6 +220,25 @@ fn validate_geo_restrictions_request(
         return Some(response);
     }
 
+    if let Some(blacklist) = request.domain_blacklist.as_deref() {
+        let max_entries = crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRIES;
+        let max_len = crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRY_LEN;
+        if blacklist.len() > max_entries {
+            return Some(error_response_with_code(
+                StatusCode::BAD_REQUEST,
+                error_codes::VALIDATION_ERROR,
+                format!("domain_blacklist must contain at most {max_entries} entries"),
+            ));
+        }
+        if blacklist.iter().any(|d| d.is_empty() || d.len() > max_len) {
+            return Some(error_response_with_code(
+                StatusCode::BAD_REQUEST,
+                error_codes::VALIDATION_ERROR,
+                format!("domain_blacklist entries must be 1-{max_len} bytes"),
+            ));
+        }
+    }
+
     None
 }
 

@@ -135,6 +135,11 @@ impl Crawl {
         (self.completed_tasks as f64 / self.total_tasks as f64) * 100.0
     }
 
+    /// 服务端写入 crawl.config 的可变访问（入口注入团队策略等）。
+    pub fn config_mut(&mut self) -> &mut serde_json::Value {
+        &mut self.config
+    }
+
     /// Check if the crawl is finished
     pub fn is_finished(&self) -> bool {
         matches!(
@@ -267,6 +272,9 @@ pub enum CrawlStatus {
     /// Cancelled
     Cancelled,
 }
+
+/// 终态集合（SQL 条件写与守卫共用；新增终态时只改这里）。
+pub const TERMINAL_CRAWL_STATUSES: [&str; 3] = ["completed", "failed", "cancelled"];
 
 impl fmt::Display for CrawlStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

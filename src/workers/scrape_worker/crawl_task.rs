@@ -36,6 +36,24 @@ impl ScrapeWorker {
             return Ok(());
         };
 
+        // 1.5 团队域名黑名单执行期复核：API/worker 预检之外的最后一道闸。
+        // 从 crawl 行读取（非任务 payload），读取/解析失败按“约束未知”fail-closed。
+        match self.crawl_domain_blacklist(crawl_id).await {
+            Ok(blacklist) => {
+                if let Some(reason) =
+                    crate::domain::services::team_service::domain_in_denylist(&task.url, &blacklist)
+                {
+                    self.finalize_crawl_rejection(&task, &reason).await?;
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                let reason = format!("Cannot load team domain blacklist: {e}");
+                self.finalize_crawl_rejection(&task, &reason).await?;
+                return Ok(());
+            }
+        }
+
         // 2. Robots.txt Check
         // robots UA 来自 robots.user_agent 配置（匹配与抓取共用）
         if !self.passes_robots_gate(&task).await? {
@@ -96,6 +114,29 @@ impl ScrapeWorker {
         }
         self.trigger_webhook(task, Some(reason.to_string())).await;
         Ok(())
+    }
+
+    /// 从 crawl 行读取团队域名黑名单（每任务一次 PK 查询）。
+    ///
+    /// 黑名单存 `crawl.config`，任务 payload 只保留 crawl_id/config，避免
+    /// 整表复制进每个子任务（sitemap 可达数万任务）。读取/解析失败 →
+    /// fail-closed（调用方拒绝任务），不得静默当作空黑名单。
+    async fn crawl_domain_blacklist(&self, crawl_id: crate::domain::id::Id) -> Result<Vec<String>> {
+        let crawl = self
+            .crawl_repository
+            .find_by_id(crawl_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("load crawl {crawl_id} failed: {e}"))?;
+        let Some(crawl) = crawl else {
+            // 老数据/测试桩可能没有 crawl 行：无策略快照可读，按空表处理。
+            log::warn!("crawl {crawl_id} not found when loading domain blacklist");
+            return Ok(Vec::new());
+        };
+        match crawl.config().get("domain_blacklist") {
+            None => Ok(Vec::new()),
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|e| anyhow::anyhow!("invalid domain_blacklist in crawl config: {e}")),
+        }
     }
 
     /// 解析 Crawl 任务 Payload（自 [`ScrapeWorker::process_crawl_task`] 提取）；
@@ -200,6 +241,35 @@ impl ScrapeWorker {
             "Crawl step successful, url: {}, status: {}",
             task.url, response.status_code
         );
+
+        // 重定向后最终 URL 也必须过团队黑名单：payload 黑名单只过滤
+        // “发现的链接”，不覆盖引擎跟随的 redirect。
+        // 黑名单非空且 final_url 缺失时无法确认实际落点 → fail-closed（拒绝落库，不重试）；
+        // 黑名单为空时无策略可执行，保持既有行为（部分引擎不上报 final_url）。
+        match self.crawl_domain_blacklist(crawl_id).await {
+            Ok(blacklist) if !blacklist.is_empty() => {
+                let denial = match response.final_url.as_deref() {
+                    Some(final_url) => crate::domain::services::team_service::domain_in_denylist(
+                        final_url, &blacklist,
+                    )
+                    .map(|reason| format!("Redirect blocked by domain blacklist: {reason}")),
+                    None => Some(
+                        "Engine did not report final URL; cannot enforce domain blacklist"
+                            .to_string(),
+                    ),
+                };
+                if let Some(reason) = denial {
+                    self.finalize_crawl_rejection(task, &reason).await?;
+                    return Ok(());
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                let reason = format!("Cannot load team domain blacklist: {e}");
+                self.finalize_crawl_rejection(task, &reason).await?;
+                return Ok(());
+            }
+        }
 
         let processed_response = Self::process_crawl_response_text(task, response).await;
 
@@ -460,18 +530,27 @@ impl ScrapeWorker {
                 pages_crawled,
                 pending
             );
-            if let Err(e) = self
+            match self
                 .crawl_repository
-                .update_status(
+                .update_status_guarded(
                     crawl_id,
                     crate::domain::models::crawl_model::CrawlStatus::Completed,
                 )
                 .await
             {
-                error!(
-                    "Failed to update crawl status after adaptive stop for {}: {}",
-                    crawl_id, e
-                );
+                Ok(true) => {}
+                Ok(false) => {
+                    debug!(
+                        "crawl {} already terminal; adaptive stop status write skipped",
+                        crawl_id
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to update crawl status after adaptive stop for {}: {}",
+                        crawl_id, e
+                    );
+                }
             }
             // D2 修复：停止条件命中后取消该 crawl 全部未终态子任务——
             // 此前仅改 crawl 状态行，queued 子任务继续消费（E2E SC-10 实测
@@ -816,7 +895,7 @@ fn log_sitemap_feed_failure(
 /// 键缺失 = 合法空表；键存在但类型/内容损坏 = 约束未知 → `Err`，调用方必须
 /// 显性上报并跳过喂入——禁止 `.ok.unwrap_or_default` 式静默降级为空
 /// 黑名单（地理限制域名会随之变为可抓取，限制性控制失效且无证据）。
-#[cfg(feature = "sitemap")]
+#[cfg(feature = "sitemap")] // 仅供 sitemap 种子 payload 解析；执行期走 crawl.config
 fn resolve_domain_blacklist(payload: &serde_json::Value) -> Result<Vec<String>, serde_json::Error> {
     match payload.get("domain_blacklist") {
         None => Ok(Vec::new()),

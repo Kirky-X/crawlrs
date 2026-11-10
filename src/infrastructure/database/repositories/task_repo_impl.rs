@@ -10,14 +10,15 @@ use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::{
     RepositoryError, TaskQueryParams, TaskRepository,
 };
+use crate::infrastructure::database::entities::crawl as crawl_entity;
 use crate::infrastructure::database::entities::task as task_entity;
 use crate::infrastructure::persistence::mappers::TaskMapper;
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use dbnexus::sea_orm::{
     sea_query::Expr, ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseBackend,
-    DbErr, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
-    Statement,
+    DbErr, EntityTrait, ExprTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Statement, TransactionTrait,
 };
 use dbnexus::DbPool;
 use std::collections::{HashMap, HashSet};
@@ -927,7 +928,95 @@ impl TaskRepository for TaskRepositoryImpl {
             .add(task_entity::Column::LockExpiresAt.is_null())
             .add(task_entity::Column::LockExpiresAt.lt(now));
 
-        let update_result = task_entity::Entity::update_many()
+        // 先取候选 crawl，再按 crawl 逐组事务处理：
+        // 每个 crawl 的“实际更新行数 → 计数增量 → 终态判定”在同一事务内，
+        // 且增量来自 `rows_affected`（不是预统计），并发认领/双 sweep 不会多计。
+        let affected_crawl_ids: Vec<Option<uuid::Uuid>> = task_entity::Entity::find()
+            .select_only()
+            .column(task_entity::Column::CrawlId)
+            .filter(stale_condition.clone())
+            .filter(lock_lease_free.clone())
+            .distinct()
+            .into_tuple()
+            .all(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let mut total_affected = 0u64;
+        let mut first_error: Option<String> = None;
+        for crawl_id in affected_crawl_ids.into_iter().flatten() {
+            let group_result: Result<u64, RepositoryError> = async {
+                let txn = conn
+                    .begin()
+                    .await
+                    .map_err(|e| RepositoryError::Database(e.into()))?;
+                let step: Result<u64, RepositoryError> = async {
+                    let updated = task_entity::Entity::update_many()
+                        .col_expr(
+                            task_entity::Column::Status,
+                            Expr::value(TaskStatus::Failed.to_string()),
+                        )
+                        .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+                        .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
+                        .col_expr(
+                            task_entity::Column::LockToken,
+                            Expr::value(None::<uuid::Uuid>),
+                        )
+                        .col_expr(
+                            task_entity::Column::LockExpiresAt,
+                            Expr::value(None::<chrono::DateTime<Utc>>),
+                        )
+                        .filter(stale_condition.clone())
+                        .filter(lock_lease_free.clone())
+                        .filter(task_entity::Column::CrawlId.eq(crawl_id))
+                        .exec(&txn)
+                        .await
+                        .map_err(|e| RepositoryError::Database(e.into()))?
+                        .rows_affected;
+                    if updated > 0 {
+                        reconcile_crawl_after_expiry(&txn, crawl_id, updated as i64).await?;
+                    }
+                    Ok(updated)
+                }
+                .await;
+                match step {
+                    Ok(updated) => txn
+                        .commit()
+                        .await
+                        .map(|()| updated)
+                        .map_err(|e| RepositoryError::Database(e.into())),
+                    Err(e) => {
+                        // 显式回滚：SeaORM 的 Drop 回滚失败会 panic（可能终止 sweep 循环）。
+                        if let Err(rollback_err) = txn.rollback().await {
+                            log::error!(
+                                "Rollback failed for crawl {} expire transaction: {}",
+                                crawl_id,
+                                rollback_err
+                            );
+                        }
+                        Err(e)
+                    }
+                }
+            }
+            .await;
+            match group_result {
+                Ok(n) => total_affected += n,
+                Err(e) => {
+                    log::error!(
+                        "Failed to expire tasks for crawl {} (transaction rolled back): {}",
+                        crawl_id,
+                        e
+                    );
+                    if first_error.is_none() {
+                        first_error = Some(e.to_string());
+                    }
+                }
+            }
+        }
+
+        // 无 crawl 归属的普通任务（crawl_id IS NULL）没有对账对象，
+        // 仍要在同一批次内标记失败（否则普通过期任务永不清理）。
+        let orphan_updated = task_entity::Entity::update_many()
             .col_expr(
                 task_entity::Column::Status,
                 Expr::value(TaskStatus::Failed.to_string()),
@@ -942,13 +1031,22 @@ impl TaskRepository for TaskRepositoryImpl {
                 task_entity::Column::LockExpiresAt,
                 Expr::value(None::<chrono::DateTime<Utc>>),
             )
-            .filter(stale_condition)
-            .filter(lock_lease_free)
+            .filter(stale_condition.clone())
+            .filter(lock_lease_free.clone())
+            .filter(task_entity::Column::CrawlId.is_null())
             .exec(conn)
             .await
-            .map_err(|e| RepositoryError::Database(e.into()))?;
+            .map_err(|e| RepositoryError::Database(e.into()))?
+            .rows_affected;
+        total_affected += orphan_updated;
 
-        Ok(update_result.rows_affected)
+        if let Some(e) = first_error {
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "expire_tasks partially failed: {e}"
+            )));
+        }
+
+        Ok(total_affected)
     }
 
     async fn find_by_crawl_id(
@@ -1159,6 +1257,66 @@ async fn cancel_owned_tasks(
         .map_err(|e| RepositoryError::Database(e.into()))?;
 
     let _ = update_count;
+    Ok(())
+}
+
+/// 过期批量清理后的 crawl 对账：对失败计数做**相对增量**，
+/// 再用单条条件 UPDATE 原子判定终态。
+///
+/// 不读 crawl 计数快照后绝对回写：并发的完成/入队走原子自增，
+/// 读-改-写窗口会覆盖这些增量（lost update），让 crawl 永久停在非终态。
+async fn reconcile_crawl_after_expiry<C: ConnectionTrait>(
+    conn: &C,
+    crawl_id: uuid::Uuid,
+    expired_count: i64,
+) -> Result<(), RepositoryError> {
+    if expired_count <= 0 {
+        return Ok(());
+    }
+    let now = Utc::now().naive_utc();
+
+    // 1) failed_tasks = failed_tasks + n（与正常失败路径同一增量语义）；
+    //    已终态的 crawl 不再改计数（取消/完成不被过期任务污染）。
+    crawl_entity::Entity::update_many()
+        .col_expr(
+            crawl_entity::Column::FailedTasks,
+            Expr::col(crawl_entity::Column::FailedTasks).add(expired_count as i32),
+        )
+        .col_expr(crawl_entity::Column::UpdatedAt, Expr::value(now))
+        .filter(crawl_entity::Column::Id.eq(crawl_id))
+        .filter(
+            crawl_entity::Column::Status
+                .is_not_in(crate::domain::models::crawl_model::TERMINAL_CRAWL_STATUSES),
+        )
+        .exec(conn)
+        .await
+        .map_err(|e| RepositoryError::Database(e.into()))?;
+
+    // 2) 终态判定放进 UPDATE 的 WHERE：谓词与行锁在同一语句内求值，
+    //    与并发的 completed/failed 自增之间不存在读后写窗口。
+    //    口径与 update_crawl_completion_status 一致：total>0 且
+    //    completed+failed==total；completed==0 → Failed（全失败不报成功）。
+    crawl_entity::Entity::update_many()
+        .col_expr(
+            crawl_entity::Column::Status,
+            Expr::cust("CASE WHEN completed_tasks = 0 THEN 'failed' ELSE 'completed' END"),
+        )
+        .col_expr(crawl_entity::Column::CompletedAt, Expr::value(Some(now)))
+        .col_expr(crawl_entity::Column::UpdatedAt, Expr::value(now))
+        .filter(crawl_entity::Column::Id.eq(crawl_id))
+        .filter(
+            crawl_entity::Column::Status
+                .is_not_in(crate::domain::models::crawl_model::TERMINAL_CRAWL_STATUSES),
+        )
+        .filter(crawl_entity::Column::TotalTasks.gt(0))
+        .filter(
+            Expr::col(crawl_entity::Column::CompletedTasks)
+                .add(Expr::col(crawl_entity::Column::FailedTasks))
+                .eq(Expr::col(crawl_entity::Column::TotalTasks)),
+        )
+        .exec(conn)
+        .await
+        .map_err(|e| RepositoryError::Database(e.into()))?;
     Ok(())
 }
 

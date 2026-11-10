@@ -47,11 +47,13 @@ db-mysql = [
 ]
 # `#[forge]` 生成 cfg(feature="http") 门控路由；下游必须声明本 feature 才会注册
 http = ["sdforge/http"]
-# web-axum：platform 的 auth-off 等价构建面（lib 作用域；platform 隐含 auth 无法覆盖该路径）
+# web-axum：platform 的 auth-off 等价构建面（lib 作用域；platform 隐含 auth 无法覆盖该路径）。
+# 不在此绑定 inklog 的数据库驱动：日志落库驱动由 db-* 组透传，否则
+# `web-axum,db-sqlite`/`db-mysql` 会与硬编码的 inklog/postgres 混用（dbnexus 编译期报错）。
 web-axum = [
     "rate-limit", "webhook", "metrics", "content",
     "dep:dbnexus", "dep:axum",
-    "inklog/http", "inklog/postgres", "http",
+    "inklog/http", "http",
 ]
 # forge-full：inventory 注册面；与手写 protected/v2 路由互斥（全局收集，并存即 panic）
 forge-full = ["http"]

@@ -602,7 +602,10 @@ mod engine_client_tests {
         assert_eq!(response.status_code, 200);
         assert_eq!(response.content, "<html>test</html>");
         assert_eq!(response.content_type, "text/html");
-        assert_eq!(response.final_url, Some("https://example.com".to_string()));
+        assert!(
+            response.final_url.is_none(),
+            "mock 引擎未上报 final_url 时不得用请求 URL 伪造"
+        );
     }
 
     #[tokio::test]

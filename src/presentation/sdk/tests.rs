@@ -83,6 +83,13 @@ fn make_server_success() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
+        // SDK crawl 的可选依赖：单测不启用团队黑名单/限流（None 走跳过分支）。
+        .layer(Extension(None::<
+            Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+        >))
+        .layer(Extension(None::<
+            Arc<dyn crate::domain::services::rate_limiting_service::RateLimitingService>,
+        >))
         .layer(Extension(auth_state))
         .layer(Extension(locale))
         .layer(Extension(i18n));
@@ -101,6 +108,13 @@ fn make_server_search_error() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
+        // SDK crawl 的可选依赖：单测不启用团队黑名单/限流（None 走跳过分支）。
+        .layer(Extension(None::<
+            Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+        >))
+        .layer(Extension(None::<
+            Arc<dyn crate::domain::services::rate_limiting_service::RateLimitingService>,
+        >))
         .layer(Extension(auth_state))
         .layer(Extension(locale))
         .layer(Extension(i18n));
@@ -119,6 +133,13 @@ fn make_server_queue_error() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
+        // SDK crawl 的可选依赖：单测不启用团队黑名单/限流（None 走跳过分支）。
+        .layer(Extension(None::<
+            Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+        >))
+        .layer(Extension(None::<
+            Arc<dyn crate::domain::services::rate_limiting_service::RateLimitingService>,
+        >))
         .layer(Extension(auth_state))
         .layer(Extension(locale))
         .layer(Extension(i18n));
@@ -137,6 +158,13 @@ fn make_server_crawl_repo_error() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepositoryError) as Arc<dyn CrawlRepository>
         ))
+        // SDK crawl 的可选依赖：单测不启用团队黑名单/限流（None 走跳过分支）。
+        .layer(Extension(None::<
+            Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+        >))
+        .layer(Extension(None::<
+            Arc<dyn crate::domain::services::rate_limiting_service::RateLimitingService>,
+        >))
         .layer(Extension(auth_state))
         .layer(Extension(locale))
         .layer(Extension(i18n));
@@ -391,6 +419,56 @@ async fn test_sdk_create_crawl_repo_error_returns_500() {
         return;
     }
     let server = make_server_crawl_repo_error();
+    let body = json!({
+        "name": "test crawl",
+        "url": "https://example.com",
+        "seed_url": "https://example.com/start"
+    });
+    let res = server.post("/api/v1/sdk/crawl").json(&body).await;
+    assert_eq!(res.status_code().as_u16(), 500);
+}
+
+/// seed_url 与 url 同口径校验：空值必须 400，而不是带着空 URL 落库。
+#[tokio::test]
+async fn test_sdk_create_crawl_empty_seed_url_returns_400() {
+    if skip_if_no_db() {
+        return;
+    }
+    let server = make_server_success();
+    let body = json!({
+        "name": "test crawl",
+        "url": "https://example.com",
+        "seed_url": "   "
+    });
+    let res = server.post("/api/v1/sdk/crawl").json(&body).await;
+    res.assert_status_bad_request();
+}
+
+/// max_depth 上限与 HTTP 入口同源（MAX_CRAWL_DEPTH=5），6 应 400。
+#[tokio::test]
+async fn test_sdk_create_crawl_depth_out_of_range_returns_400() {
+    if skip_if_no_db() {
+        return;
+    }
+    let server = make_server_success();
+    let body = json!({
+        "name": "test crawl",
+        "url": "https://example.com",
+        "seed_url": "https://example.com/start",
+        "max_depth": 6
+    });
+    let res = server.post("/api/v1/sdk/crawl").json(&body).await;
+    res.assert_status_bad_request();
+}
+
+/// 首任务入队失败必须 500，且不得留下 total=1/0 任务的孤儿 crawl。
+/// 覆盖 enqueue 失败分支（成功路径的 enqueue 由 happy_path 覆盖）。
+#[tokio::test]
+async fn test_sdk_create_crawl_queue_error_returns_500() {
+    if skip_if_no_db() {
+        return;
+    }
+    let server = make_server_queue_error();
     let body = json!({
         "name": "test crawl",
         "url": "https://example.com",

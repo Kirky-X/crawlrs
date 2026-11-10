@@ -1525,9 +1525,19 @@ Create a queued task (`task_type`: `scrape` or `crawl`).
 {
   "name": "my-crawl",
   "url": "https://example.com",
-  "seed_url": "https://example.com"
+  "seed_url": "https://example.com",
+  "max_depth": 2
 }
 ```
+
+`max_depth` 可选，缺省 2，范围 0–5（与 HTTP crawl 入口同源上限）。
+创建时即为 `seed_url` 播种 depth=0 的首任务，`total_tasks` 从 1 起算；
+首任务入队失败时接口返回 500，并把该 crawl 置为 Failed（计数自洽，不留孤儿）。
+与 `/v1/crawl` 一致：`url`/`seed_url` 仅接受 http(s)，并执行团队 `domain_blacklist`
+（命中返回 400，黑名单同时写入首任务用于过滤发现链接）；地理（国家）限制依赖请求源 IP，
+服务端到服务端调用无客户端 IP，因此 SDK 入口不做国家判定。
+SDK 端点按 API key 做限流（`/sdk/crawl`），该入口不计 credit（与 `/sdk/search`
+的按次计费口径不同，`/sdk/crawl` 的额度由限流约束）。
 
 **Response:**
 ```json

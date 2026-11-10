@@ -255,6 +255,76 @@ async fn test_update_status() {
     cleanup_crawls(&app, team_id).await;
 }
 
+/// 守护写：非终态 → 终态成功并写 completed_at；再次写入被拒且不改状态。
+#[tokio::test]
+async fn test_update_status_guarded_transitions_once() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
+    let crawl_id = crawlrs::domain::id::Id::generate();
+    let crawl = Crawl::new(
+        crawl_id,
+        team_id,
+        format!("Guarded Crawl {}", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        serde_json::json!({}),
+    );
+    repo.create(&crawl).await.expect("Failed to create crawl");
+
+    assert!(
+        repo.update_status_guarded(crawl_id, CrawlStatus::Completed)
+            .await
+            .expect("guarded update failed"),
+        "first guarded write must win"
+    );
+    let completed = repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("find crawl")
+        .expect("crawl exists");
+    assert_eq!(completed.status, CrawlStatus::Completed);
+    assert!(
+        completed.completed_at.is_some(),
+        "terminal guarded write must set completed_at"
+    );
+
+    assert!(
+        !repo
+            .update_status_guarded(crawl_id, CrawlStatus::Failed)
+            .await
+            .expect("second guarded update failed"),
+        "terminal crawl must reject later guarded writes"
+    );
+    let still = repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("find crawl")
+        .expect("crawl exists");
+    assert_eq!(
+        still.status,
+        CrawlStatus::Completed,
+        "late Failed must not overwrite Completed"
+    );
+
+    cleanup_crawls(&app, team_id).await;
+}
+
+/// 守护写：不存在的 crawl 返回 false（不是错误）。
+#[tokio::test]
+async fn test_update_status_guarded_unknown_id_returns_false() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+
+    let result = repo
+        .update_status_guarded(crawlrs::domain::id::Id::generate(), CrawlStatus::Completed)
+        .await
+        .expect("guarded update on unknown id should not error");
+    assert!(!result, "unknown crawl must report no rows written");
+}
+
 /// 测试通过 team_id 分页查询
 #[tokio::test]
 async fn test_find_by_team_id_paginated() {

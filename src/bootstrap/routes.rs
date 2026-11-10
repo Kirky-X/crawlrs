@@ -344,11 +344,27 @@ fn apply_global_api_layers(
     #[cfg(feature = "teams")]
     let geo_restriction_repo = state.geo_restriction_repo();
 
+    // SDK handler 以 `Option<Arc<...>>` 提取：SDK 路由未走 apply_teams_extension_layers，
+    // 这里按精确类型注入 Option 形态（teams-on 为 Some，teams-off 为 None）。
+    #[cfg(feature = "teams")]
+    let geo_restriction_repo_opt: Option<
+        Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+    > = Some(state.geo_restriction_repo());
+    #[cfg(not(feature = "teams"))]
+    let geo_restriction_repo_opt: Option<
+        Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+    > = None;
+    let rate_limiting_service_opt: Option<
+        Arc<dyn crate::domain::services::rate_limiting_service::RateLimitingService>,
+    > = Some(rate_limiting_service.clone());
+
     let app = app
         .merge(sdk_router)
         .layer(Extension(state.search_service.clone()))
         .layer(Extension(state.task_queue.clone()))
-        .layer(Extension(state.crawl_repo.clone()));
+        .layer(Extension(state.crawl_repo.clone()))
+        .layer(Extension(geo_restriction_repo_opt))
+        .layer(Extension(rate_limiting_service_opt));
 
     let app = app.layer(cors_layer)
         // i18n 中间件：从 Accept-Language 协商 locale，注入 Extension<Locale>

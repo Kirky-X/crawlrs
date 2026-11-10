@@ -335,6 +335,40 @@ async fn test_domain_blacklist_disabled_returns_allowed() {
 
 // Additional tests for improved coverage
 
+/// 黑名单主机归一化：大小写/末尾点/userinfo/query 中的 :// 都不得绕过。
+#[test]
+fn test_domain_in_denylist_normalizes_url_forms() {
+    use super::domain_in_denylist;
+
+    let blacklist = vec!["blocked.com".to_string()];
+    for seed in [
+        "https://blocked.com/page",
+        "https://sub.blocked.com/page",
+        "https://BLOCKED.COM/page",
+        "https://blocked.com./page",
+        "https://good.com@blocked.com/page",
+        "https://blocked.com/?next=https://safe.com",
+        "https://blocked.com/#https://safe.com",
+    ] {
+        assert!(
+            domain_in_denylist(seed, &blacklist).is_some(),
+            "seed must be denied: {seed}"
+        );
+    }
+    assert!(domain_in_denylist("https://safe.com/page", &blacklist).is_none());
+    assert!(
+        domain_in_denylist("https://notblocked.com/page", &blacklist).is_none(),
+        "substring must not match"
+    );
+
+    // IDN：黑名单条目与 seed 的 host 必须都归一为 punycode 后比较。
+    let idn = vec!["bücher.de".to_string()];
+    assert!(
+        domain_in_denylist("https://bücher.de/page", &idn).is_some(),
+        "IDN seed must match IDN blacklist entry"
+    );
+}
+
 /// Geo service mock that always returns an error
 #[derive(Debug, Clone)]
 struct FailingGeoService;

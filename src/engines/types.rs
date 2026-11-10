@@ -796,7 +796,7 @@ fn resolve_session_id(session_id: &Option<String>) -> Option<String> {
 /// Convert from internal ScrapeResponse to public format
 impl InternalScrapeResponse {
     #[inline]
-    pub fn to_public(&self, original_url: &str) -> ScrapeResponse {
+    pub fn to_public(&self, _original_url: &str) -> ScrapeResponse {
         ScrapeResponse {
             status_code: self.status_code,
             content: self.content.clone(),
@@ -804,13 +804,10 @@ impl InternalScrapeResponse {
             content_type: self.content_type.clone(),
             headers: self.headers.clone(),
             response_time_ms: self.response_time_ms,
-            // 优先使用引擎实际得到的最终 URL（如 playwright 页面导航、reqwest
-            // 重定向后的 URL）；引擎未提供时回退原始请求 URL，保持既有行为不回归。
-            final_url: Some(
-                self.final_url
-                    .clone()
-                    .unwrap_or_else(|| original_url.to_string()),
-            ),
+            // 只转发引擎实际报告的最终 URL；不得用请求 URL 伪造——上游把
+            // final_url 当作“实际落点”用于安全判定（如团队域名黑名单复核），
+            // 伪造会让检查静默放行。None 由消费方按 fail-closed 处理。
+            final_url: self.final_url.clone(),
             markdown: None,
             captured_responses: self
                 .captured_responses

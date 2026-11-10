@@ -44,6 +44,13 @@ pub struct SearchCrawlConfig {
             crate::domain::services::extraction_service::ExtractionRule,
         >,
     >,
+    /// 团队域名黑名单（入口预检写入；派生 crawl 任务 payload 必须携带，
+    /// 否则执行期复核对搜索结果抓取失效）
+    /// 入口预检使用；不参与序列化——worker 只读 payload 顶层
+    /// `domain_blacklist`，而 `CrawlConfigDto` 带 deny_unknown_fields，
+    /// 写进 config 会让所有派生任务 payload_invalid。
+    #[serde(default, skip_serializing)]
+    pub domain_blacklist: Vec<String>,
 }
 
 /// Search result item (领域层返回对象)
@@ -227,6 +234,7 @@ impl SearchService {
                 headers: None,
                 proxy: None,
                 extraction_rules: None,
+                domain_blacklist: Vec::new(),
             });
 
             let now = chrono::Utc::now();
@@ -247,6 +255,15 @@ impl SearchService {
                     metrics::counter!("crawlrs_search_oversized_url_total").increment(1);
                     continue;
                 }
+                if let Some(reason) = crate::domain::services::team_service::domain_in_denylist(
+                    &result.url,
+                    &config.domain_blacklist,
+                ) {
+                    log::warn!("skip blacklisted search result: {}", reason);
+                    #[cfg(feature = "metrics")]
+                    metrics::counter!("crawlrs_search_blacklisted_url_total").increment(1);
+                    continue;
+                }
                 if seen_urls.insert(result.url.clone()) {
                     eligible.push(result);
                 }
@@ -254,6 +271,13 @@ impl SearchService {
 
             // 无可用结果时不创建 crawl：total=0 的空 crawl 永远无法进入终态。
             if !eligible.is_empty() {
+                let mut crawl_config = json!(config);
+                if let Some(obj) = crawl_config.as_object_mut() {
+                    obj.insert(
+                        "domain_blacklist".to_string(),
+                        json!(config.domain_blacklist),
+                    );
+                }
                 let crawl = Crawl::with_all_fields(
                     cid,
                     team_id,
@@ -261,7 +285,7 @@ impl SearchService {
                     "search://".to_string() + &query.query,
                     "search://".to_string() + &query.query,
                     crate::domain::models::CrawlStatus::Queued,
-                    json!(config),
+                    crawl_config,
                     eligible.len() as i32,
                     0,
                     0,
@@ -279,7 +303,12 @@ impl SearchService {
                         team_id,
                         api_key_id,
                         result.url.clone(),
-                        json!({ "crawl_id": cid, "depth": 0, "config": config }),
+                        json!({
+                            "crawl_id": cid,
+                            "depth": 0,
+                            "config": config,
+                            "domain_blacklist": config.domain_blacklist,
+                        }),
                     );
                     task.priority = 100;
                     task.crawl_id = Some(cid);
@@ -1265,6 +1294,7 @@ mod tests {
             headers: Some(serde_json::json!({"User-Agent": "test"})),
             proxy: Some("http://proxy:8080".to_string()),
             extraction_rules: None,
+            domain_blacklist: Vec::new(),
         };
         let json = serde_json::to_string(&config).expect("should serialize");
         let back: SearchCrawlConfig = serde_json::from_str(&json).expect("should deserialize");
@@ -1416,6 +1446,52 @@ mod tests {
     }
 
     // search pre-validation tests
+
+    /// 回归：搜索派生 crawl 的 payload 必须能被 worker 的 `parse_crawl_payload`
+    /// 解析（config 不得含 deny_unknown_fields 之外的字段），且黑名单在顶层。
+    #[test]
+    fn search_crawl_payload_is_worker_compatible() {
+        let config = SearchCrawlConfig {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: "bfs".to_string(),
+            crawl_delay_ms: None,
+            max_concurrency: 10,
+            headers: None,
+            proxy: None,
+            extraction_rules: None,
+            domain_blacklist: vec!["blocked.com".to_string()],
+        };
+        let config_json = serde_json::to_value(&config).expect("serialize config");
+        assert!(
+            config_json.get("domain_blacklist").is_none(),
+            "domain_blacklist must not be serialized into CrawlConfigDto"
+        );
+        let crawl_id = crate::domain::id::Id::generate();
+        let mut task = Task::new(
+            crate::domain::id::Id::generate(),
+            TaskType::Crawl,
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            "https://example.com/".to_string(),
+            json!({
+                "crawl_id": crawl_id.to_string(),
+                "depth": 0,
+                "config": config_json,
+                "domain_blacklist": config.domain_blacklist,
+            }),
+        );
+        task.crawl_id = Some(crawl_id);
+        let parsed = crate::workers::scrape_response_builder::parse_crawl_payload(&task)
+            .expect("search crawl payload must parse as CrawlConfigDto");
+        assert_eq!(parsed.1, 0);
+        assert_eq!(parsed.2.max_depth, 1);
+        let blacklist: Vec<String> =
+            serde_json::from_value(task.payload["domain_blacklist"].clone())
+                .expect("top-level blacklist must deserialize");
+        assert_eq!(blacklist, vec!["blocked.com".to_string()]);
+    }
 
     #[tokio::test]
     async fn test_search_empty_query_returns_validation_error() {
@@ -2229,6 +2305,7 @@ mod tests {
             headers: Some(json!({"User-Agent": "CrawlrsBot"})),
             proxy: Some("http://proxy:8080".to_string()),
             extraction_rules: None,
+            domain_blacklist: Vec::new(),
         };
         let query = SearchQuery {
             crawl_results: Some(true),

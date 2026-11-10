@@ -12,7 +12,7 @@ use crate::domain::services::llm::TokenUsage;
 use crate::workers::scheduler::memory_scheduler::{Admission, MemoryState};
 use anyhow::Result;
 use chrono::Utc;
-use log::warn;
+use log::{error, warn};
 use serde_json::Value;
 use tokio::sync::OwnedSemaphorePermit;
 
@@ -36,6 +36,21 @@ impl ScrapeWorker {
                         task.id
                     );
                     return Ok(true);
+                }
+                // 过期是终态：crawl 子任务必须计入失败并推进完成判定，
+                // 否则 crawl 行会永久停在 queued（与 robots/SSRF 早期拒绝同因）。
+                if let Some(crawl_id) = task.crawl_id {
+                    if let Err(e) = self.crawl_repository.increment_failed_tasks(crawl_id).await {
+                        error!(
+                            "Failed to increment failed tasks for expired crawl task {}: {}",
+                            crawl_id, e
+                        );
+                    }
+                    crate::workers::crawl_link_extractor::update_crawl_completion_status(
+                        crawl_id,
+                        self.crawl_repository.as_ref(),
+                    )
+                    .await;
                 }
                 // Trigger failure webhook if needed
                 self.trigger_webhook(task, Some("Task expired".to_string()))

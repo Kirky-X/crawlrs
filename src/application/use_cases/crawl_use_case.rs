@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-use super::crawl_link_processor::{build_crawl_entity, build_initial_crawl_task};
+use super::crawl_link_processor::{persist_crawl_with_initial_task, PersistCrawlError};
 use super::crawl_state_machine;
 use crate::{
     application::dto::crawl_request::CrawlRequestDto,
@@ -194,26 +194,33 @@ impl CrawlUseCase {
             .check_request_restrictions(team_id, client_ip, &dto.url)
             .await?;
 
-        let crawl_id = crate::domain::id::Id::generate();
         let now = Utc::now();
+        // 限制关闭时不把历史列表写入 payload：执行期复核只认 payload，
+        // 否则会出现“API 放行、worker 拒绝”的不一致。
+        let domain_blacklist = restrictions
+            .effective_domain_blacklist()
+            .map_err(CrawlUseCaseError::ValidationError)?;
 
-        let crawl = build_crawl_entity(crawl_id, team_id, &dto, now);
-
-        self.crawl_repo.create(&crawl).await?;
-
-        let initial_task = build_initial_crawl_task(
+        // 创建 crawl + 首任务（入队失败含补偿）统一由 application 编排，
+        // HTTP 与 SDK 共用同一条不变式。
+        persist_crawl_with_initial_task(
+            self.crawl_repo.as_ref(),
             team_id,
             api_key_id,
-            crawl_id,
             &dto,
-            restrictions.domain_blacklist.unwrap_or_default(),
+            &dto.url,
+            domain_blacklist,
             now,
-        );
-
-        self.task_repo.create(&initial_task).await?;
-        // 根任务已由 build_crawl_entity 以 total_tasks=1 计入，此处不得再自增。
-
-        Ok(crawl)
+            |task| {
+                let repo = self.task_repo.clone();
+                async move { repo.create(&task).await }
+            },
+        )
+        .await
+        .map_err(|e| match e {
+            PersistCrawlError::Repository(err) => CrawlUseCaseError::Repository(err),
+            PersistCrawlError::Enqueue(err) => CrawlUseCaseError::Repository(err),
+        })
     }
 
     /// 解析本请求生效的团队限制并校验种子 URL（自 [`Self::create_crawl`] 提取）。

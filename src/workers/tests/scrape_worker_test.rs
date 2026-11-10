@@ -2290,6 +2290,37 @@ async fn test_handle_expired_task_records_reason() {
     );
 }
 
+// handle_expired_task：爬取子任务过期必须计入 crawl failed 并触发完成判定
+
+#[tokio::test]
+async fn test_handle_expired_crawl_task_increments_failed_tasks() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        crawl_repo.clone(),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+
+    let mut task = make_task(json!({}));
+    task.task_type = TaskType::Crawl;
+    task.crawl_id = Some(crate::domain::id::Id::generate());
+    task.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+
+    let handled = worker
+        .handle_expired_task(&task)
+        .await
+        .expect("expiry handling should succeed");
+    assert!(handled, "过期任务应被处理");
+    assert_eq!(
+        crawl_repo.failed_increment_count(),
+        1,
+        "过期 crawl 子任务必须计入 failed_tasks"
+    );
+}
+
 // handle_rules_extraction tests
 
 #[tokio::test]
@@ -5145,6 +5176,28 @@ impl CrawlRepository for ConfigurableCrawlRepo {
         }
         Ok(())
     }
+
+    async fn update_status_guarded(
+        &self,
+        _id: crate::domain::id::Id,
+        _status: CrawlStatus,
+    ) -> Result<bool, RepositoryError> {
+        if self.crawl.lock().unwrap().as_ref().is_some_and(|c| {
+            matches!(
+                c.status,
+                CrawlStatus::Completed | CrawlStatus::Failed | CrawlStatus::Cancelled
+            )
+        }) {
+            return Ok(false);
+        }
+        self.update_status_count.fetch_add(1, Ordering::SeqCst);
+        if self.fail_update_status.load(Ordering::SeqCst) {
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock update_status error"
+            )));
+        }
+        Ok(true)
+    }
     async fn increment_total_tasks(
         &self,
         _id: crate::domain::id::Id,
@@ -6572,10 +6625,16 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
     let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
     let coalesce_coordinator = make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
+    // 必须真正打开 increment_failed_tasks 失败开关，否则该用例只测到成功路径。
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+    crawl_repo
+        .fail_increment_failed
+        .store(true, Ordering::SeqCst);
+
     let worker = ScrapeWorker::new(ScrapeWorkerDeps {
         repository: task_repo,
         result_repository: result_repo,
-        crawl_repository: Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
+        crawl_repository: crawl_repo.clone() as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
         engine_client,
@@ -6614,6 +6673,11 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
     assert!(
         result.is_ok(),
         "handle_crawl_failure should not fail when increment_failed_tasks errors"
+    );
+    assert_eq!(
+        crawl_repo.failed_increment_count(),
+        1,
+        "terminal failure must attempt the crawl failed increment"
     );
 }
 

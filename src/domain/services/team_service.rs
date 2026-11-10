@@ -108,33 +108,10 @@ impl TeamService {
         domain: &str,
         restrictions: &TeamGeoRestrictions,
     ) -> Result<GeoRestrictionResult> {
-        if !restrictions.enable_geo_restrictions {
-            return Ok(GeoRestrictionResult::Allowed);
+        match domain_blacklist_denial(domain, restrictions) {
+            Some(reason) => Ok(GeoRestrictionResult::Denied(reason)),
+            None => Ok(GeoRestrictionResult::Allowed),
         }
-
-        // Normalize input: extract host from URL/domain:port/path forms.
-        // This prevents substring false positives (e.g., "evil-example.com" matching "example.com")
-        // while still supporting URL inputs gracefully.
-        let normalized = extract_host(domain);
-
-        if let Some(ref blacklist) = restrictions.domain_blacklist {
-            for blocked_domain in blacklist {
-                // Block on exact match or proper subdomain match (suffix).
-                // Substring matching is intentionally avoided to prevent security bypass
-                // where "evil-example.com" would be blocked by "example.com" blacklist,
-                // and to prevent false positives where "example.com" blacklist blocks "evil-example.com".
-                if normalized == blocked_domain.as_str()
-                    || normalized.ends_with(&format!(".{}", blocked_domain))
-                {
-                    return Ok(GeoRestrictionResult::Denied(format!(
-                        "Domain {} is in the blacklist",
-                        domain
-                    )));
-                }
-            }
-        }
-
-        Ok(GeoRestrictionResult::Allowed)
     }
 
     pub async fn get_team_geo_restrictions(
@@ -247,6 +224,112 @@ fn country_list_outcome(
     None
 }
 
+/// 域名黑名单硬上限：条目数与单条长度同时约束 CPU 与任务 payload 体积。
+pub const MAX_DOMAIN_BLACKLIST_ENTRIES: usize = 1000;
+pub const MAX_DOMAIN_BLACKLIST_ENTRY_LEN: usize = 253;
+
+impl TeamGeoRestrictions {
+    /// 执行期生效的黑名单：限制关闭时为空（避免 API 放行、worker 拒绝的口径分裂）。
+    ///
+    /// 超过硬上限时返回 `Err`（fail-closed），不得静默截断——否则尾部条目会
+    /// 在派生任务/执行期被悄悄丢弃，形成管理员策略失效。
+    pub fn effective_domain_blacklist(&self) -> Result<Vec<String>, String> {
+        if !self.enable_geo_restrictions {
+            return Ok(Vec::new());
+        }
+        let list = self.domain_blacklist.as_deref().unwrap_or(&[]);
+        if list.len() > MAX_DOMAIN_BLACKLIST_ENTRIES {
+            return Err(format!(
+                "domain_blacklist has {} entries; maximum is {}",
+                list.len(),
+                MAX_DOMAIN_BLACKLIST_ENTRIES
+            ));
+        }
+        if let Some(bad) = list
+            .iter()
+            .find(|entry| entry.is_empty() || entry.len() > MAX_DOMAIN_BLACKLIST_ENTRY_LEN)
+        {
+            return Err(format!(
+                "domain_blacklist entry must be 1-{} bytes: {}",
+                MAX_DOMAIN_BLACKLIST_ENTRY_LEN, bad
+            ));
+        }
+        Ok(list.to_vec())
+    }
+}
+
+/// 团队域名黑名单匹配（`TeamService::validate_domain_blacklist` 与
+/// SDK/搜索等无 `TeamService` 句柄的入口共用同一份规则）。
+///
+/// 返回 `Some(reason)` 表示命中黑名单；`None` 表示放行。
+/// 子域名按后缀匹配，不做子串匹配（避免 `evil-example.com` 受 `example.com` 规则误伤）。
+pub fn domain_blacklist_denial(domain: &str, restrictions: &TeamGeoRestrictions) -> Option<String> {
+    if !restrictions.enable_geo_restrictions {
+        return None;
+    }
+    let blacklist = restrictions.domain_blacklist.as_deref().unwrap_or(&[]);
+    domain_in_denylist(domain, blacklist)
+}
+
+/// 在给定黑名单中匹配主机（URL 或裸域名）。
+///
+/// 用 `url::Url` 解析真实 host，并统一小写、去掉末尾点；解析失败时回退到
+/// 逐段剥离 scheme/path/query/fragment/userinfo。不得用 `split("://")` 之类
+/// 的字符串切分做安全判定：`https://blocked.com/?next=https://safe.com`、
+/// `https://good.com@blocked.com/`、大小写与末尾点都会让切分结果偏离真实主机。
+pub fn domain_in_denylist(domain_or_url: &str, blacklist: &[String]) -> Option<String> {
+    if blacklist.is_empty() {
+        return None;
+    }
+    let normalized = normalize_host(domain_or_url);
+    if normalized.is_empty() {
+        return None;
+    }
+    for blocked_domain in blacklist {
+        let blocked = normalize_host(blocked_domain);
+        if blocked.is_empty() {
+            continue;
+        }
+        let suffix_match = normalized.len() > blocked.len() + 1
+            && normalized.ends_with(blocked.as_str())
+            && normalized.as_bytes()[normalized.len() - blocked.len() - 1] == b'.';
+        if normalized == blocked || suffix_match {
+            return Some(format!("Domain {} is in the blacklist", domain_or_url));
+        }
+    }
+    None
+}
+
+/// 归一化主机：小写、去末尾点、去 scheme/path/query/fragment/userinfo/port。
+fn normalize_host(input: &str) -> String {
+    let candidate = input.trim();
+    if let Ok(parsed) = url::Url::parse(candidate) {
+        if let Some(host) = parsed.host_str() {
+            return host.trim_end_matches('.').to_ascii_lowercase();
+        }
+    }
+    // 裸域名/无 scheme 形态：先补 scheme 交给 Url 归一（IDN → punycode，
+    // 与 seed 的 host_str 同口径），失败再逐段剥离。
+    if let Ok(parsed) = url::Url::parse(&format!("http://{candidate}")) {
+        if let Some(host) = parsed.host_str() {
+            return host.trim_end_matches('.').to_ascii_lowercase();
+        }
+    }
+    let after_scheme = candidate.split("://").last().unwrap_or(candidate);
+    let host_with_port = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_scheme);
+    // userinfo 形式 good.com@blocked.com → 取 @ 之后的真实主机
+    let host_with_port = host_with_port.rsplit('@').next().unwrap_or(host_with_port);
+    let host = if host_with_port.starts_with('[') {
+        host_with_port
+    } else {
+        host_with_port.split(':').next().unwrap_or(host_with_port)
+    };
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
 /// Extract the host (domain) from a URL, domain:port, or bare domain string.
 ///
 /// Handles the following input forms:
@@ -258,6 +341,7 @@ fn country_list_outcome(
 /// This is used by [`TeamService::validate_domain_blacklist`] to normalize inputs
 /// before matching against the blacklist, preventing substring false positives
 /// (e.g., `evil-example.com/path` must not match `example.com` blacklist entry).
+#[cfg(test)] // 生产路径统一走 normalize_host；保留旧解析供既有单测回归
 fn extract_host(input: &str) -> &str {
     // Strip scheme if present (e.g., "https://host/path" → "host/path")
     let after_scheme = input.split("://").last().unwrap_or(input);

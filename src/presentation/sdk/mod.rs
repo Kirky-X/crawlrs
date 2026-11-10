@@ -16,7 +16,7 @@
 use sdforge::prelude::*;
 use std::sync::Arc;
 
-use crate::domain::models::{Crawl, Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::services::search_service::{SearchQuery, SearchServiceTrait};
 use crate::i18n::{t, I18nBundle, Locale};
@@ -82,6 +82,12 @@ pub struct SdkCreateCrawlRequest {
     pub name: String,
     pub url: String,
     pub seed_url: String,
+    /// 抓取深度（缺省 2；上限与 HTTP 入口同源 `MAX_CRAWL_DEPTH`）。
+    ///
+    /// 必须写进首任务 payload 的 config：worker 解析 task payload 时会
+    /// 反序列化 `CrawlConfigDto`（max_depth 必填），缺省会直接 payload_invalid。
+    #[serde(default)]
+    pub max_depth: Option<u32>,
 }
 
 #[derive(serde::Serialize)]
@@ -319,53 +325,233 @@ async fn sdk_scrape(
     method = "POST",
     description = "SDK create crawl endpoint"
 )]
+#[allow(clippy::too_many_arguments)] // forge `#[state]` 注入：每个依赖必须独立参数
 async fn sdk_create_crawl(
     #[state] crawl_repo: Arc<dyn CrawlRepository>,
+    #[state] queue: Arc<dyn TaskQueue>,
     #[state] auth_state: AuthState,
     #[state] locale: Locale,
     #[state] i18n: Arc<I18nBundle>,
+    #[state] geo_repo: Option<
+        Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+    >,
+    #[state] rate_limiting_service: Option<
+        Arc<dyn crate::domain::services::rate_limiting_service::RateLimitingService>,
+    >,
     req: SdkCreateCrawlRequest,
 ) -> Result<SdkCrawlResponse, ApiError> {
-    if req.url.trim().is_empty() {
-        // FTL key: validation.ftl `sdk-url-empty`
+    for (field, value) in [
+        ("url", req.url.as_str()),
+        ("seed_url", req.seed_url.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            // FTL key: validation.ftl `sdk-url-empty`
+            return Err(ApiError::InvalidInput {
+                message: t(&locale, &i18n, "sdk-url-empty"),
+                field: Some(field.to_string()),
+                value: None,
+            });
+        }
+        // tasks.url 的普通 btree 索引有行上限：与 HTTP 入口同口径按字节限长。
+        if value.len() > MAX_TASK_URL_BYTES {
+            return Err(ApiError::InvalidInput {
+                message: format!("{field} must be at most 2048 bytes"),
+                field: Some(field.to_string()),
+                value: None,
+            });
+        }
+        // scheme 校验与 HTTP 入口同源（仅 http/https，SSRF 的第一道闸）。
+        if crate::application::dto::crawl_request::is_http_url(value).is_err() {
+            return Err(ApiError::InvalidInput {
+                message: format!("{field} must start with http:// or https://"),
+                field: Some(field.to_string()),
+                value: None,
+            });
+        }
+    }
+    let max_depth = req.max_depth.unwrap_or(2);
+    if max_depth > crate::application::dto::crawl_request::MAX_CRAWL_DEPTH {
         return Err(ApiError::InvalidInput {
-            message: t(&locale, &i18n, "sdk-url-empty"),
-            field: Some("url".to_string()),
-            value: None,
+            message: format!(
+                "max_depth must be between 0 and {}",
+                crate::application::dto::crawl_request::MAX_CRAWL_DEPTH
+            ),
+            field: Some("max_depth".to_string()),
+            value: Some(serde_json::json!(max_depth)),
         });
     }
-    // tasks.url 的普通 btree 索引有行上限：与 HTTP 入口同口径按字节限长。
-    if req.url.len() > MAX_TASK_URL_BYTES {
+    if req.name.trim().is_empty() || req.name.chars().count() > 255 {
         return Err(ApiError::InvalidInput {
-            message: "url must be at most 2048 bytes".to_string(),
-            field: Some("url".to_string()),
+            message: "name must be 1-255 characters".to_string(),
+            field: Some("name".to_string()),
             value: None,
         });
     }
 
-    let crawl = Crawl::new(
-        crate::domain::id::Id::generate(),
-        auth_state.team_id,
-        req.name,
-        req.url,
-        req.seed_url,
-        serde_json::json!({}),
-    );
+    // per-key 配额（与 /v1/crawl 同口径；SDK 端点不计 credit，仅限流）。
+    if let Some(service) = rate_limiting_service.as_ref() {
+        use crate::domain::services::rate_limiting_service::RateLimitResult;
+        match service
+            .check_rate_limit(&auth_state.api_key_id.to_string(), "/sdk/crawl")
+            .await
+        {
+            Ok(RateLimitResult::Allowed) => {}
+            Ok(RateLimitResult::Denied { reason }) => {
+                log::warn!(
+                    "SDK crawl rate limited for key {}: {}",
+                    auth_state.api_key_id,
+                    reason
+                );
+                return Err(ApiError::RateLimitExceeded {
+                    limit: 0,
+                    window_seconds: 60,
+                });
+            }
+            Ok(RateLimitResult::RetryAfter {
+                retry_after_seconds,
+            }) => {
+                return Err(ApiError::RateLimitExceeded {
+                    limit: 0,
+                    window_seconds: retry_after_seconds.min(u32::MAX as u64) as u32,
+                });
+            }
+            Err(e) => {
+                log::error!("SDK crawl rate limit check failed: {}", e);
+                return Err(ApiError::Internal {
+                    message: "Internal server error".to_string(),
+                    error_id: crate::domain::id::Id::generate().to_string(),
+                    source: None,
+                    context: None,
+                });
+            }
+        }
+    }
 
-    let created = crawl_repo
-        .create(&crawl)
+    // 团队域名黑名单：SDK 与 HTTP 入口同规则（命中即拒绝，且把黑名单写入首任务，
+    // 链接提取侧据此过滤发现链接）。地理（国家）限制依赖请求源 IP，SDK 为
+    // 服务端到服务端调用，无客户端 IP，故不做国家判定。
+    let restrictions = match geo_repo.as_ref() {
+        Some(repo) => repo
+            .get_team_restrictions(auth_state.team_id)
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "Failed to load geo restrictions for team {} on SDK crawl: {}",
+                    auth_state.team_id,
+                    e
+                );
+                ApiError::Internal {
+                    message: "Internal server error".to_string(),
+                    error_id: crate::domain::id::Id::generate().to_string(),
+                    source: None,
+                    context: None,
+                }
+            })?,
+        None => crate::domain::services::team_service::TeamGeoRestrictions::default(),
+    };
+    if let Some(reason) =
+        crate::domain::services::team_service::domain_blacklist_denial(&req.seed_url, &restrictions)
+    {
+        return Err(ApiError::InvalidInput {
+            message: reason,
+            field: Some("seed_url".to_string()),
+            value: None,
+        });
+    }
+    let domain_blacklist = restrictions
+        .effective_domain_blacklist()
+        .map_err(|message| ApiError::InvalidInput {
+            message,
+            field: Some("domain_blacklist".to_string()),
+            value: None,
+        })?;
+
+    // SSRF 预检（与 HTTP 入口同一函数）：入队前拒绝内网/回环/元数据地址，
+    // 不让内部地址占用队列与 worker。DNS 解析无内建缓存/超时，外层加 5s 上界，
+    // 避免解析器故障把请求连接挂死。
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::presentation::handlers::check_ssrf_url(
+            &req.seed_url,
+            auth_state.team_id,
+            auth_state.api_key_id,
+        ),
+    )
+    .await
+    {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            return Err(ApiError::InvalidInput {
+                message: "seed_url is not allowed (SSRF protection)".to_string(),
+                field: Some("seed_url".to_string()),
+                value: None,
+            });
+        }
+        Err(_) => {
+            return Err(ApiError::ServiceUnavailable {
+                service: "ssrf_check".to_string(),
+                retry_after: Some(1),
+                source: None,
+            });
+        }
+    }
+
+    // DTO 只承载抓取语义；创建 crawl + 首任务 + 入队补偿统一走 application 编排，
+    // HTTP 与 SDK 共用同一条不变式。
+    let dto = crate::application::dto::crawl_request::CrawlRequestDto {
+        url: req.seed_url,
+        validated_url: None,
+        name: Some(req.name),
+        config: crate::application::dto::crawl_request::CrawlConfigDto {
+            max_depth,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            max_pages: None,
+            proxy: None,
+            headers: None,
+            extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
+        },
+        sync_wait_ms: None,
+        expires_at: None,
+        sitemap_seed: None,
+        sitemap_url: None,
+    };
+    let now = chrono::Utc::now();
+    let crawl =
+        crate::application::use_cases::crawl_link_processor::persist_crawl_with_initial_task(
+            crawl_repo.as_ref(),
+            auth_state.team_id,
+            auth_state.api_key_id,
+            &dto,
+            &req.url,
+            domain_blacklist,
+            now,
+            |task| {
+                let q = queue.clone();
+                async move { q.enqueue(task).await }
+            },
+        )
         .await
-        .map_err(|e| ApiError::Internal {
-            message: e.to_string(),
-            error_id: crate::domain::id::Id::generate().to_string(),
-            source: None,
-            context: None,
+        .map_err(|e| {
+            // 不向 SDK 客户端回显 DB/队列内部错误文本；细节只进服务端日志
+            log::error!("SDK crawl create failed: {}", e);
+            ApiError::Internal {
+                message: "Internal server error".to_string(),
+                error_id: crate::domain::id::Id::generate().to_string(),
+                source: None,
+                context: None,
+            }
         })?;
 
     Ok(SdkCrawlResponse {
-        id: created.id,
-        status: format!("{:?}", created.status),
-        url: created.root_url,
+        id: crawl.id,
+        status: format!("{:?}", crate::domain::models::CrawlStatus::Queued),
+        url: crawl.root_url,
     })
 }
 

@@ -491,10 +491,7 @@ fn test_internal_response_to_public() {
     assert_eq!(public.headers.len(), 1);
     assert_eq!(public.headers.get("Server"), Some(&"nginx".to_string()));
     assert_eq!(public.response_time_ms, 42);
-    assert_eq!(
-        public.final_url,
-        Some("https://example.com/page".to_string())
-    );
+    assert!(public.final_url.is_none());
 }
 
 #[test]
@@ -992,7 +989,7 @@ fn test_to_public_basic_fields() {
     assert_eq!(public.content_type, "text/html");
     assert!(public.headers.is_empty());
     assert_eq!(public.response_time_ms, 150);
-    assert_eq!(public.final_url, Some("https://example.com".to_string()));
+    assert!(public.final_url.is_none());
 }
 
 #[test]
@@ -1017,7 +1014,7 @@ fn test_to_public_with_screenshot_and_headers() {
     assert_eq!(public.content_type, "application/json");
     assert_eq!(public.headers.len(), 1);
     assert_eq!(public.response_time_ms, 500);
-    assert_eq!(public.final_url, Some("https://test.com/page".to_string()));
+    assert!(public.final_url.is_none());
 }
 
 #[test]
@@ -1037,7 +1034,7 @@ fn test_to_public_empty_content() {
     assert_eq!(public.status_code, 204);
     assert!(public.content.is_empty());
     assert!(public.content_type.is_empty());
-    assert_eq!(public.final_url, Some(String::new()));
+    assert!(public.final_url.is_none());
 }
 
 // EngineClient method tests
@@ -1153,7 +1150,10 @@ async fn test_engine_client_scrape_success() {
     assert_eq!(response.content, "test content");
     assert_eq!(response.content_type, "text/html");
     assert_eq!(response.response_time_ms, 100);
-    assert_eq!(response.final_url, Some("https://example.com".to_string()));
+    assert!(
+        response.final_url.is_none(),
+        "引擎未上报 final_url 时不得用请求 URL 伪造"
+    );
 }
 
 // EngineClient::scrape SSRF rejection

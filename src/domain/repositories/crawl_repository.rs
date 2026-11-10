@@ -96,6 +96,25 @@ pub trait CrawlRepository: Send + Sync {
         status: CrawlStatus,
     ) -> Result<(), RepositoryError>;
 
+    /// 条件状态写入：仅当 crawl 尚未处于终态时更新；终态 status 同时写
+    /// `completed_at`。返回 `Ok(true)` 表示写入成功，`Ok(false)` 表示 crawl
+    /// 已是终态（并发取消/完成）或不存在，调用方不得按“已写入”处理。
+    ///
+    /// 完成判定与自适应停止必须使用本方法，避免迟到事件覆盖 Cancelled。
+    ///
+    /// 默认实现返回 `Err`（而非 `Ok(false)`）：`Ok(false)` 的语义是“已是终态/
+    /// 不存在”，与“仓储未实现”不可混为一谈，否则升级后的仓储会静默不落状态。
+    /// 生产仓储必须覆盖。
+    async fn update_status_guarded(
+        &self,
+        id: crate::domain::id::Id,
+        _status: CrawlStatus,
+    ) -> Result<bool, RepositoryError> {
+        Err(RepositoryError::Database(anyhow::anyhow!(
+            "update_status_guarded is not implemented by this crawl repository (crawl {id})"
+        )))
+    }
+
     /// 增加总任务计数
     ///
     /// # 参数

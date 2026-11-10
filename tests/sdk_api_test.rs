@@ -63,6 +63,13 @@ fn make_server() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
+        // SDK crawl 可选依赖（单测不启用团队黑名单/限流）。
+        .layer(Extension(None::<
+            Arc<dyn crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>,
+        >))
+        .layer(Extension(None::<
+            Arc<dyn crawlrs::domain::services::rate_limiting_service::RateLimitingService>,
+        >))
         .layer(Extension(auth_state))
         .layer(Extension(locale))
         .layer(Extension(i18n));
