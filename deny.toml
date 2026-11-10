@@ -45,6 +45,8 @@ unmaintained = "all"
 # 唯一引入路径 testcontainers 0.27.3 → testcontainers-modules 0.15.0，均 [dev-dependencies]，
 # 不进任何发布二进制；集成测试的容器镜像 tar 解包用。unmaintained 非漏洞，上游 testcontainers
 # 换 tar-codec 后移除本豁免（tracking: testcontainers-rs 上游 changelog）。
+# 注意：cargo-deny 默认图不含 dev-deps，会打 "no crate matched" note（无害）；
+# cargo-audit 的图含 dev-deps，此豁免对 audit 是必需的（两处须同源保留）。
 ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2026-0387", "RUSTSEC-2026-0440", "RUSTSEC-2026-0459"]
 
 [licenses]
@@ -65,7 +67,6 @@ wildcards = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# 两个钉 rev 的 git 源（rev 在 Cargo.toml 钉死 + deny 四关护栏）：
-# - moli-html2md：HTML→Markdown 主转换器
-# - fluxweir：gateway 嵌入网关（registry 0.1.0 缺 build_app_with_pool/TrustedIdentity）
-allow-git = ["https://github.com/lexmount/moli", "https://github.com/Kirky-X/fluxweir"]
+# 钉 rev 的 git 源（rev 在 Cargo.toml 钉死 + deny 四关护栏）：
+# - moli-html2md：HTML→Markdown 主转换器（fluxweir 已回归 registry 0.1.1，白名单移除）
+allow-git = ["https://github.com/lexmount/moli"]

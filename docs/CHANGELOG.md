@@ -16,6 +16,10 @@
 
 ## [Unreleased]
 
+### Dependencies
+
+- fluxweir 0.1.0（git rev 2d559ad）→ registry 0.1.1（已含此前缺失的嵌入式单池共享 `build_app_with_pool`）；`gateway` 组合本地实测 check/clippy/test 全绿；deny allow-git 白名单同步移除该源（crates.io 发布仍被 moli-html2md git 依赖挡住）
+
 ## [0.2.0-rc.4] - 2026-11-10
 
 ### Fixed（发布流水线全量补跑：CI 复绿与卫生清理）

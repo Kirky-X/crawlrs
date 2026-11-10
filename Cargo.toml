@@ -277,13 +277,13 @@ sys-locale = { version = "0.3", default-features = false }
 # 回退到 rc.6 及更早需同步退回 5.5，否则双版本共存触发 E0659）
 utoipa = { version = "6.0", optional = true, default-features = false, features = ["macros"] }
 
-# fluxweir LLM 网关（gateway 特性）：git 依赖钉 rev 2d559ad（含 16b7cc5 的嵌入式单池共享
-# 与可信代理身份桥；registry 0.1.0 缺 build_app_with_pool/TrustedIdentity，故暂用 git rev，
-# 待发布含该 API 的新版本后改为 registry）。rev 为完整 40 位 SHA，deny allow-git 白名单该源。
+# fluxweir LLM 网关（gateway 特性）：registry 0.1.1（已含嵌入式单池共享
+# build_app_with_pool 与可信代理身份桥，此前 0.1.0 缺该 API 故暂用 git rev 2d559ad，
+# 0.1.1 发布后回归 registry）。
 # default-features=false 剥离其 db-sqlite 默认后端（dbnexus embedded×server-side 互斥守卫），
 # db-postgres 对齐共享池。feature 统一附带效应：inklog/trait-kit/confers/oxcache/sdforge/
 # limiteron 随 fluxweir 版本需求解析上移，回归验证见 fluxweir-llm-gateway T021。
-fluxweir = { git = "https://github.com/Kirky-X/fluxweir", rev = "2d559ad", version = "0.1.0", optional = true, default-features = false, features = ["full", "db-postgres"] }
+fluxweir = { version = "0.1.1", optional = true, default-features = false, features = ["full", "db-postgres"] }
 
 [dev-dependencies]
 # dbnexus 恒可用：test_helpers 经 dbnexus::sea_orm re-export，任意 feature 组合可编译

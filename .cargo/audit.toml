@@ -6,6 +6,6 @@ ignore = [
     "RUSTSEC-2024-0436", # paste 停止维护：编译期宏，无运行时代码
     "RUSTSEC-2025-0119", # 见 deny.toml 同条目注释
     "RUSTSEC-2026-0387", # 见 deny.toml 同条目注释
-    "RUSTSEC-2026-0440", # 见 deny.toml 同条目注释
+    "RUSTSEC-2026-0440", # astral-tokio-tar unmaintained（dev-deps：testcontainers 链）——deny 默认图不含 dev-deps 会打无匹配 note，audit 需要
     "RUSTSEC-2026-0459", # libsqlite3-sys 0.37 bundled CVE-2026-119375（特制 DB + 同名 -wal 页大小不一致 → 未初始化页缓存内存泄露，需本地打开文件）：修复版 0.39 被 sqlx-sqlite 0.9 的 <0.38 约束挡住；仅可选 db-sqlite feature；sqlx 链解锁后移除
 ]
