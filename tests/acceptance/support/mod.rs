@@ -42,6 +42,21 @@ pub struct SharedHarness {
 
 static HARNESS: tokio::sync::OnceCell<Arc<SharedHarness>> = tokio::sync::OnceCell::const_new();
 
+/// testcontainers PG 容器句柄（进程级保活；run 结束由 teardown 显式 remove——
+/// Ryuk 回收依赖客户端连接关闭，本机观测到回收失效即每次 run 泄漏 1 个
+/// PG 容器，不能只依赖 Ryuk 兜底。Mutex<Option> 供 teardown take 出所有权，
+/// `ContainerAsync::rm` 吃 `self`）。
+pub(crate) static TC_CONTAINER: parking_lot::Mutex<
+    Option<testcontainers::ContainerAsync<Postgres>>,
+> = parking_lot::Mutex::new(None);
+
+/// inklog LoggerManager（进程级保活；run 结束由 teardown 显式 shutdown——
+/// 存 bootstrap 局部变量会在返回时 drop → 日志 worker 全部关停，运行期日志
+/// 被吞；而进程退出时 tokio runtime drop 又会等 spawn_blocking 的 worker，
+/// 因此必须显式 shutdown 后再结束）。
+pub(crate) static LOGGER_MANAGER: std::sync::OnceLock<inklog::LoggerManager> =
+    std::sync::OnceLock::new();
+
 /// 首次 bootstrap 失败原因（进程级缓存）。
 ///
 /// garrison DAO 为不可重置的进程全局单例：bootstrap 在 DAO 注入之后失败时，
@@ -228,10 +243,14 @@ impl SharedHarness {
         // 2. Settings
         let settings = Arc::new(crawlrs::bootstrap::config::load_settings()?);
 
-        // 2.5 telemetry：worker 的 log 宏经 inklog 输出（RUST_LOG=debug 可见）
-        let _logger_manager = crawlrs::bootstrap::telemetry::init_all(&settings.logging)
+        // 2.5 telemetry：worker 的 log 宏经 inklog 输出（RUST_LOG=debug 可见）。
+        // manager 存入模块级 LOGGER_MANAGER（见该静态注释）：存 bootstrap 局部
+        // 变量会在 bootstrap 返回时 drop，立刻关停日志 worker，整个套件的
+        // 运行期日志被吞。
+        let logger_manager = crawlrs::bootstrap::telemetry::init_all(&settings.logging)
             .await
             .map_err(|e| anyhow::anyhow!("init inklog: {e}"))?;
+        let _ = LOGGER_MANAGER.set(logger_manager);
 
         // 3. DI kit 组装（对齐 main.rs 的 9 模块注册；IdModule 为 NebulaId
         // 迁移新增，缺失时 kit.build 报 missing capability `id-generation`，
@@ -1340,7 +1359,6 @@ fn start_testcontainers_pg() -> String {
     use testcontainers::ImageExt;
 
     static TC_URL: OnceLock<String> = OnceLock::new();
-    static TC_CONTAINER: OnceLock<testcontainers::ContainerAsync<Postgres>> = OnceLock::new();
 
     TC_URL
         .get_or_init(|| {
@@ -1389,8 +1407,9 @@ fn start_testcontainers_pg() -> String {
                                 .unwrap_or_else(|e| panic!("run {}: {e}", path.display()));
                         }
 
-                        // 容器句柄保活至进程结束（Ryuk 兜底 + 正常 drop 清理）
-                        let _ = TC_CONTAINER.set(container);
+                        // 容器句柄保活至进程结束（run 结束由 teardown 显式
+                        // remove，见模块级 TC_CONTAINER 注释）
+                        *TC_CONTAINER.lock() = Some(container);
 
                         eprintln!(
                             "[testcontainers] PostgreSQL started at 127.0.0.1:{port} with migrations applied"

@@ -18,6 +18,7 @@
 
 mod action_steps;
 mod support;
+mod teardown;
 
 use cucumber::World;
 use support::AcceptanceWorld;
@@ -42,5 +43,9 @@ fn main() {
                 !(offline && sc.tags.iter().any(|t| t == EXTERNAL_NETWORK_TAG))
             })
             .await;
+
+        // run 结束清理：显式停 testcontainers PG（Ryuk 回收失效兜底）+
+        // 关停 inklog worker（否则 runtime drop 等待 blocking worker 挂死）
+        teardown::shutdown().await;
     });
 }
