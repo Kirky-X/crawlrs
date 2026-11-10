@@ -89,27 +89,47 @@ impl DomainFilter {
     ///
     /// # 参数
     ///
-    /// - `denied_domains`: 拒绝的域名列表（大小写不敏感，比较前小写化）
+    /// - `denied_domains`: 拒绝的域名列表（构造期归一：URL 取 host、小写、去尾点）
     #[must_use]
     pub fn denylist(denied_domains: Vec<String>) -> Self {
         // 构造期一次性归一（小写、去尾点、过滤空/超长条目），accept 内不再分配。
         let normalized: Vec<String> = denied_domains
-            .into_iter()
-            .filter_map(|d| {
-                let d = d.trim().trim_end_matches('.').to_ascii_lowercase();
-                if d.is_empty()
-                    || d.len()
-                        > crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRY_LEN
-                {
-                    None
-                } else {
-                    Some(d)
-                }
+            .iter()
+            .map(|d| crate::domain::services::team_service::normalize_host(d))
+            .filter(|d| {
+                !d.is_empty()
+                    && d.len()
+                        <= crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRY_LEN
             })
             .take(crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRIES)
             .collect();
         Self {
             mode: DomainMode::Denylist(normalized),
+        }
+    }
+
+    /// 构造 denylist 过滤器，条目视为**已归一化**（worker 的
+    /// `crawl_domain_blacklist` 已做 host 归一与去重）。
+    ///
+    /// 仅做空/超长/数量上限防护，不再逐条 `normalize_host`；用于每页都会
+    /// 重建过滤链的热路径，避免把 O(N) 归一化乘进每次链接提取。
+    ///
+    /// # 参数
+    ///
+    /// - `normalized_entries`: 已归一化的小写 host 列表
+    #[must_use]
+    pub fn denylist_normalized(normalized_entries: Vec<String>) -> Self {
+        let entries: Vec<String> = normalized_entries
+            .into_iter()
+            .filter(|d| {
+                !d.is_empty()
+                    && d.len()
+                        <= crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRY_LEN
+            })
+            .take(crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRIES)
+            .collect();
+        Self {
+            mode: DomainMode::Denylist(entries),
         }
     }
 
@@ -130,7 +150,9 @@ impl DomainFilter {
         if host.is_empty() {
             return None;
         }
-        Some(host.to_ascii_lowercase())
+        // 与团队黑名单归一化同口径：剥离末尾点，否则 `blocked.com.`
+        // 这类形式会跳过过滤、只在执行期才被拒绝。
+        Some(host.trim_end_matches('.').to_ascii_lowercase())
     }
 
     /// 域名是否在列表中（大小写不敏感，比较前都已小写化）
@@ -138,15 +160,9 @@ impl DomainFilter {
         list.iter().any(|d| d == domain)
     }
 
-    /// denylist 语义：命中条目本身或其子域（与团队黑名单校验一致）。
-    /// 条目在构造期已归一，此处零分配；allowlist 保持精确匹配，避免放宽准入。
+    /// denylist 语义：复用 domain 层同一匹配器（条目构造期已归一）。
     fn domain_in_denylist(domain: &str, denied: &[String]) -> bool {
-        denied.iter().any(|entry| {
-            domain == entry
-                || (domain.len() > entry.len() + 1
-                    && domain.ends_with(entry.as_str())
-                    && domain.as_bytes()[domain.len() - entry.len() - 1] == b'.')
-        })
+        crate::domain::services::team_service::host_in_denylist(domain, denied)
     }
 }
 
@@ -480,6 +496,20 @@ mod tests {
     }
 
     #[test]
+    fn domain_filter_denylist_normalized_skips_renormalization() {
+        // 已归一化入口不改变语义：等价、子域均拒绝，空/超长条目剔除。
+        let filter = DomainFilter::denylist_normalized(vec![
+            "blocked.com".to_string(),
+            "".to_string(),
+            "x".repeat(300),
+        ]);
+        let ctx = FilterContext::new();
+        assert!(!filter.accept("https://blocked.com/page", &ctx));
+        assert!(!filter.accept("https://sub.blocked.com/page", &ctx));
+        assert!(filter.accept("https://allowed.com/page", &ctx));
+    }
+
+    #[test]
     fn domain_filter_denylist_rejects_denied() {
         let filter =
             DomainFilter::denylist(vec!["facebook.com".to_string(), "twitter.com".to_string()]);
@@ -496,6 +526,8 @@ mod tests {
         assert!(!filter.accept("https://blocked.com/page", &ctx));
         assert!(!filter.accept("https://sub.blocked.com/page", &ctx));
         assert!(!filter.accept("https://SUB.BLOCKED.COM/page", &ctx));
+        // URL 侧尾点（FQDN 形式）必须与条目同口径剥离后再匹配。
+        assert!(!filter.accept("https://blocked.com./page", &ctx));
         assert!(filter.accept("https://notblocked.com/page", &ctx));
     }
 

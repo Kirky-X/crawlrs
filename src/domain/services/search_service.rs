@@ -28,7 +28,7 @@ pub struct SearchQuery {
 }
 
 /// Search crawl configuration (领域层参数对象)
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchCrawlConfig {
     pub max_depth: u32,
     pub include_patterns: Option<Vec<String>>,
@@ -44,13 +44,30 @@ pub struct SearchCrawlConfig {
             crate::domain::services::extraction_service::ExtractionRule,
         >,
     >,
-    /// 团队域名黑名单（入口预检写入；派生 crawl 任务 payload 必须携带，
-    /// 否则执行期复核对搜索结果抓取失效）
-    /// 入口预检使用；不参与序列化——worker 只读 payload 顶层
-    /// `domain_blacklist`，而 `CrawlConfigDto` 带 deny_unknown_fields，
-    /// 写进 config 会让所有派生任务 payload_invalid。
+    /// 团队域名黑名单（入口预检使用；持久化载体是 `crawl.config`，
+    /// worker 执行期与链接过滤从该处读取）。
+    ///
+    /// 不参与 `CrawlConfigDto` 序列化：该 DTO 带 `deny_unknown_fields`，
+    /// 写进派生任务的 config 会让 payload 解析失败。
     #[serde(default, skip_serializing)]
     pub domain_blacklist: Vec<String>,
+}
+
+impl Default for SearchCrawlConfig {
+    fn default() -> Self {
+        Self {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: "bfs".to_string(),
+            crawl_delay_ms: None,
+            max_concurrency: 10,
+            headers: None,
+            proxy: None,
+            extraction_rules: None,
+            domain_blacklist: Vec::new(),
+        }
+    }
 }
 
 /// Search result item (领域层返回对象)
@@ -128,6 +145,13 @@ pub trait SearchServiceTrait: Send + Sync {
         query: SearchQuery,
     ) -> Result<SearchResponse, SearchServiceError>;
 }
+
+/// 单次搜索派生 crawl 的硬上限：结果条数与派生任务数同受此约束，
+/// 防止大 `limit`/引擎返回膨胀导致任务表与 crawl 计数失控。
+pub const MAX_SEARCH_RESULTS: u32 = 200;
+
+/// 搜索派生 crawl 的最大深度（与 HTTP 创建入口同口径）。
+pub const MAX_SEARCH_CRAWL_DEPTH: u32 = 5;
 
 /// Concrete search service implementation.
 pub struct SearchService {
@@ -209,7 +233,11 @@ impl SearchService {
         let results = self
             .perform_search(
                 &query.query,
-                query.limit.unwrap_or(10).min(self.max_results),
+                query
+                    .limit
+                    .unwrap_or(10)
+                    .min(self.max_results)
+                    .min(MAX_SEARCH_RESULTS),
                 query.lang.as_deref(),
                 query.country.as_deref(),
                 engine_param,
@@ -224,26 +252,35 @@ impl SearchService {
             let cid = crate::domain::id::Id::generate();
             let _now = Utc::now();
 
-            let config = query.crawl_config.unwrap_or(SearchCrawlConfig {
-                max_depth: 1,
-                include_patterns: None,
-                exclude_patterns: None,
-                strategy: "bfs".to_string(),
-                crawl_delay_ms: None,
-                max_concurrency: 10,
-                headers: None,
-                proxy: None,
-                extraction_rules: None,
-                domain_blacklist: Vec::new(),
-            });
+            let config = query.crawl_config.unwrap_or_default();
+            // 深度上限是创建入口的共同契约：handler 之外再守一层，
+            // 防止 SDk/内部调用绕过。
+            if config.max_depth > MAX_SEARCH_CRAWL_DEPTH {
+                return Err(SearchServiceError::ValidationError(format!(
+                    "crawl_config.max_depth must be <= {MAX_SEARCH_CRAWL_DEPTH}"
+                )));
+            }
 
             let now = chrono::Utc::now();
             // 先过滤超长 URL 并去重，再一次性写入 total_tasks：
             // 逐任务自增会让 worker 在循环中途看到“部分 total”，
             // 快失败时提前满足 completed+failed==total 并取消剩余任务。
             let mut seen_urls = std::collections::HashSet::new();
+            // 黑名单只归一化一次：逐结果调用 `domain_in_denylist` 会反复
+            // 解析条目，R 条结果 × N 条规则时退化为 O(R·N²)。
+            let normalized_blacklist =
+                crate::domain::services::team_service::normalize_denylist_entries(
+                    &config.domain_blacklist,
+                );
             let mut eligible = Vec::new();
             for result in &results {
+                if eligible.len() >= MAX_SEARCH_RESULTS as usize {
+                    log::warn!(
+                        "search crawl truncated at {} results (hard cap)",
+                        MAX_SEARCH_RESULTS
+                    );
+                    break;
+                }
                 // tasks.url 的普通 btree 索引有行上限：与 crawl/scrape/extract
                 // 同口径过滤超长 URL（字节）。
                 if result.url.len() > 2048 {
@@ -255,10 +292,12 @@ impl SearchService {
                     metrics::counter!("crawlrs_search_oversized_url_total").increment(1);
                     continue;
                 }
-                if let Some(reason) = crate::domain::services::team_service::domain_in_denylist(
-                    &result.url,
-                    &config.domain_blacklist,
-                ) {
+                if let Some(reason) =
+                    crate::domain::services::team_service::domain_in_normalized_denylist(
+                        &result.url,
+                        &normalized_blacklist,
+                    )
+                {
                     log::warn!("skip blacklisted search result: {}", reason);
                     #[cfg(feature = "metrics")]
                     metrics::counter!("crawlrs_search_blacklisted_url_total").increment(1);
@@ -273,10 +312,7 @@ impl SearchService {
             if !eligible.is_empty() {
                 let mut crawl_config = json!(config);
                 if let Some(obj) = crawl_config.as_object_mut() {
-                    obj.insert(
-                        "domain_blacklist".to_string(),
-                        json!(config.domain_blacklist),
-                    );
+                    obj.insert("domain_blacklist".to_string(), json!(normalized_blacklist));
                 }
                 let crawl = Crawl::with_all_fields(
                     cid,
@@ -307,7 +343,6 @@ impl SearchService {
                             "crawl_id": cid,
                             "depth": 0,
                             "config": config,
-                            "domain_blacklist": config.domain_blacklist,
                         }),
                     );
                     task.priority = 100;
@@ -316,10 +351,8 @@ impl SearchService {
                         // 已写 total=N 但任务只落了部分：显式把 crawl 标 Failed，
                         // 避免 completed+failed 永不达 total 的永久 queued。
                         log::error!("Failed to enqueue search crawl task (crawl {}): {}", cid, e);
-                        if let Err(mark_err) = self
-                            .crawl_repo
-                            .update_status(cid, crate::domain::models::CrawlStatus::Failed)
-                            .await
+                        if let Err(mark_err) =
+                            self.crawl_repo.finalize_failed_after_enqueue(cid).await
                         {
                             log::error!(
                                 "Failed to mark incomplete search crawl {} as Failed: {}",
@@ -598,6 +631,15 @@ mod tests {
         fn created_count(&self) -> usize {
             self.created.lock().unwrap().len()
         }
+
+        fn created_urls(&self) -> Vec<String> {
+            self.created
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|task| task.url.clone())
+                .collect()
+        }
     }
 
     #[async_trait]
@@ -722,6 +764,8 @@ mod tests {
     struct MockCrawlRepo {
         create_fails: bool,
         created: Mutex<Vec<Crawl>>,
+        /// 入队失败补偿调用次数（验证失败路径真正落终态）
+        compensations: Mutex<u32>,
     }
 
     impl MockCrawlRepo {
@@ -729,6 +773,7 @@ mod tests {
             Self {
                 create_fails: false,
                 created: Mutex::new(Vec::new()),
+                compensations: Mutex::new(0),
             }
         }
 
@@ -736,11 +781,16 @@ mod tests {
             Self {
                 create_fails: true,
                 created: Mutex::new(Vec::new()),
+                compensations: Mutex::new(0),
             }
         }
 
         fn created_count(&self) -> usize {
             self.created.lock().unwrap().len()
+        }
+
+        fn compensation_count(&self) -> u32 {
+            *self.compensations.lock().unwrap()
         }
 
         fn last_created_config(&self) -> Option<serde_json::Value> {
@@ -769,6 +819,14 @@ mod tests {
             _id: crate::domain::id::Id,
         ) -> Result<Option<Crawl>, RepositoryError> {
             Ok(None)
+        }
+
+        async fn finalize_failed_after_enqueue(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<bool, RepositoryError> {
+            *self.compensations.lock().unwrap() += 1;
+            Ok(true)
         }
 
         async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
@@ -1265,14 +1323,11 @@ mod tests {
     #[test]
     fn test_search_crawl_config_default_values() {
         let config = SearchCrawlConfig::default();
-        assert_eq!(config.max_depth, 0, "default max_depth should be 0");
+        assert_eq!(config.max_depth, 1, "default max_depth should be 1");
+        assert_eq!(config.strategy, "bfs", "default strategy should be bfs");
         assert_eq!(
-            config.strategy, "",
-            "default strategy should be empty string"
-        );
-        assert_eq!(
-            config.max_concurrency, 0,
-            "default max_concurrency should be 0"
+            config.max_concurrency, 10,
+            "default max_concurrency should be 10"
         );
         assert!(config.include_patterns.is_none());
         assert!(config.exclude_patterns.is_none());
@@ -1448,7 +1503,8 @@ mod tests {
     // search pre-validation tests
 
     /// 回归：搜索派生 crawl 的 payload 必须能被 worker 的 `parse_crawl_payload`
-    /// 解析（config 不得含 deny_unknown_fields 之外的字段），且黑名单在顶层。
+    /// 解析（config 不得含 deny_unknown_fields 之外的字段），且黑名单**只**
+    /// 存 crawl.config（payload 不再逐任务复制顶层黑名单）。
     #[test]
     fn search_crawl_payload_is_worker_compatible() {
         let config = SearchCrawlConfig {
@@ -1479,7 +1535,6 @@ mod tests {
                 "crawl_id": crawl_id.to_string(),
                 "depth": 0,
                 "config": config_json,
-                "domain_blacklist": config.domain_blacklist,
             }),
         );
         task.crawl_id = Some(crawl_id);
@@ -1487,10 +1542,92 @@ mod tests {
             .expect("search crawl payload must parse as CrawlConfigDto");
         assert_eq!(parsed.1, 0);
         assert_eq!(parsed.2.max_depth, 1);
-        let blacklist: Vec<String> =
-            serde_json::from_value(task.payload["domain_blacklist"].clone())
-                .expect("top-level blacklist must deserialize");
-        assert_eq!(blacklist, vec!["blocked.com".to_string()]);
+        assert!(
+            task.payload.get("domain_blacklist").is_none(),
+            "domain_blacklist must not be copied into task payload"
+        );
+    }
+
+    /// 黑名单只在 crawl.config 存一份（归一化后），结果过滤与任务派生同源。
+    #[tokio::test]
+    async fn search_crawl_stores_normalized_blacklist_in_crawl_config() {
+        let credits = Arc::new(MockCreditsRepo::with_balance(100));
+        let client = MockSearchClient::new_with_items(vec![
+            make_response_item(
+                "Blocked",
+                "https://Blocked.COM/page",
+                SearchEngineType::Bing,
+            ),
+            make_response_item(
+                "Allowed",
+                "https://allowed.example/page",
+                SearchEngineType::Bing,
+            ),
+        ]);
+        let (service, crawl_repo, task_repo) =
+            make_service_with_recording(credits, Arc::new(client));
+        let config = SearchCrawlConfig {
+            domain_blacklist: vec![" Blocked.com. ".to_string()],
+            ..SearchCrawlConfig::default()
+        };
+        let query = SearchQuery {
+            crawl_results: Some(true),
+            crawl_config: Some(config),
+            ..make_query("blacklist storage")
+        };
+        let resp = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await
+            .expect("search should succeed");
+        // 搜索结果本身不回删（响应契约不变）；黑名单只作用于派生 crawl 的任务。
+        assert_eq!(resp.results.len(), 2, "search response keeps all results");
+        let created = crawl_repo.created.lock().unwrap();
+        let crawl = created.last().expect("crawl record should exist");
+        assert_eq!(crawl.total_tasks(), 1, "total counts eligible results only");
+        let stored = crawl.config().clone();
+        assert_eq!(
+            stored["domain_blacklist"],
+            json!(["blocked.com"]),
+            "crawl.config must carry the normalized blacklist"
+        );
+        assert_eq!(task_repo.created_count(), 1, "one task for allowed result");
+        assert_eq!(
+            task_repo.created_urls(),
+            vec!["https://allowed.example/page".to_string()],
+            "blacklisted URL must not be enqueued"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_crawl_config_depth_above_limit_is_rejected() {
+        let credits = Arc::new(MockCreditsRepo::with_balance(100));
+        let (service, crawl_repo, task_repo) =
+            make_service_with_recording(credits, Arc::new(MockSearchClient::new()));
+        let query = SearchQuery {
+            crawl_results: Some(true),
+            crawl_config: Some(SearchCrawlConfig {
+                max_depth: MAX_SEARCH_CRAWL_DEPTH + 1,
+                ..SearchCrawlConfig::default()
+            }),
+            ..make_query("too deep")
+        };
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(SearchServiceError::ValidationError(_))
+        ));
+        assert_eq!(crawl_repo.created_count(), 0, "no crawl on invalid depth");
+        assert_eq!(task_repo.created_count(), 0, "no tasks on invalid depth");
     }
 
     #[tokio::test]
@@ -1949,10 +2086,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_search_task_repo_failure_propagates() {
+    async fn test_search_task_repo_failure_propagates_and_compensates() {
         let credits: Arc<dyn CreditsRepository> = Arc::new(MockCreditsRepo::with_balance(100));
+        let crawl_repo = Arc::new(MockCrawlRepo::new());
         let service = SearchService {
-            crawl_repo: Arc::new(MockCrawlRepo::new()),
+            crawl_repo: crawl_repo.clone(),
             task_repo: Arc::new(MockTaskRepo::failing()),
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
@@ -1976,6 +2114,11 @@ mod tests {
             SearchServiceError::Repository(_) => { /* expected */ }
             other => panic!("expected Repository error, got {:?}", other),
         }
+        assert_eq!(
+            crawl_repo.compensation_count(),
+            1,
+            "enqueue failure must mark the crawl terminal (not leave it queued)"
+        );
     }
 
     #[tokio::test]

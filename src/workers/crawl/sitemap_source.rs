@@ -301,7 +301,7 @@ fn build_feed_filters(
     let blacklist_filter = if domain_blacklist.is_empty() {
         None
     } else {
-        Some(DomainFilter::denylist(domain_blacklist))
+        Some(DomainFilter::denylist_normalized(domain_blacklist))
     };
     let filter_ctx = FilterContext::default();
     (
@@ -401,8 +401,9 @@ async fn flush_batch(
     pointer_ttl_secs: u64,
 ) -> anyhow::Result<()> {
     // 审查 HIGH：sitemap 入队前校验父 crawl 终态，避免停止后继续扩容。
-    if let Ok(Some(crawl)) = crawl_repo.find_by_id(seed.crawl_id).await {
-        if crate::application::use_cases::crawl_state_machine::is_terminal(&crawl.status) {
+    // 仅需状态：投影读取，避免每批拉回 crawl.config。
+    if let Ok(Some(progress)) = crawl_repo.find_progress_by_id(seed.crawl_id).await {
+        if crate::application::use_cases::crawl_state_machine::is_terminal(&progress.status) {
             log::info!(
                 "crawl {} is terminal; skip enqueueing sitemap batch",
                 seed.crawl_id
@@ -780,6 +781,7 @@ mod tests {
 
     fn options(max_urls: usize) -> SitemapStreamOptions {
         SitemapStreamOptions {
+            domain_blacklist: Vec::new(),
             channel_capacity: 16,
             max_urls,
             max_concurrent_sub_sitemaps: 2,

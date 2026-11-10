@@ -970,3 +970,82 @@ async fn test_no_restrictions_configured_allows_all() {
         .await;
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
 }
+
+// effective_domain_blacklist：上限校验不受启用开关影响
+
+#[test]
+fn test_effective_domain_blacklist_validates_caps_even_when_disabled() {
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: false,
+        domain_blacklist: Some(vec!["x".repeat(300)]),
+        ..Default::default()
+    };
+    assert!(
+        restrictions.effective_domain_blacklist().is_err(),
+        "oversized entry must fail even when restrictions are disabled"
+    );
+
+    let too_many = TeamGeoRestrictions {
+        enable_geo_restrictions: false,
+        domain_blacklist: Some(
+            (0..=crate::domain::services::team_service::MAX_DOMAIN_BLACKLIST_ENTRIES)
+                .map(|i| format!("d{i}.example"))
+                .collect(),
+        ),
+        ..Default::default()
+    };
+    assert!(
+        too_many.effective_domain_blacklist().is_err(),
+        "entry-count cap must fail even when restrictions are disabled"
+    );
+}
+
+#[test]
+fn test_effective_domain_blacklist_disabled_valid_list_returns_empty() {
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: false,
+        domain_blacklist: Some(vec!["blocked.com".to_string()]),
+        ..Default::default()
+    };
+    assert_eq!(
+        restrictions.effective_domain_blacklist().unwrap(),
+        Vec::<String>::new(),
+        "disabled restrictions must not enforce historical entries"
+    );
+}
+
+#[test]
+fn test_effective_domain_blacklist_rejects_unnormalizable_entry() {
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        domain_blacklist: Some(vec!["::1".to_string()]),
+        ..Default::default()
+    };
+    assert!(
+        restrictions.effective_domain_blacklist().is_err(),
+        "unbracketed IPv6 cannot be normalized and must be rejected"
+    );
+
+    let bracketed = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        domain_blacklist: Some(vec!["[::1]".to_string()]),
+        ..Default::default()
+    };
+    assert!(
+        bracketed.effective_domain_blacklist().is_ok(),
+        "bracketed IPv6 is a valid host form"
+    );
+}
+
+#[test]
+fn test_effective_domain_blacklist_rejects_wildcard_entry() {
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        domain_blacklist: Some(vec!["*.evil.com".to_string()]),
+        ..Default::default()
+    };
+    assert!(
+        restrictions.effective_domain_blacklist().is_err(),
+        "wildcard entries never match a host and must be rejected"
+    );
+}

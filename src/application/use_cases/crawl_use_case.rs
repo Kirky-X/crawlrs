@@ -195,8 +195,8 @@ impl CrawlUseCase {
             .await?;
 
         let now = Utc::now();
-        // 限制关闭时不把历史列表写入 payload：执行期复核只认 payload，
-        // 否则会出现“API 放行、worker 拒绝”的不一致。
+        // 限制关闭时返回空列表，不把历史条目写入 crawl.config：
+        // 执行期复核只认该快照，否则会出现“API 放行、worker 拒绝”的不一致。
         let domain_blacklist = restrictions
             .effective_domain_blacklist()
             .map_err(CrawlUseCaseError::ValidationError)?;
@@ -225,8 +225,8 @@ impl CrawlUseCase {
 
     /// 解析本请求生效的团队限制并校验种子 URL（自 [`Self::create_crawl`] 提取）。
     ///
-    /// teams-off 时使用 `TeamGeoRestrictions::default` 占位，保证下游 payload
-    /// 中的 `restrictions.domain_blacklist` 字段类型一致。
+    /// teams-off 时使用 `TeamGeoRestrictions::default` 占位，保证下游
+    /// `effective_domain_blacklist()` 的类型与调用路径一致（空策略）。
     async fn check_request_restrictions(
         &self,
         team_id: crate::domain::id::Id,
@@ -241,11 +241,11 @@ impl CrawlUseCase {
         //
         // teams-on：执行地理限制检查（获取限制→validate→log），失败则返回 ValidationError。
         // teams-off：restrictions 变量使用 TeamGeoRestrictions::default 占位，
-        // 以保证下游 payload 中的 `restrictions.domain_blacklist` 字段类型一致。
+        // 以保证下游 `effective_domain_blacklist()` 的调用路径一致。
         #[cfg(feature = "teams")]
         let restrictions = self.resolve_geo_restrictions(team_id, client_ip).await?;
         // teams-off 时 restrictions 用默认值占位
-        // （payload.domain_blacklist 字段类型保持一致，避免 cfg 分裂 payload 构造）
+        // （crawl.config 黑名单快照类型保持一致，避免 cfg 分裂持久化构造）
         #[cfg(not(feature = "teams"))]
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         // 避免 unused variable warning（client_ip 在 teams-off 时不被使用）
@@ -410,7 +410,7 @@ impl CrawlUseCase {
         let crawl = self.crawl_repo.find_by_id(id).await?;
 
         match crawl {
-            Some(mut c) => {
+            Some(c) => {
                 // 确保爬取任务属于指定团队
                 if c.team_id != team_id {
                     return Err(CrawlUseCaseError::NotFound); // 或返回 Forbidden
@@ -421,9 +421,14 @@ impl CrawlUseCase {
                     return Ok(()); // 任务已结束
                 }
 
-                c.status = CrawlStatus::Cancelled;
-                c.updated_at = Utc::now();
-                self.crawl_repo.update(&c).await?;
+                // 条件写：并发完成/取消的终态不被迟到事件覆盖。
+                if !self
+                    .crawl_repo
+                    .update_status_guarded(id, CrawlStatus::Cancelled)
+                    .await?
+                {
+                    return Ok(());
+                }
 
                 // 取消所有关联的任务
                 self.task_repo.cancel_tasks_by_crawl_id(id).await?;
@@ -524,6 +529,41 @@ mod tests {
 
     #[async_trait]
     impl CrawlRepository for MockCrawlRepository {
+        async fn update_status_guarded(
+            &self,
+            id: crate::domain::id::Id,
+            status: CrawlStatus,
+        ) -> Result<bool, RepositoryError> {
+            if self.should_fail_update {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "crawl repo update down"
+                )));
+            }
+            let mut guard = self.stored_crawl.lock().unwrap();
+            let Some(crawl) = guard.as_mut() else {
+                return Ok(false);
+            };
+            if matches!(
+                crawl.status,
+                CrawlStatus::Completed | CrawlStatus::Failed | CrawlStatus::Cancelled
+            ) {
+                return Ok(false);
+            }
+            crawl.status = status;
+            crawl.updated_at = Utc::now();
+            if matches!(
+                status,
+                CrawlStatus::Completed | CrawlStatus::Failed | CrawlStatus::Cancelled
+            ) {
+                crawl.completed_at = Some(Utc::now());
+            }
+            let snapshot = crawl.clone();
+            let _ = id;
+            drop(guard);
+            self.updated_crawls.lock().unwrap().push(snapshot);
+            Ok(true)
+        }
+
         async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             if self.should_fail_create {
                 return Err(RepositoryError::Database(anyhow::anyhow!(

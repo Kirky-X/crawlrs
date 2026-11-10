@@ -21,7 +21,7 @@ use url::Url;
 use chrono::Utc;
 
 use crate::application::dto::crawl_request::CrawlConfigDto;
-use crate::domain::models::{CrawlStatus, Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::engines::engine_client::ScrapeResponse;
@@ -76,51 +76,15 @@ pub async fn update_crawl_completion_status(
     crawl_id: crate::domain::id::Id,
     crawl_repository: &dyn CrawlRepository,
 ) {
-    match crawl_repository.find_by_id(crawl_id).await {
-        Ok(Some(c)) => {
-            // total=0 的爬取不判完成（避免空 crawl 被误标 completed）；
-            // 全部失败（completed=0）标 Failed，而不是 completed+空结果
-            // （E2E 语义用例：防“静默空结果”的假成功）。
-            let total = c.total_tasks();
-            let completed = c.completed_tasks();
-            let failed = c.failed_tasks();
-            if total > 0 && completed + failed == total {
-                let status = if completed == 0 {
-                    CrawlStatus::Failed
-                } else {
-                    CrawlStatus::Completed
-                };
-                info!(
-                    "All tasks terminal for crawl {} (completed={}, failed={}), marking as {}",
-                    crawl_id, completed, failed, status
-                );
-                match crawl_repository
-                    .update_status_guarded(crawl_id, status)
-                    .await
-                {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        // 已是终态（并发取消/完成）：不得覆盖，也不再重试
-                        debug!(
-                            "crawl {} already terminal; skip {} transition",
-                            crawl_id, status
-                        );
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to update crawl status for crawl {}: {}",
-                            crawl_id, e
-                        );
-                    }
-                }
-            }
-        }
-        Ok(None) => {
-            error!("Crawl not found for id {}", crawl_id);
-        }
-        Err(e) => {
-            error!("Failed to fetch crawl {}: {}", crawl_id, e);
-        }
+    // 终态规则收敛在仓储单条条件 UPDATE：completed+failed==total 才落终态，
+    // completed==0 → Failed；并发取消/完成不被覆盖。
+    match crawl_repository.finalize_if_all_terminal(crawl_id).await {
+        Ok(true) => info!(
+            "Crawl {} marked terminal (all tasks completed/failed)",
+            crawl_id
+        ),
+        Ok(false) => debug!("crawl {} not eligible for terminal transition", crawl_id),
+        Err(e) => error!("Failed to finalize crawl {}: {}", crawl_id, e),
     }
 }
 
@@ -145,6 +109,7 @@ pub async fn extract_and_queue_links(
     crawl_id: crate::domain::id::Id,
     current_depth: u32,
     config: &CrawlConfigDto,
+    domain_blacklist: &[String],
     repository: &dyn TaskRepository,
     crawl_repository: &dyn CrawlRepository,
     deduplicator: &Arc<parking_lot::RwLock<Deduplicator>>,
@@ -159,7 +124,7 @@ pub async fn extract_and_queue_links(
         filter_ctx,
         blacklist_filter,
         empty_include_short_circuit,
-    } = build_link_filters(task, config);
+    } = build_link_filters(task, config, domain_blacklist);
 
     let unique_links = collect_unique_links(
         task,
@@ -216,7 +181,11 @@ struct LinkFilters {
 ///
 /// 自 [`extract_and_queue_links`] 提取，过滤规则构造顺序与日志逐字保留。
 /// 返回 [`LinkFilters`]。
-fn build_link_filters(task: &Task, config: &CrawlConfigDto) -> LinkFilters {
+fn build_link_filters(
+    task: &Task,
+    config: &CrawlConfigDto,
+    domain_blacklist: &[String],
+) -> LinkFilters {
     // 循环外构造一次 UrlPatternFilter
     let empty_include_short_circuit =
         matches!(&config.include_patterns, Some(patterns) if patterns.is_empty());
@@ -230,13 +199,8 @@ fn build_link_filters(task: &Task, config: &CrawlConfigDto) -> LinkFilters {
     };
     let filter_ctx = FilterContext::default();
 
-    // 消费团队 domain_blacklist（由 crawl_link_processor 写入
-    // 任务 payload），黑名单优先级高于 include/exclude patterns——命中即丢弃
-    let domain_blacklist: Vec<String> = task
-        .payload
-        .get("domain_blacklist")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
+    // 团队 domain_blacklist 由 worker 从 crawl.config 读取后传入；
+    // 黑名单优先级高于 include/exclude patterns——命中即丢弃。
     let blacklist_filter = if domain_blacklist.is_empty() {
         None
     } else {
@@ -245,7 +209,7 @@ fn build_link_filters(task: &Task, config: &CrawlConfigDto) -> LinkFilters {
             task.id,
             domain_blacklist.len()
         );
-        Some(DomainFilter::denylist(domain_blacklist))
+        Some(DomainFilter::denylist_normalized(domain_blacklist.to_vec()))
     };
 
     LinkFilters {
@@ -443,8 +407,9 @@ async fn score_and_enqueue(
 ) -> Result<()> {
     // 审查 HIGH：停止瞬间仍在飞的子任务会继续入队新链接；入队侧再校验
     // 一次父 crawl 终态，避免取消之后又产生新行。
-    if let Ok(Some(crawl)) = crawl_repository.find_by_id(crawl_id).await {
-        if crate::application::use_cases::crawl_state_machine::is_terminal(&crawl.status) {
+    // 仅需状态：投影读取，避免每页拉回 crawl.config。
+    if let Ok(Some(progress)) = crawl_repository.find_progress_by_id(crawl_id).await {
+        if crate::application::use_cases::crawl_state_machine::is_terminal(&progress.status) {
             log::info!(
                 "crawl {} is terminal; skip enqueueing {} discovered link(s)",
                 crawl_id,
@@ -613,6 +578,7 @@ fn build_child_crawl_task(
 mod tests {
     use super::*;
     use crate::domain::models::Crawl;
+    use crate::domain::models::CrawlStatus;
     use crate::domain::repositories::task_repository::RepositoryError;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -739,6 +705,34 @@ mod tests {
             *self.last_status.lock().expect("status mutex poisoned") = Some(status);
             self.update_status_count.fetch_add(1, Ordering::SeqCst);
             Ok(true)
+        }
+        async fn finalize_if_all_terminal(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<bool, RepositoryError> {
+            let Some(c) = self.crawl.as_ref() else {
+                return Ok(false);
+            };
+            if matches!(
+                c.status,
+                crate::domain::models::CrawlStatus::Completed
+                    | crate::domain::models::CrawlStatus::Failed
+                    | crate::domain::models::CrawlStatus::Cancelled
+            ) {
+                return Ok(false);
+            }
+            if c.total_tasks() > 0 && c.completed_tasks() + c.failed_tasks() == c.total_tasks() {
+                let status = if c.completed_tasks() == 0 {
+                    crate::domain::models::CrawlStatus::Failed
+                } else {
+                    crate::domain::models::CrawlStatus::Completed
+                };
+                *self.last_status.lock().expect("status mutex poisoned") = Some(status);
+                self.update_status_count.fetch_add(1, Ordering::SeqCst);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
         }
         async fn increment_total_tasks(
             &self,
@@ -1028,6 +1022,7 @@ mod tests {
             crate::domain::id::Id::generate(),
             0,
             &config,
+            &[],
             &repo,
             &crawl_repo,
             &dedup,
@@ -1060,6 +1055,7 @@ mod tests {
             crate::domain::id::Id::generate(),
             0,
             &config,
+            &[],
             &repo,
             &crawl_repo,
             &dedup,
@@ -1091,6 +1087,7 @@ mod tests {
             crate::domain::id::Id::generate(),
             0,
             &config,
+            &[],
             &repo,
             &crawl_repo,
             &dedup,
@@ -1122,6 +1119,7 @@ mod tests {
             crate::domain::id::Id::generate(),
             0,
             &config,
+            &[],
             &repo,
             &crawl_repo,
             &dedup,
@@ -1154,6 +1152,7 @@ mod tests {
             crate::domain::id::Id::generate(),
             0,
             &config,
+            &[],
             &repo,
             &crawl_repo,
             &dedup,
@@ -1188,6 +1187,7 @@ mod tests {
                 crate::domain::id::Id::generate(),
                 0,
                 &config,
+                &[],
                 &repo,
                 &crawl_repo,
                 &dedup,
@@ -1234,6 +1234,7 @@ mod tests {
             crate::domain::id::Id::generate(),
             0,
             &config,
+            &[],
             &repo,
             &crawl_repo,
             &dedup,
@@ -1558,6 +1559,7 @@ mod tests {
             crate::domain::id::Id::generate(),
             0,
             &config,
+            &[],
             &repo,
             &crawl_repo,
             &dedup,
@@ -1600,6 +1602,7 @@ mod tests {
             crate::domain::id::Id::generate(),
             0,
             &config,
+            &[],
             &repo,
             &crawl_repo,
             &dedup,
@@ -1643,6 +1646,7 @@ mod tests {
             crate::domain::id::Id::generate(),
             0,
             &config,
+            &[],
             &repo,
             &crawl_repo,
             &dedup,

@@ -133,6 +133,11 @@ pub struct ScrapeWorker {
     crawl_terminal_cache: DashMap<crate::domain::id::Id, (bool, std::time::Instant)>,
     /// 缓存插入计数：每 1024 次触发一次过期项 retain（避免每任务 len 扫描）
     crawl_terminal_cache_inserts: std::sync::atomic::AtomicUsize,
+    /// 团队黑名单快照缓存（crawl_id → (归一化条目, checked_at)）。
+    /// crawl.config 创建后不再修改；300s TTL 折叠逐任务 PK SELECT。
+    crawl_blacklist_cache:
+        DashMap<crate::domain::id::Id, (std::sync::Arc<Vec<String>>, std::time::Instant)>,
+    crawl_blacklist_cache_inserts: std::sync::atomic::AtomicUsize,
     /// 高级缓存服务
     ///
     /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
@@ -203,6 +208,8 @@ impl ScrapeWorker {
             deduplicator: Arc::new(parking_lot::RwLock::new(Deduplicator::new())),
             crawl_terminal_cache: DashMap::new(),
             crawl_terminal_cache_inserts: std::sync::atomic::AtomicUsize::new(0),
+            crawl_blacklist_cache: DashMap::with_capacity(1024),
+            crawl_blacklist_cache_inserts: std::sync::atomic::AtomicUsize::new(0),
             cache_service: deps.cache_service,
             // 默认独立协调器，由 WorkerManager 通过
             // `with_shutdown_coordinator` 注入共享实例。
@@ -438,6 +445,14 @@ fn build_dto_headers(options: Option<&ScrapeOptionsDto>) -> HashMap<String, Stri
         if let Some(h) = &opts.headers {
             if let Some(obj) = h.as_object() {
                 for (k, v) in obj {
+                    // 与 crawl 路径同规则：Host 由目标 URL 固定，租户头不得
+                    // 覆盖，否则可指向同 IP 的内网虚拟主机（SSRF 旁路）。
+                    if k.eq_ignore_ascii_case("host") {
+                        log::warn!(
+                            "ignoring custom Host header in scrape options (target host is fixed by URL)"
+                        );
+                        continue;
+                    }
                     if let Some(s) = v.as_str() {
                         headers.insert(k.clone(), s.to_string());
                     }
@@ -774,6 +789,9 @@ impl ScrapeWorker {
         save_result(task, response, extra_data, self.result_repository.as_ref()).await
     }
 
+    /// 测试专用包装：固定传空黑名单，**禁止**生产代码调用
+    /// （生产路径必须从 `crawl.config` 读取后传入，否则静默绕过策略）。
+    #[cfg(test)]
     async fn extract_and_queue_links(
         &self,
         task: &Task,
@@ -788,6 +806,7 @@ impl ScrapeWorker {
             crawl_id,
             current_depth,
             config,
+            &[],
             self.repository.as_ref(),
             self.crawl_repository.as_ref(),
             &self.deduplicator,

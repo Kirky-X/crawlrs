@@ -650,8 +650,9 @@ mod tests {
         // 同 URL 两行 → distinct 只出一个
         save_results_with_urls(&repo, &[&b, &a, &b]).await;
 
+        // keyset 起点设在本次前缀之后：共享测试库累积的 URL 不会挤占前 100 条。
         let urls = repo
-            .list_distinct_urls(100, None)
+            .list_distinct_urls(100, Some(prefix.clone()))
             .await
             .expect("list_distinct_urls failed");
         let own: Vec<String> = urls

@@ -35,10 +35,11 @@ impl ScrapeWorker {
         }
         let is_terminal = match cached_terminal {
             Some(value) => value,
-            None => match self.crawl_repository.find_by_id(crawl_id).await {
-                Ok(Some(crawl)) => {
+            // 只用状态：投影读取，避免每任务拉回 crawl.config。
+            None => match self.crawl_repository.find_progress_by_id(crawl_id).await {
+                Ok(Some(progress)) => {
                     let value = crate::application::use_cases::crawl_state_machine::is_terminal(
-                        &crawl.status,
+                        &progress.status,
                     );
                     self.crawl_terminal_cache
                         .insert(crawl_id, (value, std::time::Instant::now()));

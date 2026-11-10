@@ -276,6 +276,12 @@ pub enum CrawlStatus {
 /// 终态集合（SQL 条件写与守卫共用；新增终态时只改这里）。
 pub const TERMINAL_CRAWL_STATUSES: [&str; 3] = ["completed", "failed", "cancelled"];
 
+/// 非终态（仍可迁移）的 crawl 状态。
+///
+/// 与 [`TERMINAL_CRAWL_STATUSES`] 互补；用 `IN (...)` 而非 `NOT IN (...)`
+/// 可命中 status 索引，避免周期对账/守卫写做全表扫描。
+pub const ACTIVE_CRAWL_STATUSES: [&str; 2] = ["queued", "processing"];
+
 impl fmt::Display for CrawlStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -650,5 +656,42 @@ mod tests {
             "https://example.com".to_string(),
             serde_json::json!({}),
         )
+    }
+
+    /// 状态字符串分区必须覆盖全部枚举变体且互斥。`canonical` 的 match
+    /// 在新增状态时非穷尽编译失败，强制同步 ACTIVE/TERMINAL 常量。
+    #[test]
+    fn crawl_status_strings_partition_active_and_terminal() {
+        fn canonical(status: &CrawlStatus) -> &'static str {
+            match status {
+                CrawlStatus::Queued => "queued",
+                CrawlStatus::Processing => "processing",
+                CrawlStatus::Completed => "completed",
+                CrawlStatus::Failed => "failed",
+                CrawlStatus::Cancelled => "cancelled",
+            }
+        }
+        let all: [CrawlStatus; 5] = [
+            CrawlStatus::Queued,
+            CrawlStatus::Processing,
+            CrawlStatus::Completed,
+            CrawlStatus::Failed,
+            CrawlStatus::Cancelled,
+        ];
+        for status in &all {
+            let value = status.to_string();
+            assert_eq!(canonical(status), value, "Display must match canonical");
+            let in_active = ACTIVE_CRAWL_STATUSES.contains(&value.as_str());
+            let in_terminal = TERMINAL_CRAWL_STATUSES.contains(&value.as_str());
+            assert!(
+                in_active ^ in_terminal,
+                "status {value} must be exactly one of active/terminal"
+            );
+        }
+        assert_eq!(
+            ACTIVE_CRAWL_STATUSES.len() + TERMINAL_CRAWL_STATUSES.len(),
+            all.len(),
+            "constants must cover every status exactly once"
+        );
     }
 }

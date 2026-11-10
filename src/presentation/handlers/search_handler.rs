@@ -77,20 +77,19 @@ pub async fn search(
     // crawl_results=true 时即使请求省略 crawl_config 也要派生默认配置：
     // 否则派生任务拿不到团队黑名单（策略随“可选字段未传”失效）。
     if search_query.crawl_results == Some(true) {
-        let config = search_query.crawl_config.get_or_insert_with(|| {
-            crate::domain::services::search_service::SearchCrawlConfig {
-                max_depth: 1,
-                include_patterns: None,
-                exclude_patterns: None,
-                strategy: "bfs".to_string(),
-                crawl_delay_ms: None,
-                max_concurrency: 10,
-                headers: None,
-                proxy: None,
-                extraction_rules: None,
-                domain_blacklist: Vec::new(),
-            }
-        });
+        let config = search_query.crawl_config.get_or_insert_with(
+            crate::domain::services::search_service::SearchCrawlConfig::default,
+        );
+        // 与 HTTP 创建入口同口径：拒绝超深派生 crawl，避免绕过深度上限。
+        if config.max_depth > crate::domain::services::search_service::MAX_SEARCH_CRAWL_DEPTH {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "crawl_config.max_depth must be <= {}",
+                    crate::domain::services::search_service::MAX_SEARCH_CRAWL_DEPTH
+                ),
+            );
+        }
         if let Some(repo) = geo_restriction_repo.as_ref() {
             match repo.get_team_restrictions(team_id).await {
                 Ok(restrictions) => match restrictions.effective_domain_blacklist() {

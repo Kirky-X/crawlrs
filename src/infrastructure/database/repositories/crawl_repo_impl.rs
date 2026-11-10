@@ -4,17 +4,28 @@
 //! Crawl repository implementation using Sea-ORM with Mapper
 
 use crate::domain::models::{Crawl, CrawlStatus};
-use crate::domain::repositories::crawl_repository::CrawlRepository;
+use crate::domain::repositories::crawl_repository::{CrawlProgress, CrawlRepository};
 use crate::domain::repositories::task_repository::RepositoryError;
 use crate::infrastructure::database::entities::crawl;
 use crate::infrastructure::persistence::mappers::CrawlMapper;
 use async_trait::async_trait;
+use dbnexus::sea_orm;
 use dbnexus::sea_orm::{
-    sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, ExprTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, ExprTrait, FromQueryResult,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
 use dbnexus::DbPool;
+use std::str::FromStr;
 use std::sync::Arc;
+
+/// 进度投影行：只含终态判定/自适应停止所需列，避免拉取 config 大字段。
+#[derive(Debug, FromQueryResult)]
+struct CrawlProgressRow {
+    status: String,
+    total_tasks: i32,
+    completed_tasks: i32,
+    failed_tasks: i32,
+}
 
 /// Crawl repository implementation using Sea-ORM
 pub struct CrawlRepositoryImpl {
@@ -80,6 +91,43 @@ impl CrawlRepository for CrawlRepositoryImpl {
         Ok(entity.map(CrawlMapper::to_domain))
     }
 
+    async fn find_progress_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<CrawlProgress>, RepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let row = crawl::Entity::find_by_id(id)
+            .select_only()
+            .column(crawl::Column::Status)
+            .column(crawl::Column::TotalTasks)
+            .column(crawl::Column::CompletedTasks)
+            .column(crawl::Column::FailedTasks)
+            .into_model::<CrawlProgressRow>()
+            .one(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        row.map(|row| {
+            Ok(CrawlProgress {
+                status: CrawlStatus::from_str(&row.status)
+                    .map_err(|e| RepositoryError::Database(anyhow::anyhow!(e)))?,
+                total_tasks: row.total_tasks,
+                completed_tasks: row.completed_tasks,
+                failed_tasks: row.failed_tasks,
+            })
+        })
+        .transpose()
+    }
+
     async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
         let session = self
             .pool
@@ -129,6 +177,9 @@ impl CrawlRepository for CrawlRepositoryImpl {
                 Expr::value(chrono::Utc::now().naive_utc()),
             )
             .filter(crawl::Column::Id.eq(id))
+            // 终态行不再接受完成/失败计数：避免停止/取消后仍在飞的子任务
+            // 把 completed/failed 顶过 total。
+            .filter(crate::infrastructure::database::repositories::terminal_status::non_terminal_condition())
             .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
@@ -161,6 +212,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
                 Expr::value(chrono::Utc::now().naive_utc()),
             )
             .filter(crawl::Column::Id.eq(id))
+            .filter(crate::infrastructure::database::repositories::terminal_status::non_terminal_condition())
             .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
@@ -189,11 +241,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             .col_expr(crawl::Column::UpdatedAt, Expr::value(now.naive_utc()))
             .filter(crawl::Column::Id.eq(id))
             // 终态守护：已完成/失败/取消的 crawl 不再被迟到事件覆盖
-            .filter(crawl::Column::Status.is_not_in([
-                CrawlStatus::Completed.to_string(),
-                CrawlStatus::Failed.to_string(),
-                CrawlStatus::Cancelled.to_string(),
-            ]));
+            .filter(crate::infrastructure::database::repositories::terminal_status::non_terminal_condition());
 
         if matches!(
             status,
@@ -245,6 +293,72 @@ impl CrawlRepository for CrawlRepositoryImpl {
         }
 
         Ok(())
+    }
+
+    async fn finalize_if_all_terminal(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<bool, RepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        let now = chrono::Utc::now().naive_utc();
+        let result = crawl::Entity::update_many()
+            .col_expr(
+                crawl::Column::Status,
+                crate::infrastructure::database::repositories::terminal_status::terminal_status_case(),
+            )
+            .col_expr(crawl::Column::CompletedAt, Expr::value(Some(now)))
+            .col_expr(crawl::Column::UpdatedAt, Expr::value(now))
+            .filter(crawl::Column::Id.eq(id))
+            .filter(crate::infrastructure::database::repositories::terminal_status::terminal_eligible_condition())
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        Ok(result.rows_affected > 0)
+    }
+
+    async fn finalize_failed_after_enqueue(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<bool, RepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        let now = chrono::Utc::now().naive_utc();
+        let result = crawl::Entity::update_many()
+            .col_expr(
+                crawl::Column::Status,
+                Expr::value(CrawlStatus::Failed.to_string()),
+            )
+            // 入队中断时后续任务不会再创建：把全部未完成量计入 failed，
+            // 保持 completed+failed==total 的终态不变量（搜索派生一次建
+            // 多条任务时只 +1 会让计数永不等于 total）。
+            .col_expr(
+                crawl::Column::FailedTasks,
+                Expr::cust(
+                    "CASE WHEN total_tasks > completed_tasks THEN \
+                     total_tasks - completed_tasks ELSE failed_tasks END",
+                ),
+            )
+            .col_expr(crawl::Column::CompletedAt, Expr::value(Some(now)))
+            .col_expr(crawl::Column::UpdatedAt, Expr::value(now))
+            .filter(crawl::Column::Id.eq(id))
+            .filter(crate::infrastructure::database::repositories::terminal_status::non_terminal_condition())
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        Ok(result.rows_affected > 0)
     }
 
     async fn increment_total_tasks(

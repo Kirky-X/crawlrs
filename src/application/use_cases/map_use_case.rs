@@ -80,7 +80,7 @@ impl SitemapStream {
 
 /// [`MapUseCase::execute_streaming`] 的运行参数（来自 `settings.sitemap`）
 #[cfg(feature = "sitemap")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SitemapStreamOptions {
     /// mpsc 背压边界（`sitemap.channel_capacity`）
     pub channel_capacity: usize,
@@ -88,6 +88,9 @@ pub struct SitemapStreamOptions {
     pub max_urls: usize,
     /// 子 sitemap 并发展开上限（`sitemap.max_concurrent_sub_sitemaps`）
     pub max_concurrent_sub_sitemaps: usize,
+    /// 已归一化的团队域名黑名单：子 sitemap URL 在抓取前过滤。
+    #[doc(hidden)]
+    pub domain_blacklist: Vec<String>,
 }
 
 /// sitemap 抓取端口（测试用 mock 替换）
@@ -330,7 +333,7 @@ impl MapUseCase {
         })
     }
 
-    /// 递归一层展开 sitemap index：取前 [`MAX_SUB_SITEMAPS`] 个子 sitemap，
+    /// 递归一层展开 sitemap index：取前 `MAX_SUB_SITEMAPS` 个子 sitemap，
     /// 子 sitemap 瞬态错误或 ≥400 状态重试一次，仍失败则放弃该子 sitemap
     async fn expand_sitemap_index(&self, mut locs: Vec<String>) -> Result<Vec<String>, MapError> {
         let children: Vec<String> = locs.iter().take(MAX_SUB_SITEMAPS).cloned().collect();
@@ -361,7 +364,7 @@ impl MapUseCase {
     ///
     /// 从 `{origin}/sitemap.xml` 流式解析并经有界通道逐条产出 `<loc>`：
     /// - `Urlset`：loc 直接转发，`max_urls` 为消费上限护栏
-    /// - `SitemapIndex`：递归一层，取前 [`MAX_SUB_SITEMAPS`] 个子 sitemap，
+    /// - `SitemapIndex`：递归一层，取前 `MAX_SUB_SITEMAPS` 个子 sitemap，
     ///   并发展开 ≤ `options.max_concurrent_sub_sitemaps`；子 sitemap 瞬态
     ///   失败重试一次仍失败则放弃该子 sitemap（对齐 [`Self::execute`] 语义）
     ///
@@ -419,12 +422,27 @@ impl MapUseCase {
         let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut set: JoinSet<()> = JoinSet::new();
         for child in children {
+            // index 里的子 sitemap 也是服务端请求：与顶层同口径过滤。
+            if let Some(reason) =
+                crate::domain::services::team_service::domain_in_normalized_denylist(
+                    &child,
+                    &options.domain_blacklist,
+                )
+            {
+                log::warn!("skip blacklisted child sitemap: {reason}");
+                continue;
+            }
             let fetcher = self.fetcher.clone();
             let tx = tx.clone();
             let semaphore = semaphore.clone();
             let sent = sent.clone();
             set.spawn(forward_child_sitemap(
-                fetcher, child, options, tx, semaphore, sent,
+                fetcher,
+                child,
+                options.clone(),
+                tx,
+                semaphore,
+                sent,
             ));
         }
         drop(tx);
@@ -503,7 +521,7 @@ fn spawn_child_task_monitor(mut set: tokio::task::JoinSet<()>) {
     });
 }
 
-/// 从根 index 流中收集前 [`MAX_SUB_SITEMAPS`] 个子 sitemap URL（流尽即止）
+/// 从根 index 流中收集前 `MAX_SUB_SITEMAPS` 个子 sitemap URL（流尽即止）
 #[cfg(feature = "sitemap")]
 async fn collect_index_children(rx: &mut tokio::sync::mpsc::Receiver<String>) -> Vec<String> {
     let mut children: Vec<String> = Vec::new();
@@ -923,6 +941,7 @@ mod tests {
             concurrency: usize,
         ) -> SitemapStreamOptions {
             SitemapStreamOptions {
+                domain_blacklist: Vec::new(),
                 channel_capacity: capacity,
                 max_urls,
                 max_concurrent_sub_sitemaps: concurrency,

@@ -72,6 +72,15 @@ pub fn build_crawl_request(
     if let Some(h) = &config.headers {
         if let Some(obj) = h.as_object() {
             for (k, v) in obj {
+                // SSRF 旁路防护：Host 头可把“已通过 SSRF 校验的公网 URL”
+                // 指到同 IP 上的内网虚拟主机，租户不得覆盖目标主机。
+                if k.eq_ignore_ascii_case("host") {
+                    log::warn!(
+                        "ignoring custom Host header for crawl task {} (target host is fixed by URL)",
+                        task.id
+                    );
+                    continue;
+                }
                 if let Some(s) = v.as_str() {
                     headers.insert(k.clone(), s.to_string());
                 }
@@ -282,5 +291,41 @@ mod tests {
         assert_eq!(req.options.timeout, Duration::from_secs(60));
         assert!(!req.options.skip_tls_verification);
         assert!(req.options.proxy.is_none());
+    }
+
+    #[test]
+    fn build_crawl_request_drops_custom_host_header() {
+        let task = make_task(json!({}));
+        let config = CrawlConfigDto {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            max_pages: None,
+            proxy: None,
+            headers: Some(json!({
+                "Host": "internal.vhost",
+                "X-Test": "ok"
+            })),
+            extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
+        };
+        let request = build_crawl_request(&task, &config, 30);
+        assert!(
+            !request
+                .options
+                .headers
+                .keys()
+                .any(|k| k.eq_ignore_ascii_case("host")),
+            "custom Host must never reach the engine"
+        );
+        assert_eq!(
+            request.options.headers.get("X-Test").map(String::as_str),
+            Some("ok"),
+            "other headers are preserved"
+        );
     }
 }

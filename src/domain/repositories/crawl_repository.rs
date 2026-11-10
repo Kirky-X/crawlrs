@@ -5,6 +5,15 @@ use super::task_repository::RepositoryError;
 use crate::domain::models::{Crawl, CrawlStatus};
 use async_trait::async_trait;
 
+/// crawl 进度快照（终态判定与自适应停止所需的最小字段集）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrawlProgress {
+    pub status: CrawlStatus,
+    pub total_tasks: i32,
+    pub completed_tasks: i32,
+    pub failed_tasks: i32,
+}
+
 /// 爬取任务仓库特质
 ///
 /// 定义爬取任务数据访问接口，提供对爬取任务的CRUD操作和状态管理功能。
@@ -36,6 +45,24 @@ pub trait CrawlRepository: Send + Sync {
     /// * `Err(RepositoryError)` - 查询失败时返回错误
     async fn find_by_id(&self, id: crate::domain::id::Id)
         -> Result<Option<Crawl>, RepositoryError>;
+
+    /// 轻量进度读取：只取状态与三个计数，**不读配置 JSON**。
+    ///
+    /// worker 在每页成功后都要判定终态/自适应停止，完整 `find_by_id`
+    /// 会把 `config`（含提取规则等大字段）一并拉回；实现方可覆写为
+    /// 列投影查询。默认实现回退到 [`Self::find_by_id`]，测试替身
+    /// 无需改动即可工作。
+    async fn find_progress_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<CrawlProgress>, RepositoryError> {
+        Ok(self.find_by_id(id).await?.map(|crawl| CrawlProgress {
+            status: crawl.status,
+            total_tasks: crawl.total_tasks(),
+            completed_tasks: crawl.completed_tasks(),
+            failed_tasks: crawl.failed_tasks(),
+        }))
+    }
 
     /// 更新爬取任务
     ///
@@ -112,6 +139,32 @@ pub trait CrawlRepository: Send + Sync {
     ) -> Result<bool, RepositoryError> {
         Err(RepositoryError::Database(anyhow::anyhow!(
             "update_status_guarded is not implemented by this crawl repository (crawl {id})"
+        )))
+    }
+
+    /// 条件终态判定：仅当 `total>0 && completed+failed==total` 且尚未终态时，
+    /// 单条 UPDATE 写 Completed/Failed（completed==0 → Failed）并写 completed_at。
+    async fn finalize_if_all_terminal(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<bool, RepositoryError> {
+        Err(RepositoryError::Database(anyhow::anyhow!(
+            "finalize_if_all_terminal is not implemented by this crawl repository (crawl {id})"
+        )))
+    }
+
+    /// 入队失败补偿：单条条件写 Failed，并把 `failed_tasks` 置为
+    /// `max(total_tasks - completed_tasks, failed_tasks)`（未创建的任务全部
+    /// 计失败），同时写 `completed_at`。仅当 crawl 尚未终态时生效
+    /// （并发取消/完成不被覆盖）。
+    ///
+    /// 默认实现返回 `Err`（未实现），调用方按失败处理并记录日志。
+    async fn finalize_failed_after_enqueue(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<bool, RepositoryError> {
+        Err(RepositoryError::Database(anyhow::anyhow!(
+            "finalize_failed_after_enqueue is not implemented by this crawl repository (crawl {id})"
         )))
     }
 

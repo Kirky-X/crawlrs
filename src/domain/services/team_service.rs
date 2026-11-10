@@ -234,10 +234,9 @@ impl TeamGeoRestrictions {
     /// 超过硬上限时返回 `Err`（fail-closed），不得静默截断——否则尾部条目会
     /// 在派生任务/执行期被悄悄丢弃，形成管理员策略失效。
     pub fn effective_domain_blacklist(&self) -> Result<Vec<String>, String> {
-        if !self.enable_geo_restrictions {
-            return Ok(Vec::new());
-        }
         let list = self.domain_blacklist.as_deref().unwrap_or(&[]);
+        // 硬上限先于启用开关校验：关闭状态下的超限配置同样拒绝，
+        // 否则重新启用时才会暴露、且历史数据可绕过策略上限。
         if list.len() > MAX_DOMAIN_BLACKLIST_ENTRIES {
             return Err(format!(
                 "domain_blacklist has {} entries; maximum is {}",
@@ -245,16 +244,72 @@ impl TeamGeoRestrictions {
                 MAX_DOMAIN_BLACKLIST_ENTRIES
             ));
         }
-        if let Some(bad) = list
-            .iter()
-            .find(|entry| entry.is_empty() || entry.len() > MAX_DOMAIN_BLACKLIST_ENTRY_LEN)
-        {
-            return Err(format!(
-                "domain_blacklist entry must be 1-{} bytes: {}",
-                MAX_DOMAIN_BLACKLIST_ENTRY_LEN, bad
-            ));
+        // 单趟完成长度/可归一化/通配符校验（同一条目只 normalize 一次）。
+        for entry in list {
+            if entry.is_empty() || entry.len() > MAX_DOMAIN_BLACKLIST_ENTRY_LEN {
+                return Err(format!(
+                    "domain_blacklist entry must be 1-{} bytes: {}",
+                    MAX_DOMAIN_BLACKLIST_ENTRY_LEN, entry
+                ));
+            }
+            let normalized = normalize_host(entry);
+            if normalized.is_empty() {
+                return Err(format!(
+                    "domain_blacklist entry cannot be normalized to a host: {entry}"
+                ));
+            }
+            // 通配符条目不是合法 host，永远不会匹配任何 URL：拒绝而非静默失效。
+            if normalized.contains('*') {
+                return Err(format!(
+                    "domain_blacklist wildcard entries are not supported: {entry}"
+                ));
+            }
         }
-        Ok(list.to_vec())
+        if !self.enable_geo_restrictions {
+            return Ok(Vec::new());
+        }
+        Ok(normalize_denylist_entries(list))
+    }
+}
+
+/// 归一化黑名单条目：真实 host、小写、去末尾点、去空/去重（保持顺序）。
+pub fn normalize_denylist_entries(list: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(list.len());
+    for entry in list {
+        let normalized = normalize_host(entry);
+        if normalized.is_empty() || out.contains(&normalized) {
+            continue;
+        }
+        out.push(normalized);
+    }
+    out
+}
+
+/// 纯比较：`host` 与已归一化条目按“相等或子域”匹配。零分配。
+pub fn host_in_denylist(host: &str, normalized_entries: &[String]) -> bool {
+    normalized_entries.iter().any(|entry| {
+        host == entry
+            || (host.len() > entry.len() + 1
+                && host.ends_with(entry.as_str())
+                && host.as_bytes()[host.len() - entry.len() - 1] == b'.')
+    })
+}
+
+/// 与 [`domain_in_denylist`] 相同，但条目已归一化（worker/search 热路径复用）。
+pub fn domain_in_normalized_denylist(
+    domain_or_url: &str,
+    normalized_entries: &[String],
+) -> Option<String> {
+    if normalized_entries.is_empty() {
+        return None;
+    }
+    let host = normalize_host(domain_or_url);
+    if host_in_denylist(&host, normalized_entries) {
+        // 拒绝原因会进入任务失败原因/API/webhook：只写归一化后的 host，
+        // 不带原始 URL 的 path/query/userinfo，避免敏感值外泄。
+        Some(format!("Domain {host} is in the blacklist"))
+    } else {
+        None
     }
 }
 
@@ -278,30 +333,12 @@ pub fn domain_blacklist_denial(domain: &str, restrictions: &TeamGeoRestrictions)
 /// 的字符串切分做安全判定：`https://blocked.com/?next=https://safe.com`、
 /// `https://good.com@blocked.com/`、大小写与末尾点都会让切分结果偏离真实主机。
 pub fn domain_in_denylist(domain_or_url: &str, blacklist: &[String]) -> Option<String> {
-    if blacklist.is_empty() {
-        return None;
-    }
-    let normalized = normalize_host(domain_or_url);
-    if normalized.is_empty() {
-        return None;
-    }
-    for blocked_domain in blacklist {
-        let blocked = normalize_host(blocked_domain);
-        if blocked.is_empty() {
-            continue;
-        }
-        let suffix_match = normalized.len() > blocked.len() + 1
-            && normalized.ends_with(blocked.as_str())
-            && normalized.as_bytes()[normalized.len() - blocked.len() - 1] == b'.';
-        if normalized == blocked || suffix_match {
-            return Some(format!("Domain {} is in the blacklist", domain_or_url));
-        }
-    }
-    None
+    let normalized = normalize_denylist_entries(blacklist);
+    domain_in_normalized_denylist(domain_or_url, &normalized)
 }
 
 /// 归一化主机：小写、去末尾点、去 scheme/path/query/fragment/userinfo/port。
-fn normalize_host(input: &str) -> String {
+pub(crate) fn normalize_host(input: &str) -> String {
     let candidate = input.trim();
     if let Ok(parsed) = url::Url::parse(candidate) {
         if let Some(host) = parsed.host_str() {
@@ -328,88 +365,6 @@ fn normalize_host(input: &str) -> String {
         host_with_port.split(':').next().unwrap_or(host_with_port)
     };
     host.trim_end_matches('.').to_ascii_lowercase()
-}
-
-/// Extract the host (domain) from a URL, domain:port, or bare domain string.
-///
-/// Handles the following input forms:
-/// - `scheme://host/path?query#fragment` → `host`
-/// - `host:port` → `host`
-/// - `host/path` → `host`
-/// - `host` → `host` (unchanged)
-///
-/// This is used by [`TeamService::validate_domain_blacklist`] to normalize inputs
-/// before matching against the blacklist, preventing substring false positives
-/// (e.g., `evil-example.com/path` must not match `example.com` blacklist entry).
-#[cfg(test)] // 生产路径统一走 normalize_host；保留旧解析供既有单测回归
-fn extract_host(input: &str) -> &str {
-    // Strip scheme if present (e.g., "https://host/path" → "host/path")
-    let after_scheme = input.split("://").last().unwrap_or(input);
-    // Strip path/query/fragment if present (e.g., "host/path" → "host")
-    let host_with_port = after_scheme.split('/').next().unwrap_or(after_scheme);
-
-    // Handle IPv6 in brackets: "[::1]:8080" → "[::1]"
-    // IPv6 addresses contain colons, so the simple `split(':')` would break them.
-    if host_with_port.starts_with('[') {
-        if let Some(end) = host_with_port.find(']') {
-            // Include both brackets: "[::1]"
-            return &host_with_port[..=end];
-        }
-    }
-
-    // Strip port if present (e.g., "host:8080" → "host")
-    host_with_port.split(':').next().unwrap_or(host_with_port)
-}
-
-#[cfg(test)]
-mod extract_host_tests {
-    use super::extract_host;
-
-    #[test]
-    fn test_bare_domain() {
-        assert_eq!(extract_host("example.com"), "example.com");
-    }
-
-    #[test]
-    fn test_subdomain() {
-        assert_eq!(extract_host("sub.example.com"), "sub.example.com");
-    }
-
-    #[test]
-    fn test_url_with_scheme_and_path() {
-        assert_eq!(
-            extract_host("https://www.example.com/path"),
-            "www.example.com"
-        );
-    }
-
-    #[test]
-    fn test_url_with_port() {
-        assert_eq!(extract_host("example.com:8080"), "example.com");
-    }
-
-    #[test]
-    fn test_url_with_scheme_port_path() {
-        assert_eq!(
-            extract_host("http://example.com:8080/path?q=1"),
-            "example.com"
-        );
-    }
-
-    #[test]
-    fn test_host_with_path_only() {
-        assert_eq!(extract_host("example.com/admin"), "example.com");
-    }
-
-    #[test]
-    fn test_ipv4_address() {
-        assert_eq!(extract_host("192.168.1.1"), "192.168.1.1");
-    }
-
-    #[test]
-    fn test_ipv6_address_with_brackets() {
-        assert_eq!(extract_host("[::1]:8080"), "[::1]");
-    }
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ use crate::domain::repositories::task_repository::{
 };
 use crate::infrastructure::database::entities::crawl as crawl_entity;
 use crate::infrastructure::database::entities::task as task_entity;
+use crate::infrastructure::database::repositories::terminal_status;
 use crate::infrastructure::persistence::mappers::TaskMapper;
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
@@ -1040,6 +1041,132 @@ impl TaskRepository for TaskRepositoryImpl {
             .rows_affected;
         total_affected += orphan_updated;
 
+        // 周期对账（level-triggered）：任何已满足终态谓词但仍是非终态的
+        // crawl（此前 guarded 写遇瞬态错误而漏掉）在本轮 sweep 收口。
+        let finalized = crawl_entity::Entity::update_many()
+            .col_expr(
+                crawl_entity::Column::Status,
+                terminal_status::terminal_status_case(),
+            )
+            .col_expr(
+                crawl_entity::Column::CompletedAt,
+                Expr::value(Some(Utc::now().naive_utc())),
+            )
+            .col_expr(
+                crawl_entity::Column::UpdatedAt,
+                Expr::value(Utc::now().naive_utc()),
+            )
+            .filter(terminal_status::terminal_eligible_condition())
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?
+            .rows_affected;
+        if finalized > 0 {
+            log::info!(
+                "expire_tasks finalized {} terminal-eligible crawl(s) during periodic reconciliation",
+                finalized
+            );
+        }
+
+        // 崩溃恢复对账：worker 可能在“任务行已 Completed、crawl 计数未自增”
+        // 之间被硬终止，completed+failed 永久差 1，终态谓词永不成立。
+        // 对静默超过 10 分钟、已无 queued/active 任务的非终态 crawl，
+        // 用 tasks 实际计数重写 total/completed/failed 并收口。
+        let cutoff = Utc::now() - Duration::minutes(10);
+        let candidates = crawl_entity::Entity::find()
+            .filter(terminal_status::non_terminal_condition())
+            .filter(crawl_entity::Column::TotalTasks.gt(0))
+            .filter(
+                Expr::col(crawl_entity::Column::CompletedTasks)
+                    .add(Expr::col(crawl_entity::Column::FailedTasks))
+                    .lt(Expr::col(crawl_entity::Column::TotalTasks)),
+            )
+            .filter(crawl_entity::Column::UpdatedAt.lt(cutoff))
+            .limit(100)
+            .all(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let mut recovered = 0u64;
+        for crawl in candidates {
+            // 有排队/在跑任务，或最近（cutoff 内）有任务变更 → 不是静默
+            // 僵尸：跳过，避免在“任务刚完成、子链接尚未入队”的窗口内
+            // 提前终结活跃 crawl。
+            let busy = task_entity::Entity::find()
+                .filter(task_entity::Column::CrawlId.eq(crawl.id))
+                .filter(
+                    Condition::any()
+                        .add(task_entity::Column::Status.is_in([
+                            TaskStatus::Queued.to_string(),
+                            TaskStatus::Active.to_string(),
+                        ]))
+                        .add(task_entity::Column::UpdatedAt.gte(cutoff)),
+                )
+                .count(conn)
+                .await
+                .map_err(|e| RepositoryError::Database(e.into()))?;
+            if busy > 0 {
+                continue;
+            }
+            let completed = task_entity::Entity::find()
+                .filter(task_entity::Column::CrawlId.eq(crawl.id))
+                .filter(task_entity::Column::Status.eq(TaskStatus::Completed.to_string()))
+                .count(conn)
+                .await
+                .map_err(|e| RepositoryError::Database(e.into()))?
+                as i32;
+            let failed = task_entity::Entity::find()
+                .filter(task_entity::Column::CrawlId.eq(crawl.id))
+                .filter(task_entity::Column::Status.eq(TaskStatus::Failed.to_string()))
+                .count(conn)
+                .await
+                .map_err(|e| RepositoryError::Database(e.into()))? as i32;
+            let old_total = crawl.total_tasks;
+            let (total, completed, failed, status) = if completed + failed == 0 {
+                // crawl 声明了 total 但一条任务行都没有（首任务插入即崩溃）：
+                // 按“全部未创建任务失败”收口，避免永久 queued。
+                (
+                    old_total,
+                    0,
+                    old_total,
+                    crate::domain::models::CrawlStatus::Failed,
+                )
+            } else {
+                let total = completed + failed;
+                // 任务行少于声明 total：计划中的任务从未创建（入队中断），
+                // 不能当作“自动缩小范围后成功”，按失败收口。
+                let status = if completed == 0 || total < old_total {
+                    crate::domain::models::CrawlStatus::Failed
+                } else {
+                    crate::domain::models::CrawlStatus::Completed
+                };
+                (total, completed, failed, status)
+            };
+            let now_dt = Utc::now().naive_utc();
+            recovered += crawl_entity::Entity::update_many()
+                .col_expr(
+                    crawl_entity::Column::Status,
+                    Expr::value(status.to_string()),
+                )
+                .col_expr(crawl_entity::Column::TotalTasks, Expr::value(total))
+                .col_expr(crawl_entity::Column::CompletedTasks, Expr::value(completed))
+                .col_expr(crawl_entity::Column::FailedTasks, Expr::value(failed))
+                .col_expr(crawl_entity::Column::CompletedAt, Expr::value(Some(now_dt)))
+                .col_expr(crawl_entity::Column::UpdatedAt, Expr::value(now_dt))
+                .filter(crawl_entity::Column::Id.eq(crawl.id))
+                .filter(terminal_status::non_terminal_condition())
+                .exec(conn)
+                .await
+                .map_err(|e| RepositoryError::Database(e.into()))?
+                .rows_affected;
+        }
+        if recovered > 0 {
+            log::info!(
+                "expire_tasks recovered {} stuck crawl(s) by recomputing counters from tasks",
+                recovered
+            );
+        }
+
         if let Some(e) = first_error {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "expire_tasks partially failed: {e}"
@@ -1284,10 +1411,7 @@ async fn reconcile_crawl_after_expiry<C: ConnectionTrait>(
         )
         .col_expr(crawl_entity::Column::UpdatedAt, Expr::value(now))
         .filter(crawl_entity::Column::Id.eq(crawl_id))
-        .filter(
-            crawl_entity::Column::Status
-                .is_not_in(crate::domain::models::crawl_model::TERMINAL_CRAWL_STATUSES),
-        )
+        .filter(terminal_status::non_terminal_condition())
         .exec(conn)
         .await
         .map_err(|e| RepositoryError::Database(e.into()))?;
@@ -1299,21 +1423,12 @@ async fn reconcile_crawl_after_expiry<C: ConnectionTrait>(
     crawl_entity::Entity::update_many()
         .col_expr(
             crawl_entity::Column::Status,
-            Expr::cust("CASE WHEN completed_tasks = 0 THEN 'failed' ELSE 'completed' END"),
+            terminal_status::terminal_status_case(),
         )
         .col_expr(crawl_entity::Column::CompletedAt, Expr::value(Some(now)))
         .col_expr(crawl_entity::Column::UpdatedAt, Expr::value(now))
         .filter(crawl_entity::Column::Id.eq(crawl_id))
-        .filter(
-            crawl_entity::Column::Status
-                .is_not_in(crate::domain::models::crawl_model::TERMINAL_CRAWL_STATUSES),
-        )
-        .filter(crawl_entity::Column::TotalTasks.gt(0))
-        .filter(
-            Expr::col(crawl_entity::Column::CompletedTasks)
-                .add(Expr::col(crawl_entity::Column::FailedTasks))
-                .eq(Expr::col(crawl_entity::Column::TotalTasks)),
-        )
+        .filter(terminal_status::terminal_eligible_condition())
         .exec(conn)
         .await
         .map_err(|e| RepositoryError::Database(e.into()))?;

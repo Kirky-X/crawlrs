@@ -14,5 +14,6 @@ pub mod scrape_result_repo_impl;
 pub mod searxng_instance_repo_impl;
 pub mod task_repo_impl;
 pub mod tasks_backlog_repo_impl;
+pub(crate) mod terminal_status;
 pub mod webhook_event_repo_impl;
 pub mod webhook_repo_impl;

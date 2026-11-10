@@ -3475,16 +3475,224 @@ async fn test_mock_process_crawl_task_invalid_payload() {
 
 #[tokio::test]
 async fn test_mock_process_crawl_task_engine_error() {
-    let worker = build_mock_worker().await;
-    // Valid crawl payload but engine fails → handle_crawl_failure is called.
+    // crawl 行必须在场：否则先命中黑名单快照 fail-closed，覆盖不到
+    // “引擎失败 → handle_crawl_failure” 的目标路径。
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
     let crawl_id = crate::domain::id::Id::generate();
-    let task = make_task(json!({
+    crawl_repo.set_crawl(Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "engine error crawl".to_string(),
+        "https://example.com/".to_string(),
+        "https://example.com/".to_string(),
+        CrawlStatus::Processing,
+        json!({}),
+        1, // total
+        0, // completed
+        0, // failed
+        Utc::now(),
+        Utc::now(),
+        None,
+    ));
+    let worker = build_configurable_worker(
+        Arc::new(ConfigurableTaskRepo::new()),
+        crawl_repo.clone(),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+    let mut task = make_task(json!({
         "crawl_id": crawl_id.to_string(),
         "depth": 0,
         "config": {"max_depth": 2}
     }));
+    // 重试预算已耗尽：确保走 terminate_task（Failed）而不是 schedule_retry。
+    task.max_retries = 1;
+    task.attempt_count = 1;
     let result = worker.process_crawl_task(task).await;
     assert!(result.is_ok());
+    assert_eq!(
+        crawl_repo.failed_increment_count(),
+        1,
+        "engine failure must increment failed_tasks"
+    );
+    assert_eq!(
+        crawl_repo.update_status_count(),
+        1,
+        "sole failed task must finalize crawl as Failed"
+    );
+}
+
+/// 黑名单快照不可得（crawl 行缺失）必须 fail-closed：任务标记失败，不执行抓取。
+#[tokio::test]
+async fn test_process_crawl_task_missing_crawl_row_fails_closed() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new()); // 不预置 crawl 行
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        crawl_repo.clone(),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+    let missing_id = crate::domain::id::Id::generate();
+    let mut task = make_task(json!({
+        "crawl_id": missing_id.to_string(),
+        "depth": 0,
+        "config": {"max_depth": 2}
+    }));
+    task.crawl_id = Some(missing_id);
+    assert!(worker.process_crawl_task(task).await.is_ok());
+    assert_eq!(
+        task_repo.update_count(),
+        1,
+        "missing crawl snapshot must mark the task failed"
+    );
+}
+
+/// 滚动升级回退：crawl.config 缺黑名单键时，旧任务 payload 顶层副本仍生效。
+#[tokio::test]
+async fn test_process_crawl_task_legacy_payload_blacklist_is_enforced() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+    let crawl_id = crate::domain::id::Id::generate();
+    crawl_repo.set_crawl(Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "legacy blacklist".to_string(),
+        "https://example.com/".to_string(),
+        "https://example.com/".to_string(),
+        CrawlStatus::Processing,
+        json!({}),
+        1,
+        0,
+        0,
+        Utc::now(),
+        Utc::now(),
+        None,
+    ));
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        crawl_repo.clone(),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+    let mut task = make_task(json!({
+        "crawl_id": crawl_id.to_string(),
+        "depth": 0,
+        "config": {"max_depth": 2},
+        "domain_blacklist": ["example.com"]
+    }));
+    task.crawl_id = Some(crawl_id);
+    assert!(worker.process_crawl_task(task).await.is_ok());
+    assert_eq!(
+        task_repo.update_count(),
+        1,
+        "legacy payload blacklist must block the seed"
+    );
+    assert_eq!(
+        crawl_repo.failed_increment_count(),
+        1,
+        "legacy rejection must increment failed_tasks"
+    );
+}
+
+/// 代理目标命中团队黑名单时必须拒绝（不得借代理通道访问被禁域名）。
+#[tokio::test]
+async fn test_process_crawl_task_blacklisted_proxy_is_rejected() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+    let crawl_id = crate::domain::id::Id::generate();
+    crawl_repo.set_crawl(Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "proxy blacklist".to_string(),
+        "https://allowed.example/".to_string(),
+        "https://allowed.example/".to_string(),
+        CrawlStatus::Processing,
+        json!({"domain_blacklist": ["blocked-proxy.example"]}),
+        1,
+        0,
+        0,
+        Utc::now(),
+        Utc::now(),
+        None,
+    ));
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        crawl_repo.clone(),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+    let mut task = make_task(json!({
+        "crawl_id": crawl_id.to_string(),
+        "depth": 0,
+        "config": {
+            "max_depth": 2,
+            "proxy": "http://blocked-proxy.example:8080"
+        }
+    }));
+    task.crawl_id = Some(crawl_id);
+    assert!(worker.process_crawl_task(task).await.is_ok());
+    assert_eq!(
+        task_repo.update_count(),
+        1,
+        "blacklisted proxy must fail the task"
+    );
+    assert_eq!(
+        crawl_repo.failed_increment_count(),
+        1,
+        "rejection must increment failed_tasks"
+    );
+}
+
+/// crawl.config 中黑名单类型损坏必须 fail-closed，不得当空列表放行。
+#[tokio::test]
+async fn test_process_crawl_task_corrupt_blacklist_config_fails_closed() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+    let crawl_id = crate::domain::id::Id::generate();
+    crawl_repo.set_crawl(Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "corrupt blacklist".to_string(),
+        "https://example.com/".to_string(),
+        "https://example.com/".to_string(),
+        CrawlStatus::Processing,
+        json!({"domain_blacklist": "not-an-array"}),
+        1,
+        0,
+        0,
+        Utc::now(),
+        Utc::now(),
+        None,
+    ));
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        crawl_repo.clone(),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+    let mut task = make_task(json!({
+        "crawl_id": crawl_id.to_string(),
+        "depth": 0,
+        "config": {"max_depth": 2}
+    }));
+    task.crawl_id = Some(crawl_id);
+    assert!(worker.process_crawl_task(task).await.is_ok());
+    assert_eq!(
+        task_repo.update_count(),
+        1,
+        "corrupt blacklist must mark the task failed"
+    );
+    assert_eq!(
+        crawl_repo.failed_increment_count(),
+        1,
+        "rejection on an existing crawl must increment failed_tasks"
+    );
 }
 
 // process_extract_task tests
@@ -5161,6 +5369,11 @@ impl CrawlRepository for ConfigurableCrawlRepo {
                 "Mock increment_failed error"
             )));
         }
+        // 与真实仓储一致：计数落库后终态判定才能看到 failed+1。
+        if let Some(crawl) = self.crawl.lock().unwrap().as_mut() {
+            crawl.increment_failed_tasks();
+            crawl.updated_at = Utc::now();
+        }
         Ok(())
     }
     async fn update_status(
@@ -5175,6 +5388,43 @@ impl CrawlRepository for ConfigurableCrawlRepo {
             )));
         }
         Ok(())
+    }
+
+    async fn finalize_if_all_terminal(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<bool, RepositoryError> {
+        let eligible = {
+            let guard = self.crawl.lock().unwrap();
+            guard.as_ref().is_some_and(|c| {
+                !matches!(
+                    c.status,
+                    CrawlStatus::Completed | CrawlStatus::Failed | CrawlStatus::Cancelled
+                ) && c.total_tasks() > 0
+                    && c.completed_tasks() + c.failed_tasks() == c.total_tasks()
+            })
+        };
+        if !eligible {
+            return Ok(false);
+        }
+        self.update_status_count.fetch_add(1, Ordering::SeqCst);
+        if self.fail_update_status.load(Ordering::SeqCst) {
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock update_status error"
+            )));
+        }
+        let mut guard = self.crawl.lock().unwrap();
+        let Some(c) = guard.as_mut() else {
+            return Ok(false);
+        };
+        c.status = if c.completed_tasks() == 0 {
+            CrawlStatus::Failed
+        } else {
+            CrawlStatus::Completed
+        };
+        c.completed_at = Some(Utc::now());
+        c.updated_at = Utc::now();
+        Ok(true)
     }
 
     async fn update_status_guarded(
@@ -6484,11 +6734,28 @@ async fn test_handle_crawl_success_save_result_failure_propagates_error() {
     let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
     let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(FailingScrapeResultRepo);
     let coalesce_coordinator = make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+    let crawl_id = crate::domain::id::Id::generate();
+    crawl_repo.set_crawl(Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "test".to_string(),
+        "https://example.com".to_string(),
+        "https://example.com".to_string(),
+        CrawlStatus::Processing,
+        json!({"domain_blacklist": []}),
+        1,
+        0,
+        0,
+        Utc::now(),
+        Utc::now(),
+        None,
+    ));
 
     let worker = ScrapeWorker::new(ScrapeWorkerDeps {
         repository: task_repo,
         result_repository: result_repo,
-        crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+        crawl_repository: crawl_repo.clone() as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
         engine_client,
@@ -6525,14 +6792,7 @@ async fn test_handle_crawl_success_save_result_failure_propagates_error() {
     let config = make_crawl_config(None, None);
     let request = worker.build_crawl_request(&task, &config);
     let result = worker
-        .handle_crawl_success(
-            &task,
-            response,
-            crate::domain::id::Id::generate(),
-            0,
-            &config,
-            &request,
-        )
+        .handle_crawl_success(&task, response, crawl_id, 0, &config, &request)
         .await;
     assert!(
         result.is_err(),
@@ -6733,7 +6993,7 @@ async fn test_handle_crawl_failure_terminal_increments_failed_tasks_once() {
         json!({}),
         1,
         0,
-        1,
+        0,
         Utc::now(),
         Utc::now(),
         None,
@@ -6780,11 +7040,12 @@ async fn test_process_crawl_task_robots_denied_marks_failed() {
 
     let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
     let coalesce_coordinator = make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
 
     let worker = ScrapeWorker::new(ScrapeWorkerDeps {
         repository: task_repo.clone(),
         result_repository: result_repo,
-        crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+        crawl_repository: crawl_repo.clone() as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
         engine_client,
@@ -6806,6 +7067,21 @@ async fn test_process_crawl_task_robots_denied_marks_failed() {
     });
 
     let crawl_id = crate::domain::id::Id::generate();
+    crawl_repo.set_crawl(Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "test".to_string(),
+        "https://example.com".to_string(),
+        "https://example.com".to_string(),
+        CrawlStatus::Processing,
+        json!({"domain_blacklist": []}),
+        1,
+        0,
+        0,
+        Utc::now(),
+        Utc::now(),
+        None,
+    ));
     let task = make_task(json!({
         "crawl_id": crawl_id.to_string(),
         "depth": 0,
@@ -7521,15 +7797,31 @@ async fn test_process_crawl_task_success_calls_handle_crawl_success() {
     let engine_client = Arc::new(EngineClient::with_router(router));
 
     let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
     let worker = build_configurable_worker(
         task_repo.clone(),
-        Arc::new(ConfigurableCrawlRepo::new()),
+        crawl_repo.clone(),
         Arc::new(MockRobotsChecker),
         engine_client,
     )
     .await;
 
     let crawl_id = crate::domain::id::Id::generate();
+    crawl_repo.set_crawl(Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "test".to_string(),
+        "https://example.com".to_string(),
+        "https://example.com".to_string(),
+        CrawlStatus::Processing,
+        json!({"domain_blacklist": []}),
+        1,
+        0,
+        0,
+        Utc::now(),
+        Utc::now(),
+        None,
+    ));
     // max_depth: 0 → depth 0 < max_depth 0 is false → no link extraction
     let task = make_task(json!({
         "crawl_id": crawl_id.to_string(),

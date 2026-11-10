@@ -75,6 +75,7 @@ async fn map_core(
     bundle: &Arc<I18nBundle>,
 ) -> Response {
     let options = SitemapStreamOptions {
+        domain_blacklist: Vec::new(),
         channel_capacity: settings.sitemap.channel_capacity,
         max_urls: settings.sitemap.max_urls,
         max_concurrent_sub_sitemaps: settings.sitemap.max_concurrent_sub_sitemaps,

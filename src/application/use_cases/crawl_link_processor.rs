@@ -33,7 +33,10 @@ impl<E: Display> Display for PersistCrawlError<E> {
 
 /// 构建初始爬取任务（种子任务）。
 ///
-/// 创建深度为 0 的 `Task`，包含 crawl 配置和地理限制黑名单。
+/// 创建深度为 0 的 `Task`，包含 crawl_id、深度与 crawl 配置。
+///
+/// 团队域名黑名单不进入任务 payload：唯一载体是 `crawl.config`，
+/// worker 按 crawl_id 读取（避免逐任务复制与快照漂移）。
 ///
 /// # Arguments
 ///
@@ -41,14 +44,12 @@ impl<E: Display> Display for PersistCrawlError<E> {
 /// * `api_key_id` - API Key ID
 /// * `crawl_id` - 关联的爬取 ID
 /// * `dto` - 爬取请求 DTO
-/// * `domain_blacklist` - 域名黑名单列表（来自地理限制）
 /// * `now` - 当前时间戳
 pub fn build_initial_crawl_task(
     team_id: crate::domain::id::Id,
     api_key_id: crate::domain::id::Id,
     crawl_id: crate::domain::id::Id,
     dto: &CrawlRequestDto,
-    domain_blacklist: Vec<String>,
     now: DateTime<Utc>,
 ) -> Task {
     Task {
@@ -63,7 +64,6 @@ pub fn build_initial_crawl_task(
             "crawl_id": crawl_id,
             "depth": 0,
             "config": dto.config,
-            "domain_blacklist": domain_blacklist,
             "sitemap_seed": dto.sitemap_seed,
             "sitemap_url": dto.sitemap_url,
         }),
@@ -82,26 +82,9 @@ pub fn build_initial_crawl_task(
     }
 }
 
-/// 构建 `Crawl` 实体。
-///
-/// # Arguments
-///
-/// * `crawl_id` - 爬取 ID
-/// * `team_id` - 团队 ID
-/// * `dto` - 爬取请求 DTO
-/// * `now` - 当前时间戳
-pub fn build_crawl_entity(
-    crawl_id: crate::domain::id::Id,
-    team_id: crate::domain::id::Id,
-    dto: &CrawlRequestDto,
-    now: DateTime<Utc>,
-) -> Crawl {
-    build_crawl_entity_with_root(crawl_id, team_id, dto, &dto.url, now)
-}
-
 /// 构建 `Crawl` 实体，`root_url` 与抓取种子分开（SDK 的 url/seed_url 两字段）。
 ///
-/// HTTP 入口的 root 与 seed 相同，经 [`build_crawl_entity`] 委托到本函数；
+/// HTTP 入口的 root 与 seed 相同，直接调用本函数；
 /// SDK 入口传入展示用 root 与真实 seed，避免两处各自拼装实体导致字段漂移。
 pub fn build_crawl_entity_with_root(
     crawl_id: crate::domain::id::Id,
@@ -131,8 +114,9 @@ pub fn build_crawl_entity_with_root(
 
 /// 创建 crawl 行并播种首任务（HTTP 与 SDK 入口共用的唯一编排）。
 ///
-/// 入队失败时做补偿：`failed_tasks += 1` + 终态守护写 Failed（不留 total=1/0
-/// 任务的孤儿 crawl）。空种子/黑名单校验属于入口预检，不在本函数内重复。
+/// 入队失败时做补偿：把未创建任务计入 `failed_tasks` + 终态守护写 Failed
+/// （不留 total=1/0 任务的孤儿 crawl）。空种子/黑名单校验属于入口预检，
+/// 不在本函数内重复。
 #[allow(clippy::too_many_arguments)] // 编排入参：repo/团队/key/dto/root/黑名单/时间/enqueue
 pub async fn persist_crawl_with_initial_task<F, Fut, E>(
     crawl_repo: &dyn CrawlRepository,
@@ -158,26 +142,22 @@ where
             "domain_blacklist".to_string(),
             serde_json::json!(domain_blacklist),
         );
+    } else {
+        log::error!(
+            "crawl {} config is not a JSON object; domain_blacklist snapshot not stored",
+            crawl_id
+        );
     }
     crawl_repo
         .create(&crawl)
         .await
         .map_err(PersistCrawlError::Repository)?;
 
-    let task = build_initial_crawl_task(team_id, api_key_id, crawl_id, dto, domain_blacklist, now);
+    let task = build_initial_crawl_task(team_id, api_key_id, crawl_id, dto, now);
     if let Err(e) = enqueue(task).await {
-        // 补偿：计数自洽 + 终态守护（并发取消不被覆盖）。
-        if let Err(inc_err) = crawl_repo.increment_failed_tasks(crawl_id).await {
-            log::error!(
-                "Failed to increment failed_tasks for crawl {} during enqueue compensation: {}",
-                crawl_id,
-                inc_err
-            );
-        }
-        if let Err(update_err) = crawl_repo
-            .update_status_guarded(crawl_id, CrawlStatus::Failed)
-            .await
-        {
+        // 补偿：单条条件写（failed+1、终态守护、completed_at 同语句），
+        // 避免两次写之间的中间态与并发覆盖。
+        if let Err(update_err) = crawl_repo.finalize_failed_after_enqueue(crawl_id).await {
             log::error!(
                 "Failed to mark crawl {} failed during enqueue compensation: {}",
                 crawl_id,
@@ -228,14 +208,7 @@ mod tests {
         let dto = make_dto();
         let now = Utc::now();
 
-        let task = build_initial_crawl_task(
-            team_id,
-            api_key_id,
-            crawl_id,
-            &dto,
-            vec!["blocked.com".to_string()],
-            now,
-        );
+        let task = build_initial_crawl_task(team_id, api_key_id, crawl_id, &dto, now);
 
         assert_eq!(task.team_id, team_id);
         assert_eq!(task.api_key_id, api_key_id);
@@ -260,7 +233,6 @@ mod tests {
             crate::domain::id::Id::generate(),
             crate::domain::id::Id::generate(),
             &dto,
-            vec![],
             Utc::now(),
         );
 
@@ -278,7 +250,7 @@ mod tests {
         let dto = make_dto();
         let now = Utc::now();
 
-        let crawl = build_crawl_entity(crawl_id, team_id, &dto, now);
+        let crawl = build_crawl_entity_with_root(crawl_id, team_id, &dto, &dto.url, now);
 
         assert_eq!(crawl.id, crawl_id);
         assert_eq!(crawl.team_id, team_id);
@@ -293,7 +265,7 @@ mod tests {
         dto.name = None;
         let now = Utc::now();
 
-        let crawl = build_crawl_entity(crawl_id, team_id, &dto, now);
+        let crawl = build_crawl_entity_with_root(crawl_id, team_id, &dto, &dto.url, now);
         // The name should be "Untitled Crawl" when dto.name is None
         // (checking via the crawl entity)
         assert_eq!(crawl.id, crawl_id);

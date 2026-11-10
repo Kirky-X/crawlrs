@@ -43,7 +43,6 @@ scrape-task-encoding-fallback = 文本编码处理失败，使用原始内容: {
 # 爬取任务：软 404 与 sitemap 请求源（7 个 key）
 crawl-soft404-detected = 软 404 命中: url { $url }（任务 { $task_id }）匹配空壳指纹，结果不落库
 crawl-sitemap-derive-failed = sitemap_seed 爬取 { $crawl_id } 无法从 { $url } 派生 sitemap 地址；sitemap 请求源已跳过
-crawl-sitemap-blacklist-unparsable = 爬取 { $crawl_id }: domain_blacklist 载荷无法解析（{ $error }）；跳过 sitemap 喂入 — 限制约束无法校验
 crawl-sitemap-feeding = sitemap 请求源，爬取 { $crawl_id }: 正在喂入 { $sitemap_url }
 crawl-sitemap-feed-resumed = 爬取 { $crawl_id } 的 sitemap 喂入从 loc { $loc } 断点继续（指针 { $pointer }）
 crawl-sitemap-feed-done = 爬取 { $crawl_id } 的 sitemap 喂入完成: 入队={ $enqueued }，过滤={ $filtered }，去重={ $duplicates }，消费={ $consumed }，来源 { $sitemap_url }

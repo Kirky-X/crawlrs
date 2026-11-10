@@ -38,20 +38,23 @@ impl ScrapeWorker {
 
         // 1.5 团队域名黑名单执行期复核：API/worker 预检之外的最后一道闸。
         // 从 crawl 行读取（非任务 payload），读取/解析失败按“约束未知”fail-closed。
-        match self.crawl_domain_blacklist(crawl_id).await {
-            Ok(blacklist) => {
-                if let Some(reason) =
-                    crate::domain::services::team_service::domain_in_denylist(&task.url, &blacklist)
-                {
-                    self.finalize_crawl_rejection(&task, &reason).await?;
-                    return Ok(());
-                }
-            }
+        let domain_blacklist = match self
+            .crawl_domain_blacklist(crawl_id, Some(&task.payload))
+            .await
+        {
+            Ok(blacklist) => blacklist,
             Err(e) => {
                 let reason = format!("Cannot load team domain blacklist: {e}");
                 self.finalize_crawl_rejection(&task, &reason).await?;
                 return Ok(());
             }
+        };
+        if let Some(reason) = crate::domain::services::team_service::domain_in_normalized_denylist(
+            &task.url,
+            &domain_blacklist,
+        ) {
+            self.finalize_crawl_rejection(&task, &reason).await?;
+            return Ok(());
         }
 
         // 2. Robots.txt Check
@@ -66,7 +69,10 @@ impl ScrapeWorker {
         self.apply_crawl_delay(&task).await;
 
         // 2.5 SSRF 防护 (CWE-918)
-        if self.reject_internal_proxy_target(&task, &config).await? {
+        if self
+            .reject_internal_proxy_target(&task, &config, &domain_blacklist)
+            .await?
+        {
             return Ok(());
         }
 
@@ -116,27 +122,66 @@ impl ScrapeWorker {
         Ok(())
     }
 
-    /// 从 crawl 行读取团队域名黑名单（每任务一次 PK 查询）。
+    /// 从 crawl 行读取团队域名黑名单（worker 内按 crawl_id 缓存 300s）。
     ///
     /// 黑名单存 `crawl.config`，任务 payload 只保留 crawl_id/config，避免
     /// 整表复制进每个子任务（sitemap 可达数万任务）。读取/解析失败 →
     /// fail-closed（调用方拒绝任务），不得静默当作空黑名单。
-    async fn crawl_domain_blacklist(&self, crawl_id: crate::domain::id::Id) -> Result<Vec<String>> {
+    async fn crawl_domain_blacklist(
+        &self,
+        crawl_id: crate::domain::id::Id,
+        legacy_payload: Option<&serde_json::Value>,
+    ) -> Result<std::sync::Arc<Vec<String>>> {
+        const TTL: std::time::Duration = std::time::Duration::from_secs(300);
+        if let Some(entry) = self.crawl_blacklist_cache.get(&crawl_id) {
+            if entry.1.elapsed() < TTL {
+                return Ok(entry.0.clone());
+            }
+        }
         let crawl = self
             .crawl_repository
             .find_by_id(crawl_id)
             .await
             .map_err(|e| anyhow::anyhow!("load crawl {crawl_id} failed: {e}"))?;
         let Some(crawl) = crawl else {
-            // 老数据/测试桩可能没有 crawl 行：无策略快照可读，按空表处理。
-            log::warn!("crawl {crawl_id} not found when loading domain blacklist");
-            return Ok(Vec::new());
+            // 无 crawl 行 = 策略快照不可得：fail-closed，拒绝执行/落库。
+            return Err(anyhow::anyhow!(
+                "crawl {crawl_id} not found when loading domain blacklist"
+            ));
         };
-        match crawl.config().get("domain_blacklist") {
-            None => Ok(Vec::new()),
-            Some(value) => serde_json::from_value(value.clone())
-                .map_err(|e| anyhow::anyhow!("invalid domain_blacklist in crawl config: {e}")),
+        let config = crawl.config();
+        // 非对象配置无法承载策略快照：按“约束未知”fail-closed（null 视为空对象）。
+        if !config.is_object() && !config.is_null() {
+            return Err(anyhow::anyhow!(
+                "crawl {crawl_id} config is not a JSON object; domain blacklist snapshot invalid"
+            ));
         }
+        let raw: Vec<String> = match config.get("domain_blacklist") {
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|e| anyhow::anyhow!("invalid domain_blacklist in crawl config: {e}"))?,
+            // 滚动升级回退：HEAD 之前创建的 crawl 只有任务 payload 顶层副本。
+            // 迁移窗口结束后可删除该分支。
+            None => match legacy_payload.and_then(|payload| payload.get("domain_blacklist")) {
+                Some(value) => serde_json::from_value(value.clone()).map_err(|e| {
+                    anyhow::anyhow!("invalid legacy domain_blacklist in task payload: {e}")
+                })?,
+                None => Vec::new(),
+            },
+        };
+        // 写入侧已归一；兼容旧数据/手工改库，这里再归一一次并去重。
+        let entries = std::sync::Arc::new(
+            crate::domain::services::team_service::normalize_denylist_entries(&raw),
+        );
+        self.crawl_blacklist_cache
+            .insert(crawl_id, (entries.clone(), std::time::Instant::now()));
+        let inserts = self
+            .crawl_blacklist_cache_inserts
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if inserts.is_multiple_of(1024) {
+            self.crawl_blacklist_cache
+                .retain(|_, (_, checked)| checked.elapsed() < TTL);
+        }
+        Ok(entries)
     }
 
     /// 解析 Crawl 任务 Payload（自 [`ScrapeWorker::process_crawl_task`] 提取）；
@@ -207,8 +252,28 @@ impl ScrapeWorker {
         &self,
         task: &Task,
         config: &CrawlConfigDto,
+        domain_blacklist: &[String],
     ) -> Result<bool> {
         if let Some(ref proxy_url) = config.proxy {
+            // 代理自身也是租户可控出站目标：与种子/final_url 同口径过黑名单，
+            // 否则可借代理通道访问被禁域名。
+            if let Some(reason) =
+                crate::domain::services::team_service::domain_in_normalized_denylist(
+                    proxy_url,
+                    domain_blacklist,
+                )
+            {
+                warn!(
+                    "proxy target blocked by domain blacklist task_id={} team_id={} reason={}",
+                    task.id, task.team_id, reason
+                );
+                self.finalize_crawl_rejection(
+                    task,
+                    &format!("Blocked: proxy target is in the domain blacklist ({reason})"),
+                )
+                .await?;
+                return Ok(true);
+            }
             if is_internal_url(proxy_url) {
                 warn!(
                     "SSRF via proxy blocked in worker proxy={} task_id={} team_id={}",
@@ -242,30 +307,38 @@ impl ScrapeWorker {
             task.url, response.status_code
         );
 
+        // 每任务只读一次 crawl.config（worker 缓存命中时零查询），
+        // 供重定向复核与链接过滤复用。
+        let domain_blacklist = match self
+            .crawl_domain_blacklist(crawl_id, Some(&task.payload))
+            .await
+        {
+            Ok(list) => list,
+            Err(e) => {
+                let reason = format!("Cannot load team domain blacklist: {e}");
+                self.finalize_crawl_rejection(task, &reason).await?;
+                return Ok(());
+            }
+        };
+
         // 重定向后最终 URL 也必须过团队黑名单：payload 黑名单只过滤
         // “发现的链接”，不覆盖引擎跟随的 redirect。
         // 黑名单非空且 final_url 缺失时无法确认实际落点 → fail-closed（拒绝落库，不重试）；
         // 黑名单为空时无策略可执行，保持既有行为（部分引擎不上报 final_url）。
-        match self.crawl_domain_blacklist(crawl_id).await {
-            Ok(blacklist) if !blacklist.is_empty() => {
-                let denial = match response.final_url.as_deref() {
-                    Some(final_url) => crate::domain::services::team_service::domain_in_denylist(
-                        final_url, &blacklist,
+        if !domain_blacklist.is_empty() {
+            let denial = match response.final_url.as_deref() {
+                Some(final_url) => {
+                    crate::domain::services::team_service::domain_in_normalized_denylist(
+                        final_url,
+                        &domain_blacklist,
                     )
-                    .map(|reason| format!("Redirect blocked by domain blacklist: {reason}")),
-                    None => Some(
-                        "Engine did not report final URL; cannot enforce domain blacklist"
-                            .to_string(),
-                    ),
-                };
-                if let Some(reason) = denial {
-                    self.finalize_crawl_rejection(task, &reason).await?;
-                    return Ok(());
+                    .map(|reason| format!("Redirect blocked by domain blacklist: {reason}"))
                 }
-            }
-            Ok(_) => {}
-            Err(e) => {
-                let reason = format!("Cannot load team domain blacklist: {e}");
+                None => Some(
+                    "Engine did not report final URL; cannot enforce domain blacklist".to_string(),
+                ),
+            };
+            if let Some(reason) = denial {
                 self.finalize_crawl_rejection(task, &reason).await?;
                 return Ok(());
             }
@@ -307,9 +380,45 @@ impl ScrapeWorker {
             return Ok(());
         }
 
-        // 先提取并入队子链接，再评估自适应停止条件。
-        self.queue_crawl_children(task, &processed_response, crawl_id, depth, config)
-            .await?;
+        // 先提取并入队子链接，再计入本任务完成：顺序不能反。
+        // 若先 increment_completed，页面完成到子链接入队之间会短暂满足
+        // completed+failed==total，周期对账/并发终结可把仍在派生的 crawl
+        // 提前落 Completed；随后子任务 total 增量又写入终态行。
+        let children_result = self
+            .queue_crawl_children(
+                task,
+                &processed_response,
+                crawl_id,
+                depth,
+                config,
+                &domain_blacklist,
+            )
+            .await;
+        // sitemap 源策略违规由 feed 显式把 crawl 置 Failed：本页不得
+        // 再计入 completed（终态行不接受完成计数），直接结束成功路径。
+        if matches!(children_result, Ok(true)) {
+            warn!(
+                "crawl {} aborted: sitemap source violates domain policy",
+                crawl_id
+            );
+            // 页面已抓取并落库：feature 用量照常结算，再结束成功路径。
+            self.deduct_feature_credits(
+                task.team_id,
+                task.id,
+                processed_response.screenshot.is_some(),
+                request.options.proxy.is_some(),
+            )
+            .await;
+            return Ok(());
+        }
+        // 入队失败也要计入完成（结果已落库、任务已 Completed），否则
+        // 计数永久卡死；随后按需补一次终态判定。
+        self.record_crawl_completed(crawl_id).await;
+        if let Err(e) = children_result {
+            // 入队失败时补一次终态判定，避免等小时级对账。
+            update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
+            return Err(e);
+        }
 
         // 自适应停止条件检查（评估策略详见 [`apply_adaptive_stop`]）
         self.evaluate_adaptive_stop(crawl_id, config).await;
@@ -358,7 +467,8 @@ impl ScrapeWorker {
         crawl_id: crate::domain::id::Id,
         depth: u32,
         config: &CrawlConfigDto,
-    ) -> Result<()> {
+        domain_blacklist: &[String],
+    ) -> Result<bool> {
         // 先提取并入队子链接，再评估自适应停止条件。
         //
         // 顺序是正确性约束：`NoPendingLinks` 的语义是"已无待处理链接"。
@@ -376,6 +486,7 @@ impl ScrapeWorker {
                 crawl_id,
                 depth,
                 config,
+                domain_blacklist,
                 self.repository.as_ref(),
                 self.crawl_repository.as_ref(),
                 &self.deduplicator,
@@ -389,11 +500,31 @@ impl ScrapeWorker {
         // 失败显性化但不传播：喂入失败不影响种子任务已完成的事实，
         // crawl 继续以页面链接发现运行。
         #[cfg(feature = "sitemap")]
-        if depth == 0 && task.payload.get("sitemap_seed").and_then(|v| v.as_bool()) == Some(true) {
-            self.feed_sitemap_source(task, crawl_id, config).await;
+        if depth == 0
+            && task.payload.get("sitemap_seed").and_then(|v| v.as_bool()) == Some(true)
+            && self.feed_sitemap_source(task, crawl_id, config).await
+        {
+            return Ok(true);
         }
 
-        Ok(())
+        Ok(false)
+    }
+
+    /// 策略违规时显式终结 crawl：不接受“静默空结果 + Completed”。
+    async fn fail_crawl_for_policy(&self, crawl_id: crate::domain::id::Id, reason: &str) {
+        error!("crawl {} failed by policy: {}", crawl_id, reason);
+        match self
+            .crawl_repository
+            .finalize_failed_after_enqueue(crawl_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => warn!(
+                "crawl {} already terminal; policy failure status not written",
+                crawl_id
+            ),
+            Err(e) => error!("failed to mark crawl {} as Failed: {}", crawl_id, e),
+        }
     }
 
     /// 自适应停止条件检查（自 [`Self::handle_crawl_success`] 提取）。
@@ -402,16 +533,18 @@ impl ScrapeWorker {
         crawl_id: crate::domain::id::Id,
         config: &CrawlConfigDto,
     ) {
-        if let Ok(Some(crawl_state)) = self.crawl_repository.find_by_id(crawl_id).await {
-            let pages_crawled = crawl_state.completed_tasks() as usize;
-            let total = crawl_state.total_tasks() as usize;
+        // 只读状态+计数投影：每页成功都会走到这里，完整行读取会把
+        // crawl.config（提取规则等大字段）一并拉回。
+        if let Ok(Some(crawl_state)) = self.crawl_repository.find_progress_by_id(crawl_id).await {
+            let pages_crawled = crawl_state.completed_tasks as usize;
+            let total = crawl_state.total_tasks as usize;
 
             // 页数上限来自 crawl config（缺省 1000）
             let max_pages = config.max_pages.unwrap_or(1000) as usize;
             self.apply_adaptive_stop(
                 crawl_id,
                 pages_crawled,
-                crawl_state.failed_tasks() as usize,
+                crawl_state.failed_tasks as usize,
                 total,
                 max_pages,
             )
@@ -432,7 +565,7 @@ impl ScrapeWorker {
         task: &Task,
         processed_response: &ScrapeResponse,
         extracted_data: Option<serde_json::Value>,
-        crawl_id: crate::domain::id::Id,
+        _crawl_id: crate::domain::id::Id,
         soft404_hit: bool,
     ) -> Result<bool> {
         let marked = self
@@ -483,6 +616,14 @@ impl ScrapeWorker {
             );
         }
 
+        Ok(true)
+    }
+
+    /// 计入一次 crawl 任务完成。
+    ///
+    /// 调用方必须保证该任务的子链接**已经**入队：提前计数会让
+    /// `completed+failed==total` 在派生窗口内短暂成立，触发提前终态。
+    async fn record_crawl_completed(&self, crawl_id: crate::domain::id::Id) {
         if let Err(e) = self
             .crawl_repository
             .increment_completed_tasks(crawl_id)
@@ -492,9 +633,9 @@ impl ScrapeWorker {
                 "Failed to increment completed tasks for crawl {}: {}",
                 crawl_id, e
             );
+            // 计数失败时不能等下一个任务：显式补一次终态判定，避免永久 queued。
+            update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
         }
-
-        Ok(true)
     }
 
     /// 自适应停止条件检查与完成状态更新（自 [`ScrapeWorker::handle_crawl_success`]
@@ -626,18 +767,37 @@ impl ScrapeWorker {
         task: &Task,
         crawl_id: crate::domain::id::Id,
         config: &CrawlConfigDto,
-    ) {
+    ) -> bool {
         use std::sync::Arc;
 
         use crate::workers::crawl::sitemap_source::{feed_sitemap_as_tasks, SeedTaskContext};
 
         let Some(sitemap_url) = resolve_sitemap_source_url(task, crawl_id) else {
-            return;
+            return false;
         };
 
-        let Some(domain_blacklist) = resolve_sitemap_blacklist(task, crawl_id) else {
-            return;
+        // 与执行期同源：从 crawl.config 读取（不再读任务 payload）。
+        let domain_blacklist = match self
+            .crawl_domain_blacklist(crawl_id, Some(&task.payload))
+            .await
+        {
+            Ok(list) => list,
+            Err(e) => {
+                let reason = format!("Cannot load team domain blacklist for sitemap feed: {e}");
+                self.fail_crawl_for_policy(crawl_id, &reason).await;
+                return true;
+            }
         };
+        // sitemap 源自身也是服务端发起的请求：必须与种子/final_url 同口径
+        // 过黑名单，否则租户可让服务端 GET 被禁域名（仅条目过滤不够）。
+        if let Some(reason) = crate::domain::services::team_service::domain_in_normalized_denylist(
+            &sitemap_url,
+            &domain_blacklist,
+        ) {
+            let message = format!("Sitemap source blocked by domain blacklist: {reason}");
+            self.fail_crawl_for_policy(crawl_id, &message).await;
+            return true;
+        }
 
         let fetcher = Arc::new(
             crate::application::use_cases::map_use_case::EngineSitemapFetcher::new(
@@ -649,6 +809,7 @@ impl ScrapeWorker {
             channel_capacity: self.settings.sitemap.channel_capacity,
             max_urls: self.settings.sitemap.max_urls,
             max_concurrent_sub_sitemaps: self.settings.sitemap.max_concurrent_sub_sitemaps,
+            domain_blacklist: domain_blacklist.as_ref().clone(),
         };
         let seed = SeedTaskContext {
             team_id: task.team_id,
@@ -687,7 +848,7 @@ impl ScrapeWorker {
             options,
             config.include_patterns.clone(),
             config.exclude_patterns.clone(),
-            domain_blacklist,
+            domain_blacklist.as_ref().clone(),
             seed,
             &self.deduplicator,
             self.repository.as_ref(),
@@ -700,6 +861,7 @@ impl ScrapeWorker {
             Ok(stats) => log_sitemap_feed_success(crawl_id, &stats, &sitemap_url),
             Err(e) => log_sitemap_feed_failure(crawl_id, &sitemap_url, &e),
         }
+        false
     }
 
     /// 处理 Crawl 任务失败响应
@@ -771,33 +933,6 @@ fn resolve_sitemap_source_url(task: &Task, crawl_id: crate::domain::id::Id) -> O
                             fluent_bundle::FluentValue::from(crawl_id.to_string()),
                         ),
                         ("url", fluent_bundle::FluentValue::from(task.url.as_str())),
-                    ],
-                )
-            );
-            None
-        }
-    }
-}
-
-/// 解析 payload 中的 `domain_blacklist`；解析失败打 error 并返回 `None`（跳过喂入）。
-///
-/// 键缺失 = 合法空表；键存在但解析失败 = 约束未知，禁止静默降级为
-/// 空黑名单（地理限制域名会变为可抓取）——error 显性化并跳过本次喂入。
-#[cfg(feature = "sitemap")]
-fn resolve_sitemap_blacklist(task: &Task, crawl_id: crate::domain::id::Id) -> Option<Vec<String>> {
-    match resolve_domain_blacklist(&task.payload) {
-        Ok(list) => Some(list),
-        Err(e) => {
-            error!(
-                "{}",
-                crate::i18n::tr_log_args(
-                    "crawl-sitemap-blacklist-unparsable",
-                    &[
-                        (
-                            "crawl_id",
-                            fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                        ),
-                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
                     ],
                 )
             );
@@ -888,51 +1023,4 @@ fn log_sitemap_feed_failure(
             ],
         )
     );
-}
-
-/// 解析 payload 中的 `domain_blacklist`（sitemap 喂入的域名排除约束）
-///
-/// 键缺失 = 合法空表；键存在但类型/内容损坏 = 约束未知 → `Err`，调用方必须
-/// 显性上报并跳过喂入——禁止 `.ok.unwrap_or_default` 式静默降级为空
-/// 黑名单（地理限制域名会随之变为可抓取，限制性控制失效且无证据）。
-#[cfg(feature = "sitemap")] // 仅供 sitemap 种子 payload 解析；执行期走 crawl.config
-fn resolve_domain_blacklist(payload: &serde_json::Value) -> Result<Vec<String>, serde_json::Error> {
-    match payload.get("domain_blacklist") {
-        None => Ok(Vec::new()),
-        Some(v) => serde_json::from_value(v.clone()),
-    }
-}
-
-#[cfg(all(test, feature = "sitemap"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn blacklist_missing_key_is_legal_empty() {
-        let payload = serde_json::json!({"sitemap_seed": true});
-        assert!(
-            resolve_domain_blacklist(&payload).unwrap().is_empty(),
-            "键缺失 = 合法空表，不得报错"
-        );
-    }
-
-    #[test]
-    fn blacklist_valid_list_parses() {
-        let payload =
-            serde_json::json!({"domain_blacklist": ["cn.example.com", "geo.example.net"]});
-        assert_eq!(
-            resolve_domain_blacklist(&payload).unwrap(),
-            vec!["cn.example.com".to_string(), "geo.example.net".to_string()]
-        );
-    }
-
-    #[test]
-    fn blacklist_broken_type_is_error_not_silent_empty() {
-        // 字符串/数字数组而非字符串数组：必须 Err（驱动调用方 error 上报 +
-        // 跳过喂入），禁止回退 .ok.unwrap_or_default 静默降级
-        let payload = serde_json::json!({"domain_blacklist": "cn.example.com"});
-        assert!(resolve_domain_blacklist(&payload).is_err());
-        let payload = serde_json::json!({"domain_blacklist": [1, 2, 3]});
-        assert!(resolve_domain_blacklist(&payload).is_err());
-    }
 }

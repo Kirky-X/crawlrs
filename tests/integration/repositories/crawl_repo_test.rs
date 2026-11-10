@@ -312,6 +312,293 @@ async fn test_update_status_guarded_transitions_once() {
     cleanup_crawls(&app, team_id).await;
 }
 
+/// 终态对账：仅当 total>0 且 completed+failed==total 时落终态；
+/// completed==0 落 Failed，否则 Completed；重复调用不再改写。
+#[tokio::test]
+async fn test_finalize_if_all_terminal_matches_counts() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+    let prefix = crawlrs::domain::id::Id::generate().to_string();
+
+    // completed + failed == total 且 completed > 0 → Completed
+    let completed_id = crawlrs::domain::id::Id::generate();
+    repo.create(&Crawl::with_all_fields(
+        completed_id,
+        team_id,
+        format!("Finalize Completed {}", prefix),
+        "https://example.com".to_string(),
+        "https://example.com".to_string(),
+        CrawlStatus::Processing,
+        serde_json::json!({}),
+        2,
+        2,
+        0,
+        chrono::Utc::now(),
+        chrono::Utc::now(),
+        None,
+    ))
+    .await
+    .expect("create completed crawl");
+
+    assert!(
+        repo.finalize_if_all_terminal(completed_id)
+            .await
+            .expect("finalize completed"),
+        "eligible crawl must finalize"
+    );
+    let completed = repo
+        .find_by_id(completed_id)
+        .await
+        .expect("find completed")
+        .expect("completed exists");
+    assert_eq!(completed.status, CrawlStatus::Completed);
+    assert!(completed.completed_at.is_some());
+
+    assert!(
+        !repo
+            .finalize_if_all_terminal(completed_id)
+            .await
+            .expect("second finalize"),
+        "terminal crawl must not finalize twice"
+    );
+
+    // completed == 0 且 failed == total → Failed
+    let failed_id = crawlrs::domain::id::Id::generate();
+    repo.create(&Crawl::with_all_fields(
+        failed_id,
+        team_id,
+        format!("Finalize Failed {}", prefix),
+        "https://example.com".to_string(),
+        "https://example.com".to_string(),
+        CrawlStatus::Processing,
+        serde_json::json!({}),
+        2,
+        0,
+        2,
+        chrono::Utc::now(),
+        chrono::Utc::now(),
+        None,
+    ))
+    .await
+    .expect("create failed crawl");
+    assert!(
+        repo.finalize_if_all_terminal(failed_id)
+            .await
+            .expect("finalize failed"),
+        "all-failed crawl must finalize"
+    );
+    let failed = repo
+        .find_by_id(failed_id)
+        .await
+        .expect("find failed")
+        .expect("failed exists");
+    assert_eq!(failed.status, CrawlStatus::Failed);
+    assert!(failed.completed_at.is_some());
+
+    // 计数未齐 → 不落终态
+    let pending_id = crawlrs::domain::id::Id::generate();
+    repo.create(&Crawl::with_all_fields(
+        pending_id,
+        team_id,
+        format!("Finalize Pending {}", prefix),
+        "https://example.com".to_string(),
+        "https://example.com".to_string(),
+        CrawlStatus::Processing,
+        serde_json::json!({}),
+        3,
+        1,
+        1,
+        chrono::Utc::now(),
+        chrono::Utc::now(),
+        None,
+    ))
+    .await
+    .expect("create pending crawl");
+    assert!(
+        !repo
+            .finalize_if_all_terminal(pending_id)
+            .await
+            .expect("finalize pending"),
+        "incomplete crawl must stay active"
+    );
+    let pending = repo
+        .find_by_id(pending_id)
+        .await
+        .expect("find pending")
+        .expect("pending exists");
+    assert_eq!(pending.status, CrawlStatus::Processing);
+    assert!(pending.completed_at.is_none());
+
+    // 不存在的 id → false
+    assert!(
+        !repo
+            .finalize_if_all_terminal(crawlrs::domain::id::Id::generate())
+            .await
+            .expect("finalize unknown"),
+        "unknown crawl must not finalize"
+    );
+
+    cleanup_crawls(&app, team_id).await;
+}
+
+/// 入队失败补偿：单条语句置 Failed 且 failed_tasks+1；重复调用不再累加。
+#[tokio::test]
+async fn test_finalize_failed_after_enqueue_marks_failed_once() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+    let prefix = crawlrs::domain::id::Id::generate().to_string();
+    let crawl_id = crawlrs::domain::id::Id::generate();
+    repo.create(&Crawl::with_all_fields(
+        crawl_id,
+        team_id,
+        format!("Enqueue Failure {}", prefix),
+        "https://example.com".to_string(),
+        "https://example.com".to_string(),
+        CrawlStatus::Queued,
+        serde_json::json!({}),
+        1,
+        0,
+        0,
+        chrono::Utc::now(),
+        chrono::Utc::now(),
+        None,
+    ))
+    .await
+    .expect("create crawl");
+
+    assert!(
+        repo.finalize_failed_after_enqueue(crawl_id)
+            .await
+            .expect("finalize enqueue failure"),
+        "queued crawl must be marked failed"
+    );
+    let failed = repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("find crawl")
+        .expect("crawl exists");
+    assert_eq!(failed.status, CrawlStatus::Failed);
+    assert_eq!(failed.failed_tasks(), 1, "failed_tasks must be incremented");
+    assert!(failed.completed_at.is_some());
+
+    assert!(
+        !repo
+            .finalize_failed_after_enqueue(crawl_id)
+            .await
+            .expect("second compensation"),
+        "terminal crawl must reject repeated compensation"
+    );
+    let still = repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("find crawl again")
+        .expect("crawl exists");
+    assert_eq!(still.failed_tasks(), 1, "no double increment");
+    assert_eq!(still.status, CrawlStatus::Failed);
+
+    assert!(
+        !repo
+            .finalize_failed_after_enqueue(crawlrs::domain::id::Id::generate())
+            .await
+            .expect("unknown id compensation"),
+        "unknown crawl must not be finalized"
+    );
+
+    // 多条任务只入队一部分：未创建的任务全部计入 failed，
+    // 保持 completed+failed==total 的终态不变量。
+    let multi_id = crawlrs::domain::id::Id::generate();
+    repo.create(&Crawl::with_all_fields(
+        multi_id,
+        team_id,
+        format!("Enqueue Failure Multi {}", prefix),
+        "https://example.com".to_string(),
+        "https://example.com".to_string(),
+        CrawlStatus::Queued,
+        serde_json::json!({}),
+        5,
+        0,
+        0,
+        chrono::Utc::now(),
+        chrono::Utc::now(),
+        None,
+    ))
+    .await
+    .expect("create multi crawl");
+    assert!(
+        repo.finalize_failed_after_enqueue(multi_id)
+            .await
+            .expect("finalize multi enqueue failure"),
+        "multi-task crawl must be marked failed"
+    );
+    let multi = repo
+        .find_by_id(multi_id)
+        .await
+        .expect("find multi crawl")
+        .expect("multi crawl exists");
+    assert_eq!(multi.status, CrawlStatus::Failed);
+    assert_eq!(
+        multi.failed_tasks(),
+        5,
+        "all uncreated tasks must be counted failed"
+    );
+    assert_eq!(
+        multi.completed_tasks() + multi.failed_tasks(),
+        multi.total_tasks(),
+        "terminal counts must reconcile with total"
+    );
+
+    cleanup_crawls(&app, team_id).await;
+}
+
+/// 进度投影：只返回状态与计数（不解析 config），未知 id 返回 None。
+#[tokio::test]
+async fn test_find_progress_by_id_returns_counts() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+    let prefix = crawlrs::domain::id::Id::generate().to_string();
+    let crawl_id = crawlrs::domain::id::Id::generate();
+    repo.create(&Crawl::with_all_fields(
+        crawl_id,
+        team_id,
+        format!("Progress {}", prefix),
+        "https://example.com".to_string(),
+        "https://example.com".to_string(),
+        CrawlStatus::Processing,
+        serde_json::json!({"max_depth": 2, "headers": {"User-Agent": "x"}}),
+        4,
+        3,
+        1,
+        chrono::Utc::now(),
+        chrono::Utc::now(),
+        None,
+    ))
+    .await
+    .expect("create crawl");
+
+    let progress = repo
+        .find_progress_by_id(crawl_id)
+        .await
+        .expect("progress query")
+        .expect("progress exists");
+    assert_eq!(progress.status, CrawlStatus::Processing);
+    assert_eq!(progress.total_tasks, 4);
+    assert_eq!(progress.completed_tasks, 3);
+    assert_eq!(progress.failed_tasks, 1);
+
+    assert!(
+        repo.find_progress_by_id(crawlrs::domain::id::Id::generate())
+            .await
+            .expect("unknown progress query")
+            .is_none(),
+        "unknown crawl must return None"
+    );
+
+    cleanup_crawls(&app, team_id).await;
+}
+
 /// 守护写：不存在的 crawl 返回 false（不是错误）。
 #[tokio::test]
 async fn test_update_status_guarded_unknown_id_returns_false() {

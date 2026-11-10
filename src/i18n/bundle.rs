@@ -449,7 +449,6 @@ impl I18nBundle {
             // Crawl task: soft 404 & sitemap request source (7)
             "crawl-soft404-detected",
             "crawl-sitemap-derive-failed",
-            "crawl-sitemap-blacklist-unparsable",
             "crawl-sitemap-feeding",
             "crawl-sitemap-feed-resumed",
             "crawl-sitemap-feed-done",

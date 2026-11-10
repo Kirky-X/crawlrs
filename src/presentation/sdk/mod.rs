@@ -410,9 +410,12 @@ async fn sdk_create_crawl(
             Ok(RateLimitResult::RetryAfter {
                 retry_after_seconds,
             }) => {
-                return Err(ApiError::RateLimitExceeded {
-                    limit: 0,
-                    window_seconds: retry_after_seconds.min(u32::MAX as u64) as u32,
+                // 无 cache-capacity 数值可填，按“服务暂不可用 + Retry-After”语义返回，
+                // 避免把秒数伪装成 window_seconds。
+                return Err(ApiError::ServiceUnavailable {
+                    service: "rate_limit".to_string(),
+                    retry_after: Some(retry_after_seconds),
+                    source: None,
                 });
             }
             Err(e) => {

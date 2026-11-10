@@ -45,7 +45,6 @@ scrape-task-encoding-fallback = Text encoding processing failed, using original 
 # Crawl task: soft 404 & sitemap request source (7 keys)
 crawl-soft404-detected = soft 404 detected for url { $url } (task { $task_id }): matching shell fingerprint, result not persisted
 crawl-sitemap-derive-failed = sitemap_seed crawl { $crawl_id } cannot derive sitemap url from { $url }; sitemap request source skipped
-crawl-sitemap-blacklist-unparsable = crawl { $crawl_id }: domain_blacklist payload unparsable ({ $error }); sitemap feed skipped — restriction cannot be verified
 crawl-sitemap-feeding = sitemap request source for crawl { $crawl_id }: feeding { $sitemap_url }
 crawl-sitemap-feed-resumed = sitemap feed for crawl { $crawl_id } resumed from loc { $loc } (pointer { $pointer })
 crawl-sitemap-feed-done = sitemap feed done for crawl { $crawl_id }: enqueued={ $enqueued }, filtered={ $filtered }, duplicates={ $duplicates }, consumed={ $consumed } from { $sitemap_url }

@@ -568,6 +568,176 @@ async fn test_expire_tasks_reconciles_crawl_counters_and_status() {
     );
 }
 
+/// 崩溃恢复对账：任务已全部 Completed 但 crawl 计数未自增（worker 硬终止
+/// 窗口）时，expire_tasks 用 tasks 实际计数重算并收口终态。
+#[tokio::test]
+async fn test_expire_tasks_recovers_stuck_crawl_progress_from_tasks() {
+    use crate::domain::models::crawl_model::{Crawl, CrawlStatus};
+    use crate::domain::repositories::crawl_repository::CrawlRepository;
+    use crate::infrastructure::database::repositories::crawl_repo_impl::CrawlRepositoryImpl;
+
+    if crate::common::test_helpers::skip_if_no_test_db() {
+        return;
+    }
+    let _guard = acquire_next_test_mutex().lock().await;
+    let pool = create_test_db_pool();
+    let crawl_repo = CrawlRepositoryImpl::new(pool.clone());
+    let crawl_id = crate::domain::id::Id::generate();
+    let now = Utc::now();
+    let stale = now - Duration::hours(1);
+    // 计数与任务实际状态不一致：2 个任务已完成，crawl 仍记 0/0。
+    let crawl = Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "stuck-progress".to_string(),
+        "https://example.com/".to_string(),
+        "https://example.com/".to_string(),
+        CrawlStatus::Queued,
+        json!({}),
+        2,
+        0,
+        0,
+        stale,
+        stale,
+        None,
+    );
+    crawl_repo
+        .create(&crawl)
+        .await
+        .expect("crawl create failed");
+
+    let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
+    for _ in 0..2 {
+        let mut task = make_test_task_with_unique_url();
+        task.crawl_id = Some(crawl_id);
+        task.status = TaskStatus::Completed;
+        // 任务行也需静默超过 cutoff：刚变更的任务会阻止恢复，防止误终结活跃 crawl。
+        task.updated_at = stale;
+        repo.create(&task).await.expect("task create failed");
+    }
+
+    repo.expire_tasks().await.expect("expire_tasks failed");
+
+    let crawl = crawl_repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("find crawl failed")
+        .expect("crawl must exist");
+    assert_eq!(crawl.status, CrawlStatus::Completed);
+    assert_eq!(crawl.total_tasks(), 2);
+    assert_eq!(crawl.completed_tasks(), 2);
+    assert_eq!(crawl.failed_tasks(), 0);
+    assert!(crawl.completed_at.is_some());
+}
+
+/// 恢复对账的反例：最近有任务变更（cutoff 内）时不收口，避免误终结活跃 crawl。
+#[tokio::test]
+async fn test_expire_tasks_recovers_skips_recent_task_activity() {
+    use crate::domain::models::crawl_model::{Crawl, CrawlStatus};
+    use crate::domain::repositories::crawl_repository::CrawlRepository;
+    use crate::infrastructure::database::repositories::crawl_repo_impl::CrawlRepositoryImpl;
+
+    if crate::common::test_helpers::skip_if_no_test_db() {
+        return;
+    }
+    let _guard = acquire_next_test_mutex().lock().await;
+    let pool = create_test_db_pool();
+    let crawl_repo = CrawlRepositoryImpl::new(pool.clone());
+    let crawl_id = crate::domain::id::Id::generate();
+    let now = Utc::now();
+    let stale = now - Duration::hours(1);
+    let crawl = Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "recent-activity".to_string(),
+        "https://example.com/".to_string(),
+        "https://example.com/".to_string(),
+        CrawlStatus::Queued,
+        json!({}),
+        2,
+        0,
+        0,
+        stale,
+        stale,
+        None,
+    );
+    crawl_repo
+        .create(&crawl)
+        .await
+        .expect("crawl create failed");
+
+    let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
+    let mut task = make_test_task_with_unique_url();
+    task.crawl_id = Some(crawl_id);
+    task.status = TaskStatus::Completed;
+    // updated_at 为默认 now：属于 cutoff 内的新活动，必须跳过恢复。
+    repo.create(&task).await.expect("task create failed");
+
+    repo.expire_tasks().await.expect("expire_tasks failed");
+
+    let crawl = crawl_repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("find crawl failed")
+        .expect("crawl must exist");
+    assert_eq!(
+        crawl.status,
+        CrawlStatus::Queued,
+        "recent task activity must prevent recovery"
+    );
+    assert_eq!(crawl.completed_tasks(), 0);
+}
+
+/// 恢复对账：声明 total 但零任务行（首任务未插入即崩溃）按全部失败收口。
+#[tokio::test]
+async fn test_expire_tasks_recovers_crawl_without_task_rows() {
+    use crate::domain::models::crawl_model::{Crawl, CrawlStatus};
+    use crate::domain::repositories::crawl_repository::CrawlRepository;
+    use crate::infrastructure::database::repositories::crawl_repo_impl::CrawlRepositoryImpl;
+
+    if crate::common::test_helpers::skip_if_no_test_db() {
+        return;
+    }
+    let _guard = acquire_next_test_mutex().lock().await;
+    let pool = create_test_db_pool();
+    let crawl_repo = CrawlRepositoryImpl::new(pool.clone());
+    let crawl_id = crate::domain::id::Id::generate();
+    let now = Utc::now();
+    let stale = now - Duration::hours(1);
+    let crawl = Crawl::with_all_fields(
+        crawl_id,
+        crate::domain::id::Id::generate(),
+        "no-task-rows".to_string(),
+        "https://example.com/".to_string(),
+        "https://example.com/".to_string(),
+        CrawlStatus::Queued,
+        json!({}),
+        3,
+        0,
+        0,
+        stale,
+        stale,
+        None,
+    );
+    crawl_repo
+        .create(&crawl)
+        .await
+        .expect("crawl create failed");
+
+    let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
+    repo.expire_tasks().await.expect("expire_tasks failed");
+
+    let crawl = crawl_repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("find crawl failed")
+        .expect("crawl must exist");
+    assert_eq!(crawl.status, CrawlStatus::Failed);
+    assert_eq!(crawl.total_tasks(), 3);
+    assert_eq!(crawl.failed_tasks(), 3);
+    assert_eq!(crawl.completed_tasks(), 0);
+}
+
 #[tokio::test]
 async fn test_find_by_crawl_id_with_real_db_returns_empty_for_unknown() {
     if crate::common::test_helpers::skip_if_no_test_db() {

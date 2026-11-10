@@ -1101,6 +1101,35 @@ mod tests {
 
     #[async_trait]
     impl CrawlRepository for MockCrawlRepository {
+        async fn update_status_guarded(
+            &self,
+            _id: crate::domain::id::Id,
+            status: CrawlStatus,
+        ) -> Result<bool, RepositoryError> {
+            if self.update_should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!("update failed")));
+            }
+            let mut guard = self.stored_crawl.lock().unwrap();
+            let Some(crawl) = guard.as_mut() else {
+                return Ok(false);
+            };
+            if matches!(
+                crawl.status,
+                CrawlStatus::Completed | CrawlStatus::Failed | CrawlStatus::Cancelled
+            ) {
+                return Ok(false);
+            }
+            crawl.status = status;
+            crawl.updated_at = chrono::Utc::now();
+            if matches!(
+                status,
+                CrawlStatus::Completed | CrawlStatus::Failed | CrawlStatus::Cancelled
+            ) {
+                crawl.completed_at = Some(chrono::Utc::now());
+            }
+            Ok(true)
+        }
+
         async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             if self.create_should_fail {
                 return Err(RepositoryError::Database(anyhow::anyhow!("create failed")));
