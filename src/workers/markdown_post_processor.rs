@@ -66,7 +66,7 @@ pub enum MarkdownPostProcessorError {
 /// ```no_run
 /// # use crawlrs::application::dto::scrape_request::ScrapeRequestDto;
 /// # use crawlrs::workers::markdown_post_processor::MarkdownPostProcessor;
-/// # use crawlrs::domain::services::markdown::MoliHtml2MdConverter;
+/// # use crawlrs::domain::services::markdown_service::HtmdMarkdownService;
 /// # use crawlrs::domain::services::content_extractor::ContentExtractionFacade;
 /// # use serde_json::json;
 /// # use std::sync::Arc;
@@ -278,7 +278,7 @@ impl MarkdownPostProcessor {
         match content_source {
             MainContentSource::PlainText(text) => Ok(escape_leading_markdown_chars(&text)),
             MainContentSource::StructuredHtml(html) => {
-                // 复查：rs-trafilatura 0.2.2 的 content_html 不做相对→绝对
+                // 注意：rs-trafilatura 0.2.2 的 content_html 不做相对→绝对
                 // URL 转换（上游 convert_tags 为死代码），先以页面 URL 为基重写
                 let absolute = absoluteize_links(&html, &req.url);
                 self.markdown_converter.convert(&absolute)
@@ -288,7 +288,7 @@ impl MarkdownPostProcessor {
     }
 }
 
-/// 复查：把 HTML 中相对的 href/src 重写为基于 `base_url` 的绝对 URL
+/// 把 HTML 中相对的 href/src 重写为基于 `base_url` 的绝对 URL
 ///
 /// rs-trafilatura 0.2.2 的 `content_html` 不做相对→绝对转换（上游
 /// `convert_tags` 为死代码），相对链接直接进 Markdown 会产出下游无法
@@ -327,7 +327,7 @@ fn absoluteize_links(html: &str, base_url: &str) -> String {
         .into_owned()
 }
 
-/// 复查 L2：纯文本降级分支的最小 Markdown 转义——仅转义行首会误渲染为
+/// 纯文本降级分支的最小 Markdown 转义——仅转义行首会误渲染为
 /// 结构的字符（ATX 标题 #、引用 >、无序列表 - + *、有序列表 "1."）
 fn escape_leading_markdown_chars(text: &str) -> String {
     fn needs_escape(trimmed: &str) -> bool {

@@ -14,7 +14,7 @@
 //! cargo run --example extraction_rules
 //!
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use log::info;
 use std::time::Duration;
 
@@ -57,7 +57,7 @@ async fn main() {
     info!("🚀 开始提取规则示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
     let url = "https://example.com";
 
     info!("🎯 目标: {}", url);

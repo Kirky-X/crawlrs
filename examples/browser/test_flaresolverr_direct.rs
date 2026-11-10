@@ -10,7 +10,7 @@
 
 #[cfg(feature = "engine-flaresolverr")]
 use crawlrs::engines::client::flare_solverr::FlareSolverrEngine;
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use std::time::Duration;
 
 #[tokio::main]
@@ -69,7 +69,7 @@ async fn main() {
         println!();
         println!("   Using basic EngineClient instead...");
 
-        let client = EngineClient::new();
+        let client = crawlrs_examples::default_engine_client();
         let request = ScrapeRequest::new("https://example.com").timeout(Duration::from_secs(30));
 
         match client.scrape(&request).await {

@@ -25,7 +25,7 @@ use crate::workers::scrape_executor::{process_text_encoding, save_result};
 
 impl ScrapeWorker {
     pub(super) async fn process_crawl_task(&self, mut task: Task) -> Result<()> {
-        // 终态闸：crawl 子任务的实际执行路径（审查 HIGH：此前只挂在
+        // 终态闸：crawl 子任务的实际执行路径（此前只挂在
         // process_scrape_task，生产 crawl 任务永不经过）。
         if self.crawl_terminal_short_circuit(&task).await? {
             return Ok(());
@@ -693,7 +693,7 @@ impl ScrapeWorker {
                     );
                 }
             }
-            // D2 修复：停止条件命中后取消该 crawl 全部未终态子任务——
+            // 停止条件命中后取消该 crawl 全部未终态子任务——
             // 此前仅改 crawl 状态行，queued 子任务继续消费（E2E SC-10 实测
             // max_pages=1 后仍执行 2700+ 任务并越域抓外站）。
             match self.repository.cancel_tasks_by_crawl_id(crawl_id).await {
@@ -899,7 +899,7 @@ impl ScrapeWorker {
             }
             update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
             // 失败 webhook 只在终态发出：可重试失败若也发，外部消费者会把
-            // “将重试”误读为终态失败（架构复核 LOW）。
+            // “将重试”误读为终态失败（避免误读）。
             self.trigger_webhook(task, Some(error.to_string())).await;
         }
 

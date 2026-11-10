@@ -133,10 +133,10 @@ host = "0.0.0.0"
 port = 8899
 EOF
 
-# 2. 初始化数据库（服务启动不自动迁移；专用子命令按序应用 migrations/*.sql）
+# 2. 初始化数据库（服务启动不自动迁移；migrate 按数据库特性选择 migrations/<dialect>/ 并有序应用）
 cargo run --bin crawlrs migrate
-# 迁移目录缺省 ./migrations，可用 CRAWLRS_MIGRATIONS_DIR 覆盖；
-# 也可手工应用：for f in migrations/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"; done
+# 迁移根目录缺省 ./migrations，可用 CRAWLRS_MIGRATIONS_DIR 覆盖；
+# 也可手工应用 PostgreSQL 套：for f in migrations/postgres/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"; done
 
 # 3. 启动服务（API 模式；worker 模式：cargo run --bin crawlrs worker）
 cargo run --bin crawlrs
@@ -150,7 +150,7 @@ cargo run --bin crawlrs
 ```bash
 # 4. 验证安装
 curl http://localhost:8899/health
-# {"status":"healthy","version":"0.2.0-rc.3"}
+# {"status":"healthy","version":"0.2.0-rc.4"}
 ```
 
 </details>
@@ -172,7 +172,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 ### 🧭 核心概念
 
 - **引擎与路由**：`EngineClient` 是抓取操作唯一公开入口，内部 `EngineRouter` 持有 `Vec<Arc<dyn ScraperEngine>>`，按 `SmartHybrid`（默认）/ `RaceMode` / `SequentialFallback` 策略选择引擎。
-- **四种运行形态**：同一二进制按子命令分派（`src/main.rs`）——`crawlrs` 或 `crawlrs api`（默认）启动 API 服务，`crawlrs worker` 以 Worker 模式消费任务队列，`crawlrs bootstrap` 初始化默认团队与 admin API Key，`crawlrs migrate` 按序应用 `migrations/*.sql`。
+- **四种运行形态**：同一二进制按子命令分派（`src/main.rs`）——`crawlrs` 或 `crawlrs api`（默认）启动 API 服务，`crawlrs worker` 以 Worker 模式消费任务队列，`crawlrs bootstrap` 初始化默认团队与 admin API Key，`crawlrs migrate` 按编译启用的数据库特性选择 `migrations/postgres|sqlite|mysql/` 并有序应用。
 - **DDD 四层**：`presentation → application → domain → infrastructure`，DI 由 trait-kit 的各 capability Module（`SettingsModule`/`CacheModule`/`EngineModule` 等）装配。
 - **配置管理**：基于 confers，TOML 文件 + `CRAWLRS__` 前缀环境变量（`__` 分隔嵌套，如 `CRAWLRS__DATABASE__URL`）。
 - **SearXNG 元搜索（opt-in）**：默认 `search.searxng.enabled = false`；启用后从 searx.space 采集公共实例写入 `searxng_instances` 登记簿，周期探活维护进程内热池（目标 3 个可用实例），请求失败自动熔断换实例；同一搜索请求最多换 `max_failover_attempts` 个实例。
@@ -456,7 +456,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 测试规模
 
-截至 0.2.0-rc.3：`src/` 内联测试 6,566 处（476 个源文件、230,408 行），`tests/` 目录 996 个测试（124 个 `.rs` 文件，含 `tests/unit/` 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
+截至 0.2.0-rc.4：`src/` 内联测试 6,558 处（476 个源文件、230,418 行），`tests/` 目录 994 个测试（124 个 `.rs` 文件，含 `tests/unit/` 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
 
 ---
 
@@ -490,6 +490,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
 <tr><td align="center">✅</td><td>核心平台（0.1.0）</td><td>搜索/抓取/爬取/提取/映射五大能力 API、DDD 四层、多租户与限流、Webhook 通知</td></tr>
+<tr><td align="center">✅</td><td>流水线全量补跑（0.2.0-rc.4）</td><td>CI 五组合/engine-moli/BDD 复绿、CodeQL 归零、doctest 与示例修复、覆盖率 90.13%、E2E 六阶段 PASS（report 按设计 SKIPPED）</td></tr>
 <tr><td align="center">✅</td><td>发布前收口（0.2.0-rc.3）</td><td>crawl 终态对账与崩溃恢复、团队域名黑名单全链路执行、SDK 建爬与搜索派生上限、Host 头丢弃等安全加固、web-axum 三驱动矩阵</td></tr>
 <tr><td align="center">✅</td><td>平台加固与智能引擎（0.2.0-rc.2）</td><td>garrison 认证、反爬检测、TLS 指纹与 MLLM 引擎、RAG/KG/DRL 智能增强、Prometheus 可观测性、E2E 质量套件</td></tr>
 <tr><td align="center">✅</td><td>数据库多驱动</td><td><code>db-sqlite</code> / <code>db-mysql</code> 覆盖到运行时 schema 供给：<code>migrations/{postgres,sqlite,mysql}/</code> 三方言建表目录按编译 feature 选择，<code>[database] auto_migrate</code>（缺省 false）接线，三方一致性由测试看护</td></tr>
@@ -552,6 +553,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| 0.2.0-rc.4 | 2026-11-10 | 发布流水线全量补跑：CI 三族修复复绿、CodeQL 18 条裁决归零、doctest/示例/文档修复、覆盖率 90.13%、E2E 六阶段 PASS（report 按设计 SKIPPED）、依赖补丁升级 |
 | 0.2.0-rc.3 | 2026-11-10 | 终态对账/崩溃恢复重算、团队域名黑名单全链路（归一化+上限+fail-closed+sitemap/proxy 同口径）、SDK 建爬与搜索派生 200 上限/深度 ≤5、Host 头丢弃、web-axum 三驱动矩阵；三维审查三轮 PASS |
 | 0.2.0-rc.2 | 2026-09-21 | TLS 指纹引擎（WreqEngine）、MLLM 视觉导航引擎、RAG 增强提取、知识图谱覆盖感知、DRL 自适应策略、5 个新 Prometheus 指标；功能吸收 F1–F12（AutoThrottle、Session 身份、失败快照、sitemap 请求源、XHR 捕获、提取质量门、LLM 分块与溯源、AIMD 内存联动、软 404、AX 树快照） |
 | Unreleased | - | auth-off 恢复默认 401、`web-axum` 构建面恢复、`crawlrs migrate` 子命令、`POST /v1/scrape/{id}/_cancel` 生产路由、ScrapeOptionsDto 暴露 `block_ads`/`block_media`/`needs_mllm`、forge-full 停机坪、i18n/Fluent 接入等，完整清单见 [📋 更新日志](docs/CHANGELOG.md) |

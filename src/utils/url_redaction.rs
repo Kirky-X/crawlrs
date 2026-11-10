@@ -14,6 +14,7 @@
 use url::Url;
 
 /// URL 日志最大长度（防日志膨胀）
+#[allow(dead_code)] // 仅在 workers/presentation 被编译（platform/web-axum/webhook）时调用
 const MAX_URL_LOG_LEN: usize = 200;
 
 /// 脱敏 URL 用于日志输出
@@ -24,6 +25,7 @@ const MAX_URL_LOG_LEN: usize = 200;
 /// 解析失败时返回 `[invalid-url]` 占位符，绝不原样返回可能含凭证的输入
 /// （CWE-532 防护：日志文件中的信息泄露）。
 #[must_use]
+#[allow(dead_code)] // 仅在 workers/presentation 被编译（platform/web-axum/webhook）时调用
 pub(crate) fn redact_url_for_log(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut parsed) => {
@@ -55,6 +57,7 @@ pub(crate) fn redact_url_for_log(url: &str) -> String {
 /// `https://hooks.slack.com/services/T000/B000/XXXX`），通用
 /// [`redact_url_for_log`] 会保留 path，因此 webhook 日志必须使用本函数。
 #[must_use]
+#[allow(dead_code)] // 仅 webhook 特性（webhook 发送/处理器）调用
 pub(crate) fn redact_webhook_url_for_log(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut parsed) => {

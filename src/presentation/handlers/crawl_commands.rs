@@ -192,7 +192,7 @@ fn validate_crawl_request(
     locale: &Locale,
     bundle: &Arc<I18nBundle>,
 ) -> Option<Response> {
-    // 审查 HIGH：tasks.url 的普通 btree 索引（idx_tasks_url）仍有行上限，
+    // tasks.url 的普通 btree 索引（idx_tasks_url）仍有行上限，
     // DTO 的 2048 字符对多字节 URL 可达 8 KiB。入队前按字节收敛。
     if payload.url.len() > 2048 {
         return Some(errors::unprocessable_entity(
@@ -206,7 +206,7 @@ fn validate_crawl_request(
         ));
     }
 
-    // D6 修复：max_concurrency 契约上限 50（此前 handler 层无校验，51 放行
+    // max_concurrency 契约上限 50（此前 handler 层无校验，51 放行
     // 到 use_case 才以 400 报 100 上限——三层不一致，E2E SC-04 实证）。
     if let Some(concurrency) = payload.config.max_concurrency {
         if concurrency > crate::application::dto::crawl_request::MAX_CONCURRENCY {

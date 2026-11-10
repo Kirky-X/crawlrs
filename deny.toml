@@ -2,8 +2,9 @@
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-# RUSTSEC-2026-0459: libsqlite3-sys 0.37.0 绑定的 C SQLite CVE-2026-119375（本地
-# 恶意 SQL 扩展加载向量）。修复版 0.39.0 被 sqlx-sqlite 0.9.0 的
+# RUSTSEC-2026-0459: libsqlite3-sys 0.37.0 绑定的 C SQLite CVE-2026-119375
+# （特制 DB + 同名 -wal 页大小不一致导致未初始化页缓存内存泄露；攻击向量需本地
+# 打开攻击者可控文件对）。修复版 0.39.0 被 sqlx-sqlite 0.9.0 的
 # `>=0.30.1, <0.38.0` 约束挡住，需等 sqlx/sea-orm 链升级；本 crate 仅在可选
 # db-sqlite feature 下引入该依赖。依赖链解锁后移除本条。
 db-urls = ["https://github.com/RustSec/advisory-db"]

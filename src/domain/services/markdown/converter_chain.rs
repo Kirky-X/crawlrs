@@ -3,7 +3,7 @@
 
 //! 转换器链执行器：primary（moli-html2md）→ fallback（htmd）
 //!
-//! 兜底触发条件（设计 D4，两条）：
+//! 兜底触发条件（两条）：
 //! 1. `primary.convert` 返回 `Err`；
 //! 2. 输入含可见文本（body 子树存在非空白文本，跳过 script/style/template）
 //!    而 primary 输出 trim 后为空（保真异常的防呆；纯脚本/空壳页面的空输出
@@ -47,8 +47,8 @@ impl ConverterChain {
                 if md.trim().is_empty() {
                     // 防呆仅对「输入含可见文本」生效：moli 对纯脚本/样式页、
                     // title-only 壳、SPA 空壳输出空串是正确抑制——此时兜底会让
-                    // htmd 把 script 内 JSON（如 __NEXT_DATA__）当正文灌入产物
-                    // （三维审查 A1）。无可见文本 → 空串是对的，直接接受。
+                    // htmd 把 script 内 JSON（如 __NEXT_DATA__）当正文灌入产物。
+                    // 无可见文本 → 空串是对的，直接接受。
                     if !has_visible_text(html) {
                         return Ok(md);
                     }
@@ -72,7 +72,7 @@ impl ConverterChain {
 /// script/style/template/noscript；存在非空白 Text 即视为可见内容。
 /// **显式栈迭代**（与 moli 遍历同款）：DOM 深度不得进入 Rust 调用栈——
 /// 递归实现会在 2MiB 栈上被万级嵌套（release 实测 20000 层）击穿并 abort 进程
-/// （架构复核 HIGH 实证）。仅在 primary 输出空白的罕见路径调用。
+/// （实证）。仅在 primary 输出空白的罕见路径调用。
 fn has_visible_text(html: &str) -> bool {
     use scraper::node::Node;
 
@@ -243,7 +243,7 @@ mod tests {
         }
     }
 
-    /// A1 钉测：纯脚本页（无可见文本）primary 空输出 → 接受空串，不触发兜底
+    /// 钉测：纯脚本页（无可见文本）primary 空输出 → 接受空串，不触发兜底
     /// （回归防护：禁止把 script 内 JSON 用 htmd 灌回产物）
     #[test]
     fn empty_output_without_visible_text_is_accepted() {
@@ -274,7 +274,7 @@ mod tests {
         assert_eq!(c.convert(html).unwrap(), "json-should-not-appear");
     }
 
-    /// 深嵌套无文本输入不得栈溢出（架构复核 HIGH 回归）。
+    /// 深嵌套无文本输入不得栈溢出（回归）。
     ///
     /// 递归实现在 2MiB 栈上约 1-2 万层才溢出——5000 层递归仍可通过，直接用默认
     /// 线程抓不住回归。故在 **256KiB 小栈线程** 内跑 5000 层：递归实现此处必溢出

@@ -12,7 +12,7 @@
 //! cargo run --example async_batch
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use log::info;
 use std::time::Duration;
 
@@ -23,7 +23,7 @@ async fn main() {
     info!("🚀 异步批量处理示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
 
     // 1. 准备批量目标 URL
     let urls = [

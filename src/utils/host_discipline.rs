@@ -60,7 +60,7 @@ pub const DEFAULT_STALLED_THRESHOLD: u32 = 3;
 const MAX_GATE_WAIT: Duration = Duration::from_secs(5);
 
 /// 惰性清扫间隔：达到间隔后下一次 `gate`/`observe` 触发一次全表清扫，
-/// 回收只被访问过一次的 host 条目（评审 LOW：state 只增不删，内存无界）
+/// 回收只被访问过一次的 host 条目（state 只增不删，内存无界）
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
 /// AutoThrottle 与礼貌参数集（F1/F5 配置面的算法侧视图）
@@ -885,7 +885,7 @@ mod tests {
             .expect("concurrent gate/observe/tls_suspect must not deadlock");
     }
 
-    // 评审 LOW：state 惰性清扫
+    // state 惰性清扫
 
     /// 过期中性条目被清扫回收；携带纪律信息的条目（tls_suspect/连击/冷却）保留
     #[test]

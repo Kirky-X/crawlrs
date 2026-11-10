@@ -400,7 +400,7 @@ async fn flush_batch(
     cache: &dyn CacheService,
     pointer_ttl_secs: u64,
 ) -> anyhow::Result<()> {
-    // 审查 HIGH：sitemap 入队前校验父 crawl 终态，避免停止后继续扩容。
+    // sitemap 入队前校验父 crawl 终态，避免停止后继续扩容。
     // 仅需状态：投影读取，避免每批拉回 crawl.config。
     if let Ok(Some(progress)) = crawl_repo.find_progress_by_id(seed.crawl_id).await {
         if crate::application::use_cases::crawl_state_machine::is_terminal(&progress.status) {
@@ -428,7 +428,7 @@ async fn flush_batch(
     .await?;
 
     for url in &new_urls {
-        // 审查 F18：超长 URL 会触发 PostgreSQL btree 唯一索引上限错误，
+        // 超长 URL 会触发 PostgreSQL btree 唯一索引上限错误，
         // 与根 URL 保持同一 2048 字节口径直接跳过。
         if url.len() > 2048 {
             log::debug!("skip oversized sitemap task url ({} bytes)", url.len());
@@ -437,13 +437,13 @@ async fn flush_batch(
         let task = build_sitemap_task(url, seed);
         match task_repo.create(&task).await {
             Ok(_) => {
-                // 审查 F3/F4：只有插入成功才计数；并发窗口的重复 URL 由
+                // 只有插入成功才计数；并发窗口的重复 URL 由
                 // (crawl_id,url) 唯一索引兜底，跳过而非中止整个 feed。
                 crawl_repo.increment_total_tasks(seed.crawl_id).await?;
                 stats.enqueued += 1;
             }
             Err(e) => {
-                // 审查 L1：类型化唯一冲突判定
+                // 类型化唯一冲突判定
                 if e.is_unique_conflict() {
                     log::debug!("skip duplicate sitemap task url={}", task.url);
                 } else {

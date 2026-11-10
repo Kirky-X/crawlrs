@@ -12,7 +12,7 @@
 //! cargo run --example async_streams
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use log::info;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -30,7 +30,7 @@ async fn main() {
     info!("🚀 异步流式处理示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
 
     let urls = vec![
         "https://example.com",

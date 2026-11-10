@@ -3,14 +3,14 @@
 
 //! Test Google search and show content preview
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
     println!("🚀 Testing Google search with content preview...\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
 
     println!("Loading Google search results for 'test'...\n");
     let request = ScrapeRequest::new("https://www.google.com/search?q=test")

@@ -34,6 +34,9 @@ async fn main() {
     info!("🤖 MLLM 自主导航爬取示例");
     info!("=====================================\n");
 
+    // MLLM 需完整 DI（LLM/gateway 配置）装配，库级 helper 只注册 Reqwest，
+    // 直接用会造成“普通 HTTP 成功冒充 MLLM 成功”；此处显式空引擎，
+    // 未配置时返回 AllEnginesFailed，避免假成功。
     let client = EngineClient::new();
 
     // 示例 1: 基础 MLLM 爬取

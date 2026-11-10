@@ -77,7 +77,7 @@ where
         return response;
     }
 
-    // D4 修复 + 审查 F14：廉价校验（sync_wait 范围、urls 1-100、scheme）
+    // 廉价校验（sync_wait 范围、urls 1-100、scheme）
     // 必须先于 SSRF 批量 DNS 执行——101 条 URL 会先付 101 次 DNS 代价再被
     // 422 拒绝。sync_wait>30000 的手动校验保持 400 优先级（先于 DTO 校验）。
     if let Some(response) = validate_extract_sync_wait(&payload) {
@@ -90,7 +90,7 @@ where
         );
     }
 
-    // 审查 HIGH：tasks.url 的普通 btree 索引仍有行上限；DTO 仅限制
+    // tasks.url 的普通 btree 索引仍有行上限；DTO 仅限制
     // 2048 字符，多字节 URL 可达 8 KiB。入队前按字节收敛。
     if payload.urls.iter().any(|url| url.len() > 2048) {
         return error_response(

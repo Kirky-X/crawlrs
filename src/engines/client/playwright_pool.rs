@@ -621,7 +621,7 @@ mod tests {
             )
         }
 
-        fn watermark(available_mib: u64) -> Arc<MemoryWatermark> {
+        fn watermark(_available_mib: u64) -> Arc<MemoryWatermark> {
             MemoryWatermark::new(512, 2048)
         }
 
@@ -658,7 +658,9 @@ mod tests {
             );
 
             // 已有实例（total_instances>0）且无可复用：拒绝（总实例数不增）
-            pool.state.total_instances.store(1, Ordering::Relaxed);
+            pool.state_for_test()
+                .total_instances
+                .store(1, Ordering::Relaxed);
             let result = pool.acquire_page().await;
             match result {
                 Err(EngineError::MemoryConstrained(msg)) => {
@@ -667,7 +669,9 @@ mod tests {
                 other => panic!("期望 MemoryConstrained，实际: {:?}", other.err()),
             }
             assert_eq!(
-                pool.state.total_instances.load(Ordering::Relaxed),
+                pool.state_for_test()
+                    .total_instances
+                    .load(Ordering::Relaxed),
                 1,
                 "Tight 下不得创建新实例"
             );
@@ -675,13 +679,13 @@ mod tests {
 
         #[tokio::test]
         async fn pool_shares_global_watermark_instance_with_router() {
-            // T011 装配语义：set_global 后新建池自取同一 Arc（ptr 同源、档位一致）
+            // 装配语义：set_global 后新建池自取同一 Arc（ptr 同源、档位一致）
             let wm = MemoryWatermark::new(512, 2048);
             assert_eq!(wm.apply_sample(Some(1500)), MemoryLevel::Tight);
             crate::engines::memory_watermark::set_global(wm.clone());
             let pool = pool();
             let pool_wm = pool
-                .state
+                .state_for_test()
                 .memory
                 .read()
                 .clone()

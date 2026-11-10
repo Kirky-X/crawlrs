@@ -19,9 +19,7 @@
 //! 截图功能需要启用 `engine-playwright` 特性。
 
 use base64::Engine as _;
-use crawlrs::engines::engine_client::{
-    EngineClient, ScrapeOptionsBuilder, ScrapeRequest, ScreenshotConfig,
-};
+use crawlrs::engines::engine_client::{ScrapeOptionsBuilder, ScrapeRequest, ScreenshotConfig};
 use log::info;
 use std::time::Duration;
 
@@ -32,7 +30,7 @@ async fn main() {
     info!("🚀 开始页面截图示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
     let url = "https://example.com";
 
     info!("📸 目标页面: {}", url);

@@ -236,7 +236,7 @@ fn collect_unique_links(
     let document = Html::parse_document(&response.content);
     let selector =
         Selector::parse("a").map_err(|e| ScrapeWorkerError::SelectorError(e.to_string()))?;
-    // 审查 F6：以响应 final_url（重定向后地址）为解析基准，并把种子 host 与
+    // 以响应 final_url（重定向后地址）为解析基准，并把种子 host 与
     // final host 都纳入允许集；允许子域（www./docs.）但拒绝父域与兄弟域。
     // 此前仅用 task.url 精确匹配，种子被 302 到 www 后页面内链接全部被丢弃。
     let join_base = response
@@ -248,7 +248,7 @@ fn collect_unique_links(
         .ok()
         .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
     let mut allowed_hosts: Vec<String> = seed_host.clone().into_iter().collect();
-    // 审查 N7：final host 仅在与会话种子相关（等同/互为子域）时纳入允许集。
+    // final host 仅在与会话种子相关（等同/互为子域）时纳入允许集。
     // 否则 302 到任意外部域会把外站变成可爬根，扩大 crawl 范围。
     if let Some(final_host) = response
         .final_url
@@ -287,7 +287,7 @@ fn collect_unique_links(
                 }
                 let url_str = absolute_url.to_string();
 
-                // 审查 F18：子链接与根 URL 同口径限长（DTO 上限 2048）。
+                // 子链接与根 URL 同口径限长（DTO 上限 2048）。
                 // 超长 URL 会让 PostgreSQL btree 唯一索引插入失败
                 // （index row size exceeds maximum），且非重复冲突会中止
                 // 整个链接提取步骤。
@@ -405,7 +405,7 @@ async fn score_and_enqueue(
     repository: &dyn TaskRepository,
     crawl_repository: &dyn CrawlRepository,
 ) -> Result<()> {
-    // 审查 HIGH：停止瞬间仍在飞的子任务会继续入队新链接；入队侧再校验
+    // 停止瞬间仍在飞的子任务会继续入队新链接；入队侧再校验
     // 一次父 crawl 终态，避免取消之后又产生新行。
     // 仅需状态：投影读取，避免每页拉回 crawl.config。
     if let Ok(Some(progress)) = crawl_repository.find_progress_by_id(crawl_id).await {
@@ -441,8 +441,8 @@ async fn score_and_enqueue(
         }
         // 出队按 priority ASC（小值先出）。
         // DFS（栈语义）：子链接键 = 父 priority - (子深度)，i32 负空间
-        // 保证默认 priority=0 与超深链路下仍严格随深度递减（复查
-        // 此前 saturating_sub(1) 在 priority=0 或深链路塌缩回 BFS）。
+        // 保证默认 priority=0 与超深链路下仍严格随深度递减
+        // （此前 saturating_sub(1) 在 priority=0 或深链路塌缩回 BFS）。
         // BFS（层序）：继承父 priority。
         let priority = child_priority(task.priority, is_dfs_strategy, current_depth);
 
@@ -451,13 +451,13 @@ async fn score_and_enqueue(
 
         match repository.create(&new_task).await {
             Ok(_) => {
-                // 审查 F3：只有真正插入成功才计数；冲突跳过不计数，
+                // 只有真正插入成功才计数；冲突跳过不计数，
                 // 否则 total_tasks 虚高，completed+failed==total 永不成立，
                 // crawl 会永远停在 running。
                 crawl_repository.increment_total_tasks(crawl_id).await?;
             }
             Err(e) => {
-                // D7 修复 + 审查 L1：类型化唯一冲突（RepositoryError::Conflict）
+                // 类型化唯一冲突（RepositoryError::Conflict）
                 // = 并发窗口已入队，跳过；其他错误原样上抛。
                 if e.is_unique_conflict() {
                     log::debug!("skip duplicate child task url={}", new_task.url);

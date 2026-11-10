@@ -15,7 +15,7 @@
 //! cargo run --example custom_headers
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use log::info;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -27,7 +27,7 @@ async fn main() {
     info!("🚀 开始自定义请求头示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
     let url = "https://httpbin.org/headers";
 
     info!("🎯 目标: {}", url);

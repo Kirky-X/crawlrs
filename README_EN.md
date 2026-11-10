@@ -133,10 +133,10 @@ host = "0.0.0.0"
 port = 8899
 EOF
 
-# 2. Initialize the database (the server does not auto-migrate; the dedicated subcommand applies migrations/*.sql in order)
+# 2. Initialize the database (the server does not auto-migrate; the migrate subcommand selects migrations/<dialect>/ by compiled database feature and applies it in order)
 cargo run --bin crawlrs migrate
-# Migrations directory defaults to ./migrations; override with CRAWLRS_MIGRATIONS_DIR.
-# Manual alternative: for f in migrations/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"; done
+# Migrations root defaults to ./migrations; override with CRAWLRS_MIGRATIONS_DIR.
+# Manual alternative for PostgreSQL: for f in migrations/postgres/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"; done
 
 # 3. Start the server (API mode; worker mode: cargo run --bin crawlrs worker)
 cargo run --bin crawlrs
@@ -150,7 +150,7 @@ cargo run --bin crawlrs
 ```bash
 # 4. Verify the installation
 curl http://localhost:8899/health
-# {"status":"healthy","version":"0.2.0-rc.3"}
+# {"status":"healthy","version":"0.2.0-rc.4"}
 ```
 
 </details>
@@ -172,7 +172,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 ### 🧭 Core Concepts
 
 - **Engines & routing**: `EngineClient` is the single public entry point for scraping; internally `EngineRouter` holds `Vec<Arc<dyn ScraperEngine>>` and picks an engine via the `SmartHybrid` (default) / `RaceMode` / `SequentialFallback` strategies.
-- **Four run modes**: one binary, dispatched by subcommand (`src/main.rs`) — `crawlrs` or `crawlrs api` (default) starts the API server, `crawlrs worker` consumes the task queue in worker mode, `crawlrs bootstrap` initializes the default team and an admin API key, and `crawlrs migrate` applies `migrations/*.sql` in order.
+- **Four run modes**: one binary, dispatched by subcommand (`src/main.rs`) — `crawlrs` or `crawlrs api` (default) starts the API server, `crawlrs worker` consumes the task queue in worker mode, `crawlrs bootstrap` initializes the default team and an admin API key, and `crawlrs migrate` selects `migrations/postgres|sqlite|mysql/` by compiled database feature and applies it in order.
 - **DDD four layers**: `presentation → application → domain → infrastructure`, wired by trait-kit's capability Modules (`SettingsModule`/`CacheModule`/`EngineModule` etc.) for DI.
 - **Configuration**: powered by confers — TOML files plus `CRAWLRS__`-prefixed environment variables (`__` separates nesting, e.g. `CRAWLRS__DATABASE__URL`).
 - **SearXNG meta search (opt-in)**: `search.searxng.enabled = false` by default. When enabled, public instances are collected from searx.space into the `searxng_instances` registry, periodically probed to maintain an in-process pool (target: 3 usable instances), and failed requests fail over to another instance up to `max_failover_attempts` times.
@@ -456,7 +456,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 Test Scale
 
-As of 0.2.0-rc.3: 6,566 inline test attributes in `src/` (476 source files, 230,408 lines), 996 tests in `tests/` (124 `.rs` files, incl. 71 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
+As of 0.2.0-rc.4: 6,558 inline test attributes in `src/` (476 source files, 230,418 lines), 994 tests in `tests/` (124 `.rs` files, incl. 71 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
 
 ---
 
@@ -490,6 +490,7 @@ Please do not report security vulnerabilities through public issues — use the 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
 <tr><td align="center">✅</td><td>Core platform (0.1.0)</td><td>Five-capability APIs (search/scrape/crawl/extract/map), DDD four layers, multi-tenancy & rate limiting, webhook notifications</td></tr>
+<tr><td align="center">✅</td><td>Full pipeline rerun (0.2.0-rc.4)</td><td>CI feature combos/engine-moli/BDD green, CodeQL alerts adjudicated to zero, doctest & examples fixes, 90.13% line coverage, E2E 6 stages PASS (report SKIPPED by design)</td></tr>
 <tr><td align="center">✅</td><td>Pre-release hardening (0.2.0-rc.3)</td><td>crawl terminal reconciliation & crash recovery, end-to-end team domain blacklist enforcement, SDK crawl creation & search-derived caps, Host-header drop and other security hardening, web-axum tri-driver matrix</td></tr>
 <tr><td align="center">✅</td><td>Platform hardening & smart engines (0.2.0-rc.2)</td><td>garrison authentication, anti-bot detection, TLS-fingerprint & MLLM engines, RAG/KG/DRL intelligent enhancements, Prometheus observability, E2E quality suite</td></tr>
 <tr><td align="center">✅</td><td>Multi-driver databases</td><td><code>db-sqlite</code> / <code>db-mysql</code> now reach runtime schema provisioning: per-dialect DDL under <code>migrations/{postgres,sqlite,mysql}/</code> selected by compiled feature, wired via <code>[database] auto_migrate</code> (default false), cross-dialect consistency guarded by tests</td></tr>
@@ -552,6 +553,7 @@ For the full version history see the [📋 Changelog](docs/CHANGELOG.md) (follow
 
 | Version | Date | Highlights |
 |------|------|------|
+| 0.2.0-rc.4 | 2026-11-10 | Full pipeline rerun: CI repairs green, 18 CodeQL alerts adjudicated to zero, doctest/example/doc fixes, 90.13% line coverage, E2E 6 stages PASS (report SKIPPED by design), dependency patch bumps |
 | 0.2.0-rc.3 | 2026-11-10 | Terminal reconciliation & crash-recovery recompute, end-to-end team domain blacklist (normalization + caps + fail-closed + sitemap/proxy parity), SDK crawl & search-derived 200-cap/depth ≤5, Host-header drop, web-axum tri-driver matrix; three three-dimensional review rounds PASS |
 | 0.2.0-rc.2 | 2026-09-21 | TLS fingerprint engine (WreqEngine), MLLM vision-navigation engine, RAG-augmented extraction, knowledge-graph coverage awareness, DRL adaptive policy, 5 new Prometheus metrics; feature absorption F1–F12 (AutoThrottle, session identity, failure snapshots, sitemap request source, XHR capture, extraction quality gate, LLM chunking & provenance, AIMD memory coupling, soft 404, AX-tree snapshot) |
 | Unreleased | - | auth-off protected routes restore default 401, `web-axum` build surface restored, `crawlrs migrate` subcommand, production route for `POST /v1/scrape/{id}/_cancel`, ScrapeOptionsDto exposing `block_ads`/`block_media`/`needs_mllm`, forge-full staging feature, i18n/Fluent integration, etc. — full list in the [📋 Changelog](docs/CHANGELOG.md) |

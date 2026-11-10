@@ -19,7 +19,7 @@
 //! cargo run --example multi_format_output
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeOptionsBuilder};
+use crawlrs::engines::engine_client::ScrapeOptionsBuilder;
 use log::info;
 use std::time::Duration;
 
@@ -30,7 +30,7 @@ async fn main() {
     info!("🚀 开始多格式输出示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
     let url = "https://httpbin.org/html";
 
     // 1. HTML格式（默认）

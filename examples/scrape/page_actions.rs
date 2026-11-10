@@ -19,7 +19,7 @@
 //!
 //! 页面交互功能需要启用 `engine-playwright` 特性。
 
-use crawlrs::engines::engine_client::{EngineClient, PageAction, ScrapeOptionsBuilder};
+use crawlrs::engines::engine_client::{PageAction, ScrapeOptionsBuilder};
 use log::info;
 use std::time::Duration;
 
@@ -30,7 +30,7 @@ async fn main() {
     info!("🚀 开始页面交互示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
     let url = "https://example.com";
 
     info!("🎮 目标页面: {}", url);

@@ -7,7 +7,7 @@
 ![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green?style=for-the-badge)
 ![License](https://img.shields.io/github/license/Kirky-X/crawlrs?label=license&style=for-the-badge)
 
-**Version:** 0.2.0-rc.2 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-10-13
+**Version:** 0.2.0-rc.4 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-11-10
 
 </div>
 
@@ -285,7 +285,7 @@ Check if the API process is running. Always returns 200 when the process is aliv
 ```json
 {
   "status": "healthy",
-  "version": "0.2.0-rc.2"
+  "version": "0.2.0-rc.4"
 }
 ```
 
@@ -304,7 +304,7 @@ Kubernetes readiness probe: probes PostgreSQL (`SELECT 1`, 3s timeout) and the c
     "cache": { "status": "up" },
     "database_pool": { "status": "ok" }
   },
-  "version": "0.2.0-rc.2"
+  "version": "0.2.0-rc.4"
 }
 ```
 
@@ -317,7 +317,7 @@ Kubernetes readiness probe: probes PostgreSQL (`SELECT 1`, 3s timeout) and the c
     "cache": { "status": "up" },
     "database_pool": { "status": "ok" }
   },
-  "version": "0.2.0-rc.2"
+  "version": "0.2.0-rc.4"
 }
 ```
 
@@ -346,7 +346,7 @@ Get the current API version.
 
 **Response:**
 ```text
-0.2.0-rc.2
+0.2.0-rc.4
 ```
 
 ### Get Metrics
@@ -1655,6 +1655,16 @@ func Scrape(url string) error {
 
 **Observability:**
 - 5 个新 Prometheus 指标：`crawlrs_queue_depth` / `crawlrs_engine_success_total` / `crawlrs_engine_duration_seconds` / `crawlrs_cache_hit_total` / `crawlrs_webhook_delivery_total`
+
+### 0.2.0-rc.4 (2026-11-10)
+- 发布流水线全量补跑：CI 五组合/engine-moli/BDD 修复复绿；CodeQL 18 条裁决归零；security 审计豁免同源登记
+- doctest/示例/文档一致性修复；依赖 html-escape 0.3.1 / toml 1.2.1 / uuid 1.29.2
+- 行覆盖率 90.13%，E2E matrix/static/unit/integration/bench/liveapi 六阶段 PASS（report 汇总按设计 SKIPPED）
+
+### 0.2.0-rc.3 (2026-11-10)
+- crawl 终态判定单源 + 崩溃恢复计数重算；团队域名黑名单执行链路（种子/重定向/链接/sitemap/proxy，快照缺失 fail-closed）
+- SDK `POST /api/v1/sdk/crawl`；搜索派生 200 硬上限与深度 ≤5；scrape/crawl 统一丢弃自定义 Host 头
+- release.yml CHANGELOG 路径对齐 docs/；git 依赖期间 crates.io 发布显式跳过并附 tag 源码归档
 
 ### 0.2.0-rc.2 (2026-09-21)
 - 自研依赖全面切换 crates.io registry（garrison → 0.9.0-rc.2 等），移除跨仓 path 依赖

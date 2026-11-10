@@ -40,7 +40,7 @@ impl MarkdownConverter for MoliHtml2MdConverter {
         let root = doc.tree.root();
         let dom = ScraperDom::new(&doc);
         // max_depth 上限：默认 Options 的 1000 会静默丢弃深层子树（且把深页推向
-        // 兜底双跑，性能审查 HIGH）。moli 遍历是迭代式（无 Rust 栈风险），输入又被
+        // 兜底双跑，性能实证）。moli 遍历是迭代式（无 Rust 栈风险），输入又被
         // max_response_body_bytes（默认 10MiB）界定，故解除深度限制、不做静默裁剪。
         let converter = moli_html2md::Converter::new(moli_html2md::Options {
             max_depth: usize::MAX,
@@ -92,7 +92,7 @@ mod tests {
         assert_eq!(MoliHtml2MdConverter::new().convert("  \n\t ").unwrap(), "");
     }
 
-    /// 深层嵌套（> 默认 max_depth 1000）内容不得静默丢失（性能审查 HIGH 回归钉）
+    /// 深层嵌套（> 默认 max_depth 1000）内容不得静默丢失（性能实证 回归钉）
     #[test]
     fn deep_nesting_beyond_1000_levels_kept() {
         let mut html = String::from("<html><body>");

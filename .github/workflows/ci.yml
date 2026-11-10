@@ -89,7 +89,7 @@ jobs:
       matrix:
         include:
           # R-flags-005: 覆盖 7 种 feature 组合，确保门控完整、无未门控引用
-          # R-auth-engine-005 (T032): garrison 仅在 auth-on 时被引入依赖树
+          # R-auth-engine-005: garrison 仅在 auth-on 时被引入依赖树
           #   - auth-off 组合（no-default/rate-limit-only/webhook-only）：expect-garrison=false
           #   - auth-on 组合（teams-only/auth-only/default/full）：expect-garrison=true
           #     （teams 隐含 auth，auth 隐含 dep:garrison，见 Cargo.toml [features]）
@@ -130,9 +130,9 @@ jobs:
           MATRIX_FLAGS: ${{ matrix.flags }}
         run: |
           set -euo pipefail
-          # T032: 确认 garrison 仅在 auth-on 编译
+          # 确认 garrison 仅在 auth-on 编译
           # `cargo tree` 输出形如 `├── garrison v0.8.1`，grep `garrison v` 可稳定匹配
-          # 安全审查 L1 修复：分离 cargo tree 与 grep 退出码，避免 `|| true` 吞掉 cargo tree 失败
+          # 分离 cargo tree 与 grep 退出码，避免 `|| true` 吞掉 cargo tree 失败
           tree_output=$(cargo tree $MATRIX_FLAGS 2>&1) || {
             echo "FAIL: cargo tree failed for flags: $MATRIX_FLAGS"
             echo "$tree_output"
@@ -158,7 +158,7 @@ jobs:
         if: matrix.expect-garrison == true
         run: |
           set -euo pipefail
-          # 安全审查 H1 修复：deny.toml 全局忽略 RUSTSEC-2023-0071（RSA Marvin Attack）
+          # deny.toml 全局忽略 RUSTSEC-2023-0071（RSA Marvin Attack）
           # 的前提是 crawlrs 不调用任何 RSA 代码路径。此步骤自动化验证前提仍成立，
           # 防止未来引入 RSA 签名/验证代码时 ignore 静默失效。
           matches=$(grep -rE 'RS256|RS384|RS512|use rsa::|rsa::' src/ --include='*.rs' || true)
@@ -267,9 +267,9 @@ jobs:
             exit 1
           }
       - name: Run database migrations
-        run: |
+        run: |  # pragma: allowlist secret
           for f in migrations/postgres/*.sql; do
-            PGPASSWORD=postgres psql -h localhost -U postgres -d crawlrs_test -f "$f"
+            PGPASSWORD=postgres psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d crawlrs_test -f "$f"  # pragma: allowlist secret
           done
       - name: Test (standard, lib)
         run: cargo test --features "standard" --lib
@@ -339,9 +339,9 @@ jobs:
             exit 1
           }
       - name: Run database migrations
-        run: |
+        run: |  # pragma: allowlist secret
           for f in migrations/postgres/*.sql; do
-            PGPASSWORD=postgres psql -h localhost -U postgres -d crawlrs_test -f "$f"
+            PGPASSWORD=postgres psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d crawlrs_test -f "$f"  # pragma: allowlist secret
           done
       - name: Integration tests (full + test-mocks)
         run: cargo test --features "full,test-mocks" --tests --no-fail-fast
@@ -350,6 +350,20 @@ jobs:
     name: BDD Acceptance Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crawlrs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
       CRAWLRS_DISABLE_SSRF_PROTECTION: "true"
@@ -364,8 +378,19 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-acceptance-deps
-      # 套件经 testcontainers 自起 PG（需 Docker，ubuntu runner 自带）；
-      # TEST_DATABASE_URL 由套件内 resolve 优先读取——CI 用 service 容器减少启动时间
+      # CI 用 service 容器（TEST_DATABASE_URL 由套件 resolve 优先读取，
+      # 避免 testcontainers 冷启动）；必须先应用 migrations 再跑 BDD。
+      - name: Assert postgres migrations present
+        run: |
+          ls migrations/postgres/*.sql >/dev/null 2>&1 || {
+            echo "error: no migrations/postgres/*.sql found (misplaced migration files?)" >&2
+            exit 1
+          }
+      - name: Run database migrations
+        run: |  # pragma: allowlist secret
+          for f in migrations/postgres/*.sql; do
+            PGPASSWORD=postgres psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d crawlrs_test -f "$f"  # pragma: allowlist secret
+          done
       - name: BDD acceptance tests (platform, excl. @external)
         run: cargo test --test acceptance --features platform
 
@@ -409,9 +434,9 @@ jobs:
             exit 1
           }
       - name: Run database migrations
-        run: |
+        run: |  # pragma: allowlist secret
           for f in migrations/postgres/*.sql; do
-            PGPASSWORD=postgres psql -h localhost -U postgres -d crawlrs_test -f "$f"
+            PGPASSWORD=postgres psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d crawlrs_test -f "$f"  # pragma: allowlist secret
           done
       - name: Run coverage (fail under 80% lines)
         run: cargo llvm-cov --features "full" --fail-under-lines 80 --lcov --output-path lcov.info
@@ -423,8 +448,8 @@ jobs:
           fail_ci_if_error: false
 
   mysql-migrations:
-    # MySQL 迁移此前只有静态解析（migration_dialect），无运行时执行验证
-    # （审查 M-9/M-3）。本作业真实执行 001→010，重跑 009/010 验证幂等，
+    # MySQL 迁移此前只有静态解析（migration_dialect），无运行时执行验证。
+    # 本作业真实执行 001→010，重跑 009/010 验证幂等，
     # 并断言 url_hash 定义与唯一索引列序。
     runs-on: ubuntu-latest
     services:

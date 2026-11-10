@@ -79,7 +79,7 @@ impl EngineRouter {
                     "Race mode timed out after {:?} for request to {}",
                     timeout_duration, request.url
                 );
-                // 复查 L1：已有 AntiBotDetected 诊断时优先返回真实原因
+                // 已有 AntiBotDetected 诊断时优先返回真实原因
                 if let Some(e) = last_error {
                     return Err(e);
                 }
@@ -113,6 +113,7 @@ impl EngineRouter {
     /// 成功响应先过反爬分类，挑战页作废并返回 `None`（继续竞速）；
     /// 失败记录指标、更新 `last_error` 后返回 `None`。返回 `Some` 表示
     /// 竞速已有最终结果，调用方直接返回。
+    #[cfg_attr(not(feature = "content"), allow(unused_variables))]
     async fn handle_race_completion(
         &self,
         request: &InternalScrapeRequest,
@@ -154,7 +155,7 @@ impl EngineRouter {
 
     /// 全候选竞速失败后的终局处理（自 [`EngineRouter::route_race_mode`] 提取）
     ///
-    /// 复查：全候选被挑战页作废且请求未要求 JS 时，按顺序模式
+    /// 全候选被挑战页作废且请求未要求 JS 时，按顺序模式
     /// 语义以 needs_js=true 重派一轮浏览器引擎（升级链对齐）；
     /// 否则返回最后一个错误。
     async fn finish_race_all_failed(

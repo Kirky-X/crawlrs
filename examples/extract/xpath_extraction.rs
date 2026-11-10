@@ -13,7 +13,7 @@
 //! cargo run --example xpath_extraction
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use log::info;
 use std::time::Duration;
 
@@ -24,7 +24,7 @@ async fn main() {
     info!("🚀 CSS 选择器高级提取示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
 
     // 1. 先获取页面内容
     info!("1️⃣  获取页面内容");

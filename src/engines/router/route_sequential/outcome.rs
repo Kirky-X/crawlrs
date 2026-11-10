@@ -12,6 +12,7 @@ use super::super::EngineRouter;
 use super::{AttemptContext, AttemptOutcome, AttemptState};
 use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse};
 use crate::engines::session::SessionIdentity;
+#[cfg(feature = "content")]
 use crate::utils::retry::RetryReason;
 use log::{debug, warn};
 use std::sync::atomic::Ordering;
@@ -28,6 +29,7 @@ pub(super) struct AttemptReport<'a> {
 impl EngineRouter {
     /// 成功臂收尾（自 [`EngineRouter::attempt_engine`] 提取）：antibot 分类 →
     /// SPA 空壳升级探测 → 成功簿记。
+    #[cfg_attr(not(feature = "content"), allow(unused_variables))]
     pub(super) async fn finish_attempt_response(
         &self,
         report: &AttemptReport<'_>,

@@ -19,18 +19,19 @@
 //!
 //! 成功时将显示爬取状态、内容长度等信息。
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use log::info;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
     log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始基础爬取示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
 
     // 目标URL
     let url = "https://example.com";

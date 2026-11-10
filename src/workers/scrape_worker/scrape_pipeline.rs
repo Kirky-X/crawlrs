@@ -14,7 +14,7 @@ impl ScrapeWorker {
     /// queued/active 残留任务（单条 UPDATE），返回 true 表示当前任务应终止。
     ///
     /// 缓存：crawl_id → (is_terminal, checked_at)，10s TTL；过期项读取时移除，
-    /// 每 1024 次插入对整个 map retain 一次过期项（审查：无界增长）。
+    /// 每 1024 次插入对整个 map retain 一次过期项（防无界增长）。
     pub(super) async fn crawl_terminal_short_circuit(&self, task: &Task) -> Result<bool> {
         const CRAWL_TERMINAL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -110,8 +110,8 @@ impl ScrapeWorker {
     pub(super) async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
         debug!("task_id: {}", task.id);
 
-        // D2 修复：终态闸（抽为共享方法，crawl 任务路径同样调用——
-        // 审查 HIGH：此前只挂在 process_scrape_task，而 crawl 子任务走
+        // 终态闸（抽为共享方法，crawl 任务路径同样调用——
+        // 此前只挂在 process_scrape_task，而 crawl 子任务走
         // process_crawl_task，闸在生产路径不可达）。
         if self.crawl_terminal_short_circuit(&task).await? {
             return Ok(());
@@ -135,7 +135,7 @@ impl ScrapeWorker {
         //
         // 调用 CoalesceCoordinator（独立组件），返回 `Some(guard)` 表示获得执行权。
         // guard 默认按失败广播；只有结果成功落库后才调用 `mark_success`，
-        // 等待方据此决定是否查询结果（M2：失败路径不做无效查询）。
+        // 等待方据此决定是否查询结果（失败路径不做无效查询）。
         // 返回 `None` 表示已被其他 worker 处理（等待方从 result_repo 读到结果，
         // 或任务被延后重排），调用方应直接返回 Ok。
         //
@@ -394,7 +394,7 @@ impl ScrapeWorker {
         // cache key 仅在缓存流程实际启用时生成：`is_cacheable` 且至少一个
         // 读写方向被允许。`Disabled` 与不可缓存请求（data:/blob:/POST 等）
         // 不做指纹计算。读/写共用同一个 `Option<String>`，避免门控前无条件
-        // 生成 key（M1：指纹含 JSON 规范化，属非平凡开销）。
+        // 生成 key（指纹含 JSON 规范化，属非平凡开销）。
         let cache_key = (cache_ctx.is_cacheable()
             && (cache_ctx.should_read() || cache_ctx.should_write()))
         .then(|| cache_utils::generate_scrape_cache_key(&cache_ctx, &scrape_request.options));

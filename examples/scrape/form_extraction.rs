@@ -14,7 +14,7 @@
 //! cargo run --example form_extraction
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use log::info;
 use std::time::Duration;
 
@@ -38,7 +38,7 @@ async fn main() {
     info!("🚀 开始表单数据提取示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
 
     // 示例表单页面
     let url = "https://httpbin.org/forms/post";

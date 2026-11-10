@@ -51,7 +51,7 @@ Rust 1.97+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+�
 
 ### ❓ 支持哪些数据库？
 
-`db-postgres`（默认）/ `db-sqlite` / `db-mysql` 三组特性按构建三选一，互斥由 dbnexus 编译期强制。注意：当前 `migrations/*.sql` 为 PostgreSQL 专用 DDL，sqlite/mysql 为编译级覆盖，运行时建表需自行提供 schema（见路线图）。
+`db-postgres`（默认）/ `db-sqlite` / `db-mysql` 三组特性按构建三选一，互斥由 dbnexus 编译期强制。三套 DDL 均已随仓库提供（`migrations/postgres|sqlite|mysql/`）；`crawlrs migrate` 按编译启用的特性选择对应子目录并有序应用，运行时不需要自行提供 schema。
 
 ### ❓ 环境变量如何命名？
 
@@ -59,7 +59,7 @@ Rust 1.97+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+�
 
 ### ❓ 服务监听哪个端口？如何确认启动成功？
 
-默认 `8899`（`CRAWLRS__SERVER__PORT` 可调）。`curl http://localhost:8899/health` 返回 `{"status":"healthy","version":"0.2.0-rc.2"}` 即成功。
+默认 `8899`（`CRAWLRS__SERVER__PORT` 可调）。`curl http://localhost:8899/health` 返回 `{"status":"healthy","version":"0.2.0-rc.4"}` 即成功。
 
 ---
 
@@ -129,15 +129,15 @@ Rust 1.97+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+�
 
 ### ❓ 测试规模有多大？
 
-截至 0.2.0-rc.2（口径：`grep -rE '^\s*#\[(tokio::)?test\]'` 统计内联测试属性）：
+截至 0.2.0-rc.4（口径：`grep -rE '^\s*#\[(tokio::)?test\]'` 统计内联测试属性）：
 
 | 项 | 数量 |
 |---|---|
-| `src/` | 408 个 `.rs` 文件、206,781 行、6,310 处内联测试属性 |
-| `tests/` | 116 个 `.rs` 文件、967 个测试函数（其中 `tests/unit/` 71 个文件） |
+| `src/` | 476 个 `.rs` 文件、230,418 行、6,558 处内联测试属性 |
+| `tests/` | 124 个 `.rs` 文件、994 个测试函数（其中 `tests/unit/` 71 个文件） |
 | Criterion 基准组 | 9 组（`benches/benchmark.rs`） |
 | Python 测试套件 | 5 个（`tests/python/`） |
-| BDD 验收 | `tests/acceptance/` 51 个场景 / 10 个 feature 文件 |
+| BDD 验收 | `tests/acceptance/` 61 个场景 / 10 个 feature 文件（其中 2 个 `@external` 不参与本地执行） |
 | CI 行覆盖率门禁 | 80% |
 
 详见 [🧪 测试场景矩阵 · 统计汇总](TEST_SCENARIOS.md#-统计汇总)。

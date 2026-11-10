@@ -68,7 +68,7 @@ pub async fn check_ssrf_url(
         Ok(validated) => {
             log::trace!(
                 "URL passed SSRF validation url={} team_id={} resolved_ips={:?}",
-                url,
+                crate::utils::url_redaction::redact_url_for_log(url),
                 team_id,
                 validated.resolved_ips
             );
@@ -77,7 +77,7 @@ pub async fn check_ssrf_url(
         Err(e) => {
             log::warn!(
                 "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
-                url,
+                crate::utils::url_redaction::redact_url_for_log(url),
                 team_id,
                 api_key_id,
                 e
@@ -101,7 +101,7 @@ pub async fn check_ssrf_urls_batch(
         if let Err(e) = result {
             log::warn!(
                 "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
-                url,
+                crate::utils::url_redaction::redact_url_for_log(url),
                 team_id,
                 api_key_id,
                 e

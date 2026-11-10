@@ -17,7 +17,7 @@
 //! cargo run --features engine-playwright --bin test_playwright_basic
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use std::time::Duration;
 
 #[tokio::main]
@@ -25,7 +25,7 @@ async fn main() {
     println!("🚀 Testing browser engine connectivity...\n");
 
     // Create engine client with default Reqwest engine
-    let engine_client = EngineClient::new();
+    let engine_client = crawlrs_examples::default_engine_client();
 
     // Test 1: Simple page load with Reqwest (static HTML)
     println!("Test 1: Loading example.com with Reqwest (static HTML)...");

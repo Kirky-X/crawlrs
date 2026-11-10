@@ -12,7 +12,7 @@
 //! cargo run --example metrics_export
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use log::info;
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ async fn main() {
     info!("1️⃣  通过 /metrics 端点获取指标");
     info!("-----------------------------");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
     let metrics_request =
         ScrapeRequest::new("http://localhost:8899/metrics").timeout(Duration::from_secs(5));
 

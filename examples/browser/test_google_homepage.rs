@@ -3,14 +3,14 @@
 
 //! Test Google homepage loading
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use crawlrs::engines::engine_client::ScrapeRequest;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
     println!("🚀 Testing Google homepage loading...\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
 
     // Test 1: Google homepage
     println!("Test 1: Loading Google homepage...");

@@ -14,7 +14,7 @@
 //! cargo run --example http_proxy
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
+use crawlrs::engines::engine_client::{ScrapeOptions, ScrapeRequest};
 use log::info;
 use std::time::Duration;
 
@@ -77,7 +77,7 @@ async fn main() {
     info!("4️⃣  EngineClient 代理使用");
     info!("-----------------------------");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
     let options = ScrapeOptions::builder()
         .proxy("http://proxy.example.com:8080")
         .timeout(Duration::from_secs(10))

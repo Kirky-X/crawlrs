@@ -27,8 +27,8 @@ cargo --version
 cargo new my-crawler
 cd my-crawler
 
-# 添加 crawlrs 依赖
-cargo add crawlrs
+# 添加 crawlrs 与 reqwest 依赖（后者用于装配默认引擎）
+cargo add crawlrs reqwest
 ```
 
 或使用现有项目，添加依赖到 `Cargo.toml`：
@@ -36,6 +36,7 @@ cargo add crawlrs
 ```toml
 [dependencies]
 crawlrs = "0.2"
+reqwest = "0.13"
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -44,15 +45,22 @@ tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }
 创建 `src/main.rs`。库模式的唯一抓取入口是 `EngineClient`：
 
 ```rust
-use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use std::sync::Arc;
 use std::time::Duration;
+
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest, ScraperEngine};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("开始爬取示例...");
 
-    // 创建引擎客户端并发起爬取
-    let client = EngineClient::new();
+    // 生产装配由 DI 注入引擎；独立项目显式注册 ReqwestEngine。
+    // 注意：EngineClient::new() 注册零引擎，直接使用会返回 "All engines failed"。
+    let http = Arc::new(reqwest::Client::builder().build()?);
+    let engine: Arc<dyn ScraperEngine> = Arc::new(ReqwestEngine::new(http));
+    let client = EngineClient::with_engines(vec![engine]);
+
     let request = ScrapeRequest::new("https://example.com").timeout(Duration::from_secs(30));
     let response = client.scrape(&request).await?;
 
@@ -155,9 +163,13 @@ A: 参考以下策略：
 ### Q: 如何配置代理？
 
 ```rust
-use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
+use std::sync::Arc;
 
-let client = EngineClient::new();
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest, ScraperEngine};
+
+let engine: Arc<dyn ScraperEngine> = Arc::new(ReqwestEngine::new(Arc::new(reqwest::Client::new())));
+let client = EngineClient::with_engines(vec![engine]);
 let options = ScrapeOptions {
     proxy: Some("http://proxy.example.com:8080".to_string()),
     ..Default::default()

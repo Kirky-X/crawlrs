@@ -164,8 +164,8 @@ pub const MEDIA_RESOURCE_KINDS: &[ResourceKind] =
 /// let ctrl = InterceptController::new(true, false);
 /// assert!(ctrl.should_block_ad_domain("https://doubleclick.net/pixel.gif"));
 /// assert!(!ctrl.should_block_ad_domain("https://example.com/index.html"));
-/// ctrl.record_block;
-/// assert_eq!(ctrl.intercepted_count, 1);
+/// ctrl.record_block();
+/// assert_eq!(ctrl.intercepted_count(), 1);
 /// ```
 #[derive(Debug)]
 pub struct InterceptController {

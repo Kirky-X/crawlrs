@@ -15,7 +15,7 @@
 //! cargo run --example error_handling
 //! ```
 
-use crawlrs::engines::engine_client::{EngineClient, EngineError, ScrapeRequest};
+use crawlrs::engines::engine_client::{EngineError, ScrapeRequest};
 use log::info;
 use std::time::Duration;
 
@@ -26,7 +26,7 @@ async fn main() {
     info!("🚀 错误处理模式示例");
     info!("=====================================\n");
 
-    let client = EngineClient::new();
+    let client = crawlrs_examples::default_engine_client();
 
     // 1. 基本错误匹配
     info!("1️⃣  基本错误处理");
