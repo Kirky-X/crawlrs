@@ -1,0 +1,69 @@
+# Copyright (c) 2025-2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+
+# CodeQL 误报裁决工具（workflow_dispatch 手动派发）。
+#
+# 背景：CodeQL rust/cleartext-logging 等规则对「服务端内部标识符日志」产生
+# FP（api_key_id/team_id 等非凭据标识符），维护者令牌无 security_events
+# scope，无法在本地裁决；本工作流以 GITHUB_TOKEN（security-events: write）
+# 代为执行，理由随告警留档。
+#
+# 用法：
+#   gh workflow run codeql-fp-dismiss.yml \
+#     -f alert_numbers="72 73" \
+#     -f reason="false_positive" \
+#     -f comment="标识符日志 FP 的裁决理由"
+name: CodeQL FP Dismiss
+
+on:
+  workflow_dispatch:
+    inputs:
+      alert_numbers:
+        description: "Alert numbers to dismiss (space separated, e.g. \"72 73\")"
+        required: true
+        type: string
+      reason:
+        description: "Dismissal reason (false_positive | used_in_tests | won't_fix)"
+        required: false
+        type: string
+        default: false_positive
+      comment:
+        description: "Dismissal comment (adjudication record)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: codeql-fp-dismiss
+  cancel-in-progress: false
+
+jobs:
+  dismiss:
+    name: Dismiss adjudicated alerts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dismiss alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for n in ${{ inputs.alert_numbers }}; do
+            echo "dismissing alert #$n ..."
+            gh api -X PUT "repos/${{ github.repository }}/code-scanning/alerts/$n" \
+              -f state=dismissed \
+              -f dismissed_reason="${{ inputs.reason }}" \
+              -f dismissed_comment="${{ inputs.comment }}" \
+              --jq '{number, state, dismissed_reason: .dismissed.reason}'
+          done
+      - name: Verify no open alerts remain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          open=$(gh api "repos/${{ github.repository }}/code-scanning/alerts?state=open&per_page=100" --jq 'length')
+          echo "open code scanning alerts: $open"
+          test "$open" -eq 0
