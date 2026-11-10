@@ -26,7 +26,7 @@ on:
         description: "Dismissal reason (false_positive | used_in_tests | won't_fix)"
         required: false
         type: string
-        default: false_positive
+        default: false positive
       comment:
         description: "Dismissal comment (adjudication record)"
         required: true
