@@ -234,7 +234,7 @@ python3 tests/e2e/api_semantics_test.py --base-url http://localhost:8899 \
 
 | 指标 | 数量 |
 |---|---|
-| `src/` 内联测试（`#[test]` / `#[tokio::test]`） | 6,559（476 个 `.rs` 文件，230,418 行） |
+| `src/` 内联测试（`#[test]` / `#[tokio::test]`） | 6,548（476 个 `.rs` 文件，229,992 行） |
 | `tests/` 目录测试 | 994 个测试函数（124 个 `.rs` 文件，其中 `tests/unit/` 71 个文件） |
 | `[[test]]` 显式注册目标 | 6 个（integration_tests / main / sdk_api_test / route_diag_test / ws_task_status / acceptance） |
 | Criterion 基准组 | 9 组（`benches/benchmark.rs`） |
