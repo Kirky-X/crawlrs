@@ -1,17 +1,19 @@
 # Copyright (c) 2025-2026 Kirky.X🌠
 # SPDX-License-Identifier: Apache-2.0
 
-# alchemize path 依赖的 CI sibling 检出。
+# alchemize path 依赖的 CI sibling 检出链。
 #
 # crawlrs 的可选特性 `alchemize` 以 path 依赖引用 ../alchemize（自研引擎仓）。
 # path 依赖在 cargo 解析期即读取 sibling 清单——runner 上缺失该目录时**全部**
-# cargo 命令（含 --no-default-features）解析失败。本动作把公有仓 alchemize
-# 检出到工作区内并 symlink 到 ../alchemize，使默认构建与特性构建都能解析。
+# cargo 命令（含 --no-default-features）解析失败。检出链共两层：
+#   crawlrs → ../alchemize（Kirky-X/alchemize）
+#            → ../vecboost（Kirky-X/vecboost，alchemize 的 audio 特性 path 依赖）
+# 两者均为公有仓；检出到工作区内后 symlink 到 workspace 父目录，满足 ../ 解析。
 #
-# 注意：checkout 的 alchemize main 必须包含 crawlrs Cargo.toml 所声明的
-# feature 名（当前为 `html`）；上游改名须先行落库。
+# 注意：远端 main 必须包含 crawlrs Cargo.toml 所声明的 feature 名（当前
+# alchemize 用 `html`）；上游改名须先行落库。
 name: alchemize-sibling
-description: Checkout the alchemize engine repo as the ../alchemize sibling required by the path dependency
+description: Checkout alchemize + vecboost as ../ siblings required by the path-dependency chain
 runs:
   using: composite
   steps:
@@ -21,14 +23,22 @@ runs:
         repository: Kirky-X/alchemize
         ref: main
         path: alchemize
-    - name: Symlink alchemize to ../alchemize
+    - name: Checkout vecboost (alchemize's path dependency)
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: Kirky-X/vecboost
+        ref: main
+        path: vecboost
+    - name: Symlink siblings to workspace parent
       shell: bash
       run: |
         set -euo pipefail
-        target="${GITHUB_WORKSPACE}/../alchemize"
-        if [ -e "$target" ]; then
-          echo "../alchemize already present, skipping symlink"
-        else
-          ln -s "${GITHUB_WORKSPACE}/alchemize" "$target"
-          echo "linked $target -> ${GITHUB_WORKSPACE}/alchemize"
-        fi
+        for name in alchemize vecboost; do
+          target="${GITHUB_WORKSPACE}/../${name}"
+          if [ -e "$target" ]; then
+            echo "../${name} already present, skipping symlink"
+          else
+            ln -s "${GITHUB_WORKSPACE}/${name}" "$target"
+            echo "linked ${target} -> ${GITHUB_WORKSPACE}/${name}"
+          fi
+        done
