@@ -427,10 +427,10 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
-    # 实测：缓存命中 ~30m；依赖变更导致缓存 miss 时冷编译全树 ~44m25s（a23e8bcf，
-    # alchemize 入树后）——每次 cancelled 都不会回写 rust-cache，故必须容纳整轮冷
-    # 构建；75 分钟留出双倍余量，成功一轮后缓存回写即回到 ~30m。
-    timeout-minutes: 75
+    # 实测：全 target 冷构建在 alchemize 入树后 >75m（a23e8bcf/b26b5d9e 两连 cancelled）；
+    # 缩围 --lib 后本地实测 90.12%（集成测试增益 <0.01pp），冷构建约减半；
+    # cancelled 不回写 rust-cache，60 分钟容纳整轮冷构建并留余量。
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16
@@ -474,7 +474,7 @@ jobs:
             PGPASSWORD=postgres psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d crawlrs_test -f "$f"  # pragma: allowlist secret
           done
       - name: Run coverage (fail under 80% lines)
-        run: cargo llvm-cov --features "full" --fail-under-lines 80 --lcov --output-path lcov.info
+        run: cargo llvm-cov --features "full" --lib --fail-under-lines 80 --lcov --output-path lcov.info
       - name: Upload coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:

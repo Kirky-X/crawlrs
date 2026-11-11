@@ -182,7 +182,7 @@ cargo doc --features "full" --no-deps          # CI doc job（RUSTDOCFLAGS=-D wa
 cargo deny check
 
 # 覆盖率门禁：行覆盖率 ≥ 80%
-cargo llvm-cov --features "full" --fail-under-lines 80
+cargo llvm-cov --features "full" --lib --fail-under-lines 80
 ```
 
 CI 的 test / integration-test / coverage job 均以 `postgres:16` service 容器为前提：先执行 `for f in migrations/postgres/*.sql; do psql ... -f "$f"; done` 应用迁移，再运行测试；`DATABASE_URL` / `TEST_DATABASE_URL` 指向 `postgres://postgres:postgres@localhost:5432/crawlrs_test`。test job 的工具链矩阵为 Rust 1.97.1 / stable（见 `ci.yml`）。

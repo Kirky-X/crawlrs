@@ -24,6 +24,7 @@
 
 - **Markdown 转换器默认切换为 alchemize**：`[markdown].converter` 默认值 `moli` → `alchemize`（自研 html 引擎：htmd 基础链 + 自研深链，内建空输出防呆/诚实降级/math `$TeX$` 保真路由）；`content` 特性收编 alchemize，`htmd` 保留直通诊断臂。等价性实测：13 用例（5 真实页 + 8 合成）10/13 字节等价（仅尾换行），math 页由泄漏 MathML 改善为 `$TeX$`，2 处导航件启发式差异（无内容丢失）；吞吐 wiki 1.06MB×20：moli 105.6 vs alchemize 96.8 MB/s（-8%）；装配链输出与 alchemize 原生 5 真实页逐字节一致，fidelity 8/8、markdown 域单测 38/38
 - **MSRV 1.97 → 1.97.1**：对齐 alchemize 的 `rust-version`；CI 工具链矩阵、README/FAQ/CONTRIBUTING 文案同步
+- **覆盖率作业缩围 `--lib`**：alchemize 入树后全 target 冷构建 >75m 连续超时（cancelled 不回写缓存）；lib-only 实测 90.12%（集成测试增益 <0.01pp），门禁 80% 不变，CI 超时 45→75→60（含冷构建余量）
 
 ### Removed
 

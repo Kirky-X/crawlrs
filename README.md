@@ -425,7 +425,7 @@ cargo clippy --features "full" -- -D warnings
 cargo doc --features "full" --no-deps          # CI doc job（RUSTDOCFLAGS=-D warnings）
 
 # 覆盖率门禁：行覆盖率不低于 80%（CI coverage job，结果上传 Codecov）
-cargo llvm-cov --features "full" --fail-under-lines 80
+cargo llvm-cov --features "full" --lib --fail-under-lines 80
 
 # 供应链检查（advisories / licenses / bans / sources）
 cargo deny check
