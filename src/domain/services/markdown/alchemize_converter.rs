@@ -1,18 +1,17 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! alchemize html 引擎单转换器（`alchemize` 特性；试验接入）
+//! alchemize html 引擎单转换器（默认转换器）
 //!
 //! 桥接自研引擎仓 alchemize 的同步门面 [`alchemize::Alchemize::convert_sync`]：
 //! `html` 特性链（htmd 基础链 + 自研深链主路径；深链名 `html-deep`，含空输出
-//! 防呆/双失败诚实报错、math `$TeX$` 保真路由）在 alchemize 侧内建，此处单
-//! 转换器直通——与 htmd 臂同构，无 crawlrs 侧二次兜底。空壳/纯脚本页返回空串
-//! （正确抑制，与 moli 链语义一致）。
+//! 防呆/双失败诚实报错、math 保真路由）在 alchemize 侧内建，此处单转换器直通
+//! ——与 htmd 诊断臂同构，无 crawlrs 侧二次兜底。空壳/纯脚本页返回空串（正确
+//! 抑制，与原 moli 链语义一致）。
 //!
-//! 与 moli 链的可观察差异（切换评估已完成，见 alchemize-html-deep-replacement
-//! 实测记录）：math 页产出 `$TeX$` 而非泄漏 MathML；隐藏/导航元素启发式不同；
-//! 内建兜底不产生 `crawlrs_md_converter_fallback_total` 指标（quality 标注
-//! `local_fallback` 随结果丢弃）。
+//! math 语义：`<math alttext>` / `<annotation>` → `$TeX$`；裸 MathML 净化为
+//! 文本内容（如 `x=1`），不泄漏 `<math>` 标签。旧 moli 链的"MathML 原样保留"
+//! 行为已随链退役；内建兜底不产生 `crawlrs_md_converter_fallback_total` 指标。
 
 use crate::domain::services::markdown_service::{MarkdownConverter, MarkdownError};
 

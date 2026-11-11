@@ -22,7 +22,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 
 ### 最低支持 Rust 版本（MSRV）
 
-`Cargo.toml` 声明 `rust-version = "1.97"`（workspace 同步锁定）。安全修复仅在受支持版本线上发布。
+`Cargo.toml` 声明 `rust-version = "1.97.1"`（workspace 同步锁定）。安全修复仅在受支持版本线上发布。
 
 ### 依赖安全基线
 

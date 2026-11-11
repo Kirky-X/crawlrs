@@ -1,6 +1,6 @@
 # 🧪 Crawlrs 测试场景矩阵
 
-> 适用版本：crawlrs **0.2.0**（workspace，`Cargo.toml` `rust-version = "1.97"`，edition 2021）
+> 适用版本：crawlrs **0.2.0**（workspace，`Cargo.toml` `rust-version = "1.97.1"`，edition 2021）
 > 数据来源：`Cargo.toml`、`.github/workflows/ci.yml`、`tests/`、`tests/docs/feature-test-matrix.md`（2026-09-14 校准）与 `benches/benchmark.rs` 实际代码。
 
 ## 📋 目录
@@ -185,7 +185,7 @@ cargo deny check
 cargo llvm-cov --features "full" --fail-under-lines 80
 ```
 
-CI 的 test / integration-test / coverage job 均以 `postgres:16` service 容器为前提：先执行 `for f in migrations/postgres/*.sql; do psql ... -f "$f"; done` 应用迁移，再运行测试；`DATABASE_URL` / `TEST_DATABASE_URL` 指向 `postgres://postgres:postgres@localhost:5432/crawlrs_test`。test job 的工具链矩阵为 Rust 1.97 / stable（见 `ci.yml`）。
+CI 的 test / integration-test / coverage job 均以 `postgres:16` service 容器为前提：先执行 `for f in migrations/postgres/*.sql; do psql ... -f "$f"; done` 应用迁移，再运行测试；`DATABASE_URL` / `TEST_DATABASE_URL` 指向 `postgres://postgres:postgres@localhost:5432/crawlrs_test`。test job 的工具链矩阵为 Rust 1.97.1 / stable（见 `ci.yml`）。
 
 ### 🎼 E2E 套件（7 阶段）
 

@@ -12,7 +12,7 @@
 # =============================================================================
 
 # ---------- Builder ----------
-FROM rust:1.97-slim AS builder
+FROM rust:1.97.1-slim AS builder
 
 # Install build dependencies (OpenSSL + pkg-config for TLS)
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -1888,7 +1888,6 @@ dependencies = [
  "dbnexus",
  "dirs 7.0.0",
  "dom_smoothie",
- "ego-tree",
  "encoding_rs",
  "fluent-bundle",
  "fluxweir",
@@ -1908,7 +1907,6 @@ dependencies = [
  "lru 0.19.0",
  "metrics",
  "metrics-exporter-prometheus",
- "moli-html2md",
  "nebulaid",
  "once_cell",
  "oxcache",
@@ -5814,14 +5812,6 @@ dependencies = [
  "smallvec",
  "tagptr",
  "uuid",
-]
-
-[[package]]
-name = "moli-html2md"
-version = "0.1.0"
-source = "git+https://github.com/lexmount/moli?rev=2db52b45ba47874bb85b59f6f8793a8786669f47#2db52b45ba47874bb85b59f6f8793a8786669f47"
-dependencies = [
- "icu_properties",
 ]
 
 [[package]]

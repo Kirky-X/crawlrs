@@ -18,11 +18,18 @@
 
 ### Dependencies
 
-- fluxweir 0.1.0（git rev 2d559ad）→ registry 0.1.1（已含此前缺失的嵌入式单池共享 `build_app_with_pool`）；`gateway` 组合本地实测 check/clippy/test 全绿；deny allow-git 白名单同步移除该源（crates.io 发布仍被 moli-html2md git 依赖挡住）
+- fluxweir 0.1.0（git rev 2d559ad）→ registry 0.1.1（已含此前缺失的嵌入式单池共享 `build_app_with_pool`）；`gateway` 组合本地实测 check/clippy/test 全绿；deny allow-git 白名单同步移除该源
 
-### Added（试验）
+### Changed
 
-- **alchemize 转换器接入**：自研引擎仓 alchemize 以 path 依赖引入（新特性 `alchemize`，不并入 default/standard/full——上游 MSRV 1.97.1 高于本仓 1.97；上游特性形态为每格式一 feature、依赖全 optional，`html` 自含 htmd 基础链+自研深链；path 依赖在 cargo 解析期即读取 sibling 清单，干净 checkout 需携带 `../alchemize`（及 alchemize 自身的 `../vecboost`）且上游 feature 名与本处声明一致）。`[markdown].converter = "alchemize"` 选用，经 `Alchemize::convert_sync` 同步门面直通（内建兜底、math `$TeX$` 保真路由、空壳抑制）。默认构建不编译 alchemize。等价性实测（复现：`/tmp/alch-cmp` 双 path 依赖 harness，crawlrs moli 链 vs alchemize html 引擎）：13 用例（5 真实页 wiki/docsrs/blog/hn/example + 8 合成）10/13 字节等价（仅尾换行），math 页由泄漏 MathML 改善为 `$TeX$`，2 处导航件启发式差异（无内容丢失，deep 侧保留更多）；吞吐 wiki 1.06MB×20：moli 105.6 vs deep 96.8 MB/s（-8%）；crawlrs 装配链输出与 alchemize 原生 5 真实页逐字节一致，markdown 域单测 55/55。已知差异：内建兜底不计入 `crawlrs_md_converter_fallback_total` 指标（quality 标注 `local_fallback`）
+- **Markdown 转换器默认切换为 alchemize**：`[markdown].converter` 默认值 `moli` → `alchemize`（自研 html 引擎：htmd 基础链 + 自研深链，内建空输出防呆/诚实降级/math `$TeX$` 保真路由）；`content` 特性收编 alchemize，`htmd` 保留直通诊断臂。等价性实测：13 用例（5 真实页 + 8 合成）10/13 字节等价（仅尾换行），math 页由泄漏 MathML 改善为 `$TeX$`，2 处导航件启发式差异（无内容丢失）；吞吐 wiki 1.06MB×20：moli 105.6 vs alchemize 96.8 MB/s（-8%）；装配链输出与 alchemize 原生 5 真实页逐字节一致，fidelity 8/8、markdown 域单测 38/38
+- **MSRV 1.97 → 1.97.1**：对齐 alchemize 的 `rust-version`；CI 工具链矩阵、README/FAQ/CONTRIBUTING 文案同步
+
+### Removed
+
+- **moli-html2md 依赖与转换链退役**：删除 `moli_adapter.rs` / `moli_converter.rs` / `converter_chain.rs`（moli 主 + htmd 兜底链），`content` 特性移除 `dep:moli-html2md` 与 `dep:ego-tree`；deny `allow-git` 清空（项目已无 git 源依赖）；`crawlrs_md_converter_fallback_total` 指标随链移除（alchemize 内建兜底不再单独计数）
+- **迁移说明**：`CRAWLRS__MARKDOWN__CONVERTER=moli`（旧默认值）在配置校验期被拒（启动失败），须改为 `alchemize`（默认）或 `htmd`
+- **注意**：alchemize 为 path 依赖（`../alchemize`，cargo 解析期即读取其清单；其可选 `audio` 特性另需 `../vecboost`）——干净 checkout 需携带同级 `../alchemize`，CI 各 cargo 作业经 `.github/actions/alchemize-sibling` 自动检出（含 vecboost，保证确定性）
 
 ## [0.2.0-rc.4] - 2026-11-10
 

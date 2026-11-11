@@ -27,7 +27,6 @@ use reqwest::redirect::Policy;
 use reqwest::Response;
 
 use crate::domain::services::content_extractor::ContentExtractionFacade;
-use crate::domain::services::markdown_service::MarkdownConverter;
 use crate::infrastructure::dns::create_ipv4_only_resolver;
 use crate::infrastructure::security::ssrf::{SsrfValidator, ValidatedUrl};
 
@@ -318,10 +317,12 @@ async fn convert_to_markdown(
     peer_addr: Option<String>,
 ) -> Result<FetchedContent, AgentLibError> {
     let facade = ContentExtractionFacade::new(None);
-    // agent-lib 嵌入式面不读取运行时 Settings：转换器固定为默认链
-    //（moli 主 + htmd 兜底）。[markdown].converter=htmd 的直通诊断仅作用于
+    // agent-lib 嵌入式面不读取运行时 Settings：转换器固定为默认装配
+    //（alchemize html 引擎）。[markdown].converter=htmd 的直通诊断仅作用于
     // 服务进程（worker 装配），agent-lib 嵌入形态显式豁免（架构约束）。
-    let markdown_converter = crate::domain::services::markdown::ConverterChain::default_chain();
+    let markdown_converter = crate::domain::services::markdown::build_converter(
+        &crate::config::settings::MarkdownSettings::default(),
+    );
 
     let extracted = facade.extract(html, current.as_str()).await;
 

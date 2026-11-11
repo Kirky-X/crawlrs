@@ -251,30 +251,27 @@ pub struct RobotsSettings {
 
 /// Markdown 转换器选择（`[markdown]` 段）
 ///
-/// `converter = "moli"`（默认）转换器链——moli-html2md 主 + htmd 兜底；
-/// `converter = "htmd"` 链退化为 htmd 单转换器直通（诊断/对比用，无兜底语义）；
-/// `converter = "alchemize"` 自研 html-deep 引擎单转换器直通（内建 htmd 兜底与
-/// math `$TeX$` 保真路由；`alchemize` 特性启用时可选，试验特性，MSRV 1.97.1）。
+/// `converter = "alchemize"`（默认）自研 html 引擎直通（htmd 基础链 + 自研深链，
+/// 内建空输出防呆/诚实降级/math `$TeX$` 保真路由）；
+/// `converter = "htmd"` htmd 单转换器直通（诊断/对比用，无兜底语义）。
+/// moli-html2md 链已退役（见 CHANGELOG Unreleased）。
 /// 非法值在配置校验期报错（`invalid_markdown_converter` 并列出合法值）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MarkdownConverterKind {
-    /// moli-html2md 主 + htmd 兜底链（默认）
+    /// alchemize html 引擎直通（默认；内建兜底）
     #[default]
-    Moli,
+    Alchemize,
     /// htmd 单转换器直通（诊断用）
     Htmd,
-    /// alchemize html-deep 单转换器直通（`alchemize` 特性；试验）
-    #[cfg(feature = "alchemize")]
-    Alchemize,
 }
 
 /// Markdown 转换配置
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__MARKDOWN__")]
 pub struct MarkdownSettings {
-    /// 转换器选择：moli（链，默认）| htmd（直通诊断）| alchemize（试验，需特性）
-    #[config(default = "moli".to_string())]
+    /// 转换器选择：alchemize（默认）| htmd（直通诊断）
+    #[config(default = "alchemize".to_string())]
     pub converter: String,
 }
 
@@ -282,27 +279,12 @@ impl MarkdownSettings {
     /// 解析转换器枚举（配置校验/装配层调用；非法值在装配期 fail-closed）
     pub fn converter_kind(&self) -> Result<MarkdownConverterKind, String> {
         match self.converter.to_ascii_lowercase().as_str() {
-            "moli" => Ok(MarkdownConverterKind::Moli),
-            "htmd" => Ok(MarkdownConverterKind::Htmd),
-            #[cfg(feature = "alchemize")]
             "alchemize" => Ok(MarkdownConverterKind::Alchemize),
+            "htmd" => Ok(MarkdownConverterKind::Htmd),
             other => Err(format!(
-                "invalid [markdown].converter = {other:?}; expected {}",
-                expected_converter_values()
+                "invalid [markdown].converter = {other:?}; expected \"alchemize\" or \"htmd\""
             )),
         }
-    }
-}
-
-/// 合法 converter 值清单（错误信息随 `alchemize` 特性增删）
-fn expected_converter_values() -> &'static str {
-    #[cfg(feature = "alchemize")]
-    {
-        "\"moli\", \"htmd\" or \"alchemize\""
-    }
-    #[cfg(not(feature = "alchemize"))]
-    {
-        "\"moli\" or \"htmd\""
     }
 }
 

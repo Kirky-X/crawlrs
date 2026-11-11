@@ -113,21 +113,15 @@ mod tests {
             result.unwrap_err().code.to_string(),
             "invalid_markdown_converter"
         );
-        // 合法值：moli 与 htmd（大小写不敏感）；alchemize 随特性加入
-        for ok in [
-            "moli",
-            "htmd",
-            "HTMD",
-            #[cfg(feature = "alchemize")]
-            "alchemize",
-        ] {
+        // 合法值：alchemize（默认）与 htmd（大小写不敏感）
+        for ok in ["alchemize", "htmd", "HTMD"] {
             settings.markdown.converter = ok.to_string();
             assert!(validate_values(&settings).is_ok(), "{ok} 应通过");
         }
-        // 默认值 moli
+        // 默认值 alchemize
         assert_eq!(
             crate::config::settings::MarkdownSettings::default().converter,
-            "moli"
+            "alchemize"
         );
     }
 

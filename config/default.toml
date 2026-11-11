@@ -203,11 +203,11 @@ failure_retire_threshold = 5
 failure_threshold = 3
 recovery_timeout_seconds = 120
 
-# Markdown Conversion (html2md-converter-chain)
-# converter = "moli"：转换器链（moli-html2md 主 + htmd 兜底；fallback 触发 log::warn + 计数）
+# Markdown Conversion（alchemize 收编；moli-html2md 链已退役）
+# converter = "alchemize"：自研 html 引擎直通（htmd 基础链 + 自研深链；内建兜底与 math $TeX$ 保真）
 # converter = "htmd"：htmd 单转换器直通（诊断/对比用，无兜底语义）
 [markdown]
-converter = "moli"
+converter = "alchemize"
 
 # Engine Configuration
 [engines]

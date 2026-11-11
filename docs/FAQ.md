@@ -43,7 +43,7 @@ crawlrs 是一个使用 Rust 构建的自托管企业级网页数据采集平台
 
 ### ❓ 系统要求是什么？
 
-Rust 1.97+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+（默认后端）、Docker 20+（集成测试与容器部署）。详见 README「快速开始」。
+Rust 1.97.1+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+（默认后端）、Docker 20+（集成测试与容器部署）。详见 README「快速开始」。
 
 ### ❓ 如何选择特性组合？
 

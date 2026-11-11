@@ -67,6 +67,7 @@ wildcards = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# 钉 rev 的 git 源（rev 在 Cargo.toml 钉死 + deny 四关护栏）：
-# - moli-html2md：HTML→Markdown 主转换器（fluxweir 已回归 registry 0.1.1，白名单移除）
-allow-git = ["https://github.com/lexmount/moli"]
+# 无 git 源依赖（fluxweir 已回归 registry 0.1.1；moli-html2md 已随 alchemize
+# 收编移除——两个历史 git 源均不再存在）。显式空表保留：unexpected git 源仍被
+# unknown-git = "deny" 拦截。
+allow-git = []

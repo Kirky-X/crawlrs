@@ -2,17 +2,20 @@
 //!
 //! 四类结构：GFM 表格（thead 表头行 / 全 th 首行 / role=presentation 布局表展开 /
 //! 复杂表回退 HTML 段）、MathML 原样保留、TeX→`$..$` 包裹、表单默认值输出。
-//! 样本对 {moli 链, htmd} 双跑：断言 moli 链的结构特征（探针实测输出为断言基准），
-//! htmd 对照跑通作为链兜底路径的活体验证。
+//! 样本对 {alchemize 默认转换器, htmd} 双跑：断言默认转换器的结构特征（探针实测
+//! 输出为断言基准），htmd 对照跑通作为诊断臂的活体验证。
 
 #![cfg(feature = "content")]
 
-use crawlrs::domain::services::markdown::ConverterChain;
+use std::sync::Arc;
+
+use crawlrs::config::settings::MarkdownSettings;
+use crawlrs::domain::services::markdown::build_converter;
 use crawlrs::domain::services::markdown_service::{HtmdMarkdownService, MarkdownConverter};
 
-/// 智造：default_chain = moli-html2md 主 + htmd 兜底
-fn moli_chain() -> ConverterChain {
-    ConverterChain::default_chain()
+/// 默认装配：alchemize html 引擎（htmd 基础链 + 自研深链）
+fn default_converter() -> Arc<dyn MarkdownConverter> {
+    build_converter(&MarkdownSettings::default())
 }
 
 fn htmd() -> HtmdMarkdownService {
@@ -25,11 +28,13 @@ fn htmd() -> HtmdMarkdownService {
 #[test]
 fn gfm_table_with_thead_header_row() {
     let html = r#"<table><thead><tr><th>Name</th><th>Age</th></tr></thead><tbody><tr><td>Alice</td><td>30</td></tr></tbody></table>"#;
-    let md = moli_chain().convert(html).expect("moli chain convert ok");
+    let md = default_converter()
+        .convert(html)
+        .expect("default converter ok");
     assert!(md.contains("| Name | Age |"), "表头行缺失: {md}");
     assert!(md.contains("| --- | --- |"), "分隔行缺失: {md}");
     assert!(md.contains("| Alice | 30 |"), "数据行缺失: {md}");
-    // htmd 对照跑通（兜底路径活体验证）
+    // htmd 对照跑通（诊断臂活体验证）
     assert!(htmd().convert(html).is_ok());
 }
 
@@ -37,7 +42,9 @@ fn gfm_table_with_thead_header_row() {
 #[test]
 fn gfm_table_all_th_first_row() {
     let html = r#"<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"#;
-    let md = moli_chain().convert(html).expect("moli chain convert ok");
+    let md = default_converter()
+        .convert(html)
+        .expect("default converter ok");
     assert!(md.contains("| A | B |"), "全 th 首行未作表头: {md}");
     assert!(md.contains("| 1 | 2 |"), "数据行缺失: {md}");
 }
@@ -46,7 +53,9 @@ fn gfm_table_all_th_first_row() {
 #[test]
 fn layout_table_expanded_not_rendered_as_table() {
     let html = r#"<table role="presentation"><tr><td>left</td><td>right</td></tr></table>"#;
-    let md = moli_chain().convert(html).expect("moli chain convert ok");
+    let md = default_converter()
+        .convert(html)
+        .expect("default converter ok");
     assert!(
         md.contains("left") && md.contains("right"),
         "布局表内容缺失: {md}"
@@ -62,21 +71,33 @@ fn layout_table_expanded_not_rendered_as_table() {
 fn complex_table_falls_back_to_html_block() {
     let html =
         r#"<table><tr><td colspan="2">merged</td></tr><tr><td>a</td><td>b</td></tr></table>"#;
-    let md = moli_chain().convert(html).expect("moli chain convert ok");
+    let md = default_converter()
+        .convert(html)
+        .expect("default converter ok");
     assert!(md.contains("<table>"), "复杂表应回退 HTML 段: {md}");
     assert!(md.contains("colspan=\"2\""), "合并单元格属性应保留: {md}");
 }
 
-// ---- 2. MathML 原样保留 ----
+// ---- 2. Math 保真（MathML 净化不泄漏标签；alttext/annotation 走 TeX）----
 
 #[test]
-fn mathml_preserved_verbatim() {
+fn mathml_content_kept_without_raw_tags() {
+    // 无 alttext/annotation 的裸 MathML：不得泄漏原始 <math> 标签到正文
     let html = r#"<p>Formula: <math><mi>x</mi><mo>=</mo><mn>1</mn></math> end</p>"#;
-    let md = moli_chain().convert(html).expect("moli chain convert ok");
-    assert!(
-        md.contains("<math><mi>x</mi><mo>=</mo><mn>1</mn></math>"),
-        "MathML 应原样保留: {md}"
-    );
+    let md = default_converter()
+        .convert(html)
+        .expect("default converter ok");
+    assert!(!md.contains("<math>"), "裸 MathML 不得原样泄漏: {md}");
+    assert!(md.contains("Formula:"), "正文文本应保留: {md}");
+    assert!(md.contains("x=1"), "数学内容应净化为文本保留: {md}");
+
+    // 带 alttext 的 MathML：math 保真路由 → $TeX$（旧 moli 会泄漏原始 MathML）
+    let html = r#"<p>Euler: <math alttext="e^{i\pi}+1=0"><mrow><mi>e</mi></mrow></math></p>"#;
+    let md = default_converter()
+        .convert(html)
+        .expect("default converter ok");
+    assert!(md.contains("$e^{i\\pi}+1=0$"), "alttext 应转为 TeX: {md}");
+    assert!(!md.contains("<math>"), "MathML 不得泄漏: {md}");
 }
 
 // ---- 3. TeX → $..$ ----
@@ -84,7 +105,9 @@ fn mathml_preserved_verbatim() {
 #[test]
 fn tex_delimiters_normalized_to_dollar() {
     let html = r#"<p>Inline <span class="math">\(E=mc^2\)</span> and $$a+b$$</p>"#;
-    let md = moli_chain().convert(html).expect("moli chain convert ok");
+    let md = default_converter()
+        .convert(html)
+        .expect("default converter ok");
     assert!(md.contains("$E=mc^2$"), "\\(..\\) 应转为 $..$: {md}");
     assert!(md.contains("$$a+b$$"), "块级 $$..$$ 应保留: {md}");
 }
@@ -94,7 +117,9 @@ fn tex_delimiters_normalized_to_dollar() {
 #[test]
 fn form_default_values_emitted() {
     let html = r#"<form><input type="text" name="user" value="bob"><select name="pick"><option value="1" selected>One</option><option value="2">Two</option></select><textarea name="note">hello</textarea></form>"#;
-    let md = moli_chain().convert(html).expect("moli chain convert ok");
+    let md = default_converter()
+        .convert(html)
+        .expect("default converter ok");
     assert!(md.contains("bob"), "input 默认值缺失: {md}");
     assert!(md.contains("One"), "select 选中项文本缺失: {md}");
     assert!(md.contains("hello"), "textarea 内容缺失: {md}");

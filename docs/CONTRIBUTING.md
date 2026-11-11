@@ -26,7 +26,7 @@ crawlrs 是使用 Rust 构建的企业级网页数据采集平台。无论是修
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
-| Rust | 1.97+（`Cargo.toml` `rust-version`；stable 即可） | 工具链 |
+| Rust | 1.97.1+（`Cargo.toml` `rust-version`；stable 即可） | 工具链 |
 | protoc | 任意较新版本 | sdforge 构建依赖（CI 用 taiki-e/install-action 安装） |
 | PostgreSQL | 16+ | 集成测试（testcontainers 自动拉起，或外部实例） |
 | Docker | 20+ | testcontainers / docker-compose 测试环境 |
@@ -117,7 +117,7 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 | 3 | `feature-matrix` | 7 组合 + garrison 门控断言 + RSA 前提校验 |
 | 4 | `fmt` | `cargo fmt --all -- --check` |
 | 5 | `clippy` | `cargo clippy --features "standard" -- -D warnings` + `--features "full" -- -D warnings` |
-| 6 | `test` | `cargo test`（Rust 1.97 / stable 矩阵） |
+| 6 | `test` | `cargo test`（Rust 1.97.1 / stable 矩阵） |
 | 7 | `doc` | `cargo doc --features "full" --no-deps`（`RUSTDOCFLAGS=-D warnings`，零警告） |
 | 8 | `deny` | `cargo deny check` |
 | 9 | `integration-test` | `cargo test --features "full,test-mocks" --tests`（PostgreSQL 16 service 容器） |

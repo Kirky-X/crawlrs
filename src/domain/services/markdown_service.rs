@@ -3,9 +3,9 @@
 
 //! HTML → Markdown 转换抽象与 htmd 实现
 //!
-//! 提供 `MarkdownConverter` 窄 trait（链成员接口）与 `HtmdMarkdownService`
-//! （htmd 实现，在转换器链中担任兜底；主转换器为 `markdown/` 子模块的
-//! moli-html2md）。`only_main_content` 语义由正文提取链
+//! 提供 `MarkdownConverter` 窄 trait（转换器接口）与 `HtmdMarkdownService`
+//! （htmd 直通诊断臂；默认转换器为 `markdown/` 子模块的 alchemize html 引擎）。
+//! `only_main_content` 语义由正文提取链
 //! （`content_extractor/facade.rs`）在转换前完成，转换器只做整页/正文 HTML → MD。
 //!
 //! 特性门控：本模块整体 gated `content`（声明的 `dep:htmd`）。
@@ -18,17 +18,14 @@ pub enum MarkdownError {
     /// 单转换器转换失败
     #[error("Markdown conversion failed: {0}")]
     ConversionFailed(String),
-    /// 转换器链双败：携带 primary / fallback 两侧原因（不吞错）
-    #[error("Markdown converter chain failed: primary={primary}; fallback={fallback}")]
-    ChainFailed { primary: String, fallback: String },
 }
 
-/// 转换器抽象（转换器链成员，html2md-converter-chain 变更）
+/// 转换器抽象（装配面成员；alchemize 默认 + htmd 诊断臂）
 ///
 /// 窄接口：只承诺 `name` 标识与纯 HTML→Markdown 转换，便于链成员替换与诊断。
 /// 正文裁剪（only_main_content 语义）由提取链在转换前完成，不在此接口内。
 pub trait MarkdownConverter: Send + Sync {
-    /// 转换器名称（链日志/指标标签，如 "moli" / "htmd"）
+    /// 转换器名称（链日志/指标标签，如 "alchemize" / "htmd"）
     fn name(&self) -> &'static str;
     /// 将 HTML 转换为 Markdown（空输入返回空串，与既有服务语义一致）
     fn convert(&self, html: &str) -> Result<String, MarkdownError>;

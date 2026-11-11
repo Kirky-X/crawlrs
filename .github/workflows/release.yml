@@ -226,14 +226,15 @@ jobs:
           echo "crawlrs ${VERSION}: HTTP ${CODE}"
           echo "exists=$([[ "$CODE" == "200" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
-      # crates.io 不接受 git 依赖：moli-html2md / fluxweir 尚未发 registry 版本时
-      # cargo publish 必败（"no matching package found"）。检测到 git 依赖即显式跳过
-      # 并放行 GitHub Release（源码发布）；上游 registry 化后本守卫自动放行发布。
-      - name: Detect git dependencies
+      # crates.io 不接受 git 依赖与无 registry 版本对应的 path 依赖：cargo publish 会以
+      # "no matching package found" 失败。检测到任一非 registry 依赖即显式跳过 publish
+      # 并放行 GitHub Release（源码发布）；依赖 registry 化后本守卫自动放行。
+      - name: Detect non-registry dependencies
         id: gitdeps
         run: |
-          if grep -qE '\bgit[[:space:]]*=' Cargo.toml; then
-            echo "git dependencies present -> crates.io publish deferred (upstream not on registry yet)"
+          if grep -qE '\bgit[[:space:]]*=' Cargo.toml \
+            || grep -qE '^[A-Za-z0-9_-]+ *= *\{[^}]*path *= *"' Cargo.toml; then
+            echo "non-registry dependencies (git/path) present -> crates.io publish deferred"
             echo "has=true" >> $GITHUB_OUTPUT
           else
             echo "has=false" >> $GITHUB_OUTPUT
@@ -248,7 +249,7 @@ jobs:
       - name: Notice skipped crates.io publish
         if: steps.published.outputs.exists == 'false' && steps.gitdeps.outputs.has == 'true'
         run: |
-          echo "::notice::crates.io publish skipped: git dependencies (see Detect git dependencies) block cargo publish until upstream crates are published"
+          echo "::notice::crates.io publish skipped: non-registry dependencies (git/path, see Detect non-registry dependencies) block cargo publish until upstream crates are published"
 
   github-release:
     name: GitHub Release
@@ -264,6 +265,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # github-release 的 cargo package 分支同样需要 alchemize sibling
+      - uses: ./.github/actions/alchemize-sibling
 
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
@@ -272,11 +275,12 @@ jobs:
         with:
           shared-key: release-full-deps
 
-      # cargo package 同样拒绝 git 依赖：有 git 依赖时改用 tag 源码归档
-      - name: Detect git dependencies
+      # cargo package 同样拒绝 git 依赖与 path 依赖（无 registry 版本）：改 tag 源码归档
+      - name: Detect non-registry dependencies
         id: gitdeps
         run: |
-          if grep -qE '\bgit[[:space:]]*=' Cargo.toml; then
+          if grep -qE '\bgit[[:space:]]*=' Cargo.toml \
+            || grep -qE '^[A-Za-z0-9_-]+ *= *\{[^}]*path *= *"' Cargo.toml; then
             echo "has=true" >> $GITHUB_OUTPUT
           else
             echo "has=false" >> $GITHUB_OUTPUT
@@ -296,7 +300,7 @@ jobs:
           echo "CRATE_SUM=$CRATE_FILE.sha256" >> $GITHUB_ENV
           echo "Built: $CRATE_FILE"
 
-      - name: Build tagged source archive (git deps present)
+      - name: Build tagged source archive (non-registry deps present)
         if: steps.gitdeps.outputs.has == 'true'
         run: |
           VERSION="${{ needs.version-consistency.outputs.version }}"
@@ -305,7 +309,7 @@ jobs:
           shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
           echo "CRATE_FILE=$ARTIFACT" >> $GITHUB_ENV
           echo "CRATE_SUM=$ARTIFACT.sha256" >> $GITHUB_ENV
-          echo "Built: $ARTIFACT (tagged source; .crate unavailable while git deps exist)"
+          echo "Built: $ARTIFACT (tagged source; .crate unavailable while non-registry deps exist)"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -377,10 +381,11 @@ jobs:
         env:
           VERSION: ${{ steps.extract-version.outputs.version }}
         run: |
-          # git 依赖未 registry 化时发布侧已显式跳过 crates.io（见 publish-crates-io
-          # 的 Detect git dependencies），此处不把"未上 crates"判为失败。
-          if grep -qE '\bgit[[:space:]]*=' Cargo.toml; then
-            echo "::notice::crates.io verification skipped: git dependencies defer registry publish"
+          # 非 registry 依赖（git/path）时发布侧已显式跳过 crates.io（见 publish-crates-io
+          # 的 Detect non-registry dependencies），此处不把"未上 crates"判为失败。
+          if grep -qE '\bgit[[:space:]]*=' Cargo.toml \
+            || grep -qE '^[A-Za-z0-9_-]+ *= *\{[^}]*path *= *"' Cargo.toml; then
+            echo "::notice::crates.io verification skipped: non-registry dependencies defer registry publish"
             exit 0
           fi
           PUBLISHED=""

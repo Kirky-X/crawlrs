@@ -6,7 +6,7 @@
 
 在开始之前，请确保已安装以下软件：
 
-- **Rust 1.97+**：`rustc --version`（与主项目 `Cargo.toml` 的 `rust-version` 一致）
+- **Rust 1.97.1+**：`rustc --version`（与主项目 `Cargo.toml` 的 `rust-version` 一致）
 - **PostgreSQL 16+** 或 **SQLite 3.35+**
 
 安装依赖：

@@ -42,10 +42,10 @@ pub mod extraction_utils;
 pub mod geo_location;
 pub mod id_service;
 pub mod llm;
-/// Markdown 转换器链子模块（moli-html2md 主 + htmd 兜底；html2md-converter-chain 变更）
+/// Markdown 转换器装配子模块（alchemize 默认 + htmd 诊断臂；moli 链已退役）
 #[cfg(feature = "content")]
 pub mod markdown;
-/// Markdown 转换抽象与 htmd 兜底实现（content-processing R1）
+/// Markdown 转换抽象与 htmd 诊断臂实现（content-processing R1）
 ///
 /// gated `content` 特性（依赖 `htmd`）。`content` 已加入 `standard`/`full`。
 #[cfg(feature = "content")]

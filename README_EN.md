@@ -2,7 +2,7 @@
 
 <img src="docs/image/crawlrs.png" alt="Crawlrs Logo" width="240">
 
-[![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97+](https://img.shields.io/badge/Rustc-1.97+-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![release](https://img.shields.io/github/v/release/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/releases) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![license](https://img.shields.io/github/license/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE)
+[![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97.1+](https://img.shields.io/badge/Rustc-1.97.1+-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![release](https://img.shields.io/github/v/release/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/releases) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![license](https://img.shields.io/github/license/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE)
 
 [**中文**](README.md) | English
 
@@ -113,7 +113,7 @@ cargo build --release --features full
 
 </details>
 
-Requires Rust 1.97 or later (`rust-version` in `Cargo.toml`, latest stable is fine); the default database backend is PostgreSQL 16+ (`db-postgres`); Docker 20+ is used for integration tests (testcontainers) and containerized deployment.
+Requires Rust 1.97.1 or later (`rust-version` in `Cargo.toml`, latest stable is fine); the default database backend is PostgreSQL 16+ (`db-postgres`); Docker 20+ is used for integration tests (testcontainers) and containerized deployment.
 
 ### 💡 Minimal Example
 
@@ -225,7 +225,7 @@ The table below is a major subset of the `[features]` section of `Cargo.toml` (f
 | `rate-limit` | limiteron rate limiting & circuit breaking; when off, `NoopRateLimitingService` is injected | ✅ |
 | `webhook` | Webhook delivery; when off, `/v1/webhooks` routes are removed and a Noop is injected | ✅ |
 | `metrics` | Prometheus metrics export (incl. sysinfo memory awareness) | ✅ (platform) |
-| `content` | Anti-bot detection (aho-corasick) + HTML→Markdown (htmd) | ✅ (platform) |
+| `content` | Anti-bot detection (aho-corasick) + HTML→Markdown (alchemize html engine default; htmd diagnostic arm) | ✅ (platform) |
 | `db-postgres` / `db-sqlite` / `db-mysql` | Database driver, pick exactly one (compile-time exclusivity enforced by dbnexus) | ✅ postgres |
 | `engine-playwright` | chromiumoxide browser automation engine | ❌ |
 | `engine-flaresolverr` | FlareSolverr anti-bot engine (Full/Cdp/Tls modes) | ❌ |
@@ -509,7 +509,7 @@ For the detailed contribution process and code conventions, see the [🤝 Contri
 
 ### 🛠️ Development Environment
 
-See `rust-version` in `Cargo.toml` (1.97) for the toolchain requirement; protoc is needed to build sdforge. Before committing run `scripts/pre-commit-check.sh all` (fmt → clippy → check → build → secret scan) and follow Conventional Commits (`type(scope): subject`). For the TDD workflow, branching and testing requirements see [🤝 Contributing Guide · Development Workflow](docs/CONTRIBUTING.md).
+See `rust-version` in `Cargo.toml` (1.97.1) for the toolchain requirement; protoc is needed to build sdforge. Before committing run `scripts/pre-commit-check.sh all` (fmt → clippy → check → build → secret scan) and follow Conventional Commits (`type(scope): subject`). For the TDD workflow, branching and testing requirements see [🤝 Contributing Guide · Development Workflow](docs/CONTRIBUTING.md).
 
 ### 💖 Ways to Contribute
 
@@ -588,7 +588,8 @@ crawlrs stands on the shoulders of these excellent open-source projects:
 | [wreq](https://crates.io/crates/wreq) | BoringSSL TLS fingerprint masking |
 | [scraper](https://crates.io/crates/scraper) | HTML parsing |
 | [genai](https://crates.io/crates/genai) | Vision-model access (`engine-mllm` MLLM engine) |
-| [htmd](https://crates.io/crates/htmd) | HTML→Markdown conversion |
+| [htmd](https://crates.io/crates/htmd) | HTML→Markdown conversion (diagnostic arm) |
+| [alchemize](https://github.com/Kirky-X/alchemize) | Default HTML→Markdown converter (self-hosted html engine; path dependency) |
 | [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | Content extraction |
 | [criterion](https://crates.io/crates/criterion) | Benchmarking |
 | [testcontainers](https://crates.io/crates/testcontainers) | Integration test infrastructure |

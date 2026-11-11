@@ -2,7 +2,7 @@
 
 <img src="docs/image/crawlrs.png" alt="Crawlrs Logo" width="240">
 
-[![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97+](https://img.shields.io/badge/Rustc-1.97+-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![release](https://img.shields.io/github/v/release/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/releases) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![license](https://img.shields.io/github/license/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE)
+[![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97.1+](https://img.shields.io/badge/Rustc-1.97.1+-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![release](https://img.shields.io/github/v/release/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/releases) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![license](https://img.shields.io/github/license/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE)
 
 **中文** | [English](README_EN.md)
 
@@ -113,7 +113,7 @@ cargo build --release --features full
 
 </details>
 
-要求 Rust 1.97 及以上（`Cargo.toml` 的 `rust-version`，最新稳定版即可）；默认数据库后端为 PostgreSQL 16+（`db-postgres`）；Docker 20+ 用于集成测试（testcontainers）与容器化部署。
+要求 Rust 1.97.1 及以上（`Cargo.toml` 的 `rust-version`，最新稳定版即可）；默认数据库后端为 PostgreSQL 16+（`db-postgres`）；Docker 20+ 用于集成测试（testcontainers）与容器化部署。
 
 ### 💡 最小示例
 
@@ -225,7 +225,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `rate-limit` | limiteron 限流熔断；关闭时注入 `NoopRateLimitingService` | ✅ |
 | `webhook` | Webhook 投递；关闭时移除 `/v1/webhooks` 路由并注入 Noop | ✅ |
 | `metrics` | Prometheus 指标导出（含 sysinfo 内存感知） | ✅（platform） |
-| `content` | 反爬检测（aho-corasick）+ HTML→Markdown 转换器链（moli-html2md 主 + htmd 兜底） | ✅（platform） |
+| `content` | 反爬检测（aho-corasick）+ HTML→Markdown 转换（alchemize html 引擎为默认；htmd 直通诊断臂） | ✅（platform） |
 | `db-postgres` / `db-sqlite` / `db-mysql` | 数据库驱动三选一（dbnexus 编译期互斥强制） | ✅ postgres |
 | `engine-playwright` | chromiumoxide 浏览器自动化引擎 | ❌ |
 | `engine-flaresolverr` | FlareSolverr 反爬引擎（Full/Cdp/Tls 三模式） | ❌ |
@@ -509,7 +509,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 ### 🛠️ 开发环境
 
-工具链要求见 `Cargo.toml` 的 `rust-version`（1.97），构建 sdforge 需要 protoc；提交前运行 `scripts/pre-commit-check.sh all`（fmt → clippy → check → build → 私钥扫描），提交信息遵循 Conventional Commits（`type(scope): subject`）。开发工作流（TDD）、分支与测试要求见 [🤝 贡献指南 · 开发工作流](docs/CONTRIBUTING.md)。
+工具链要求见 `Cargo.toml` 的 `rust-version`（1.97.1），构建 sdforge 需要 protoc；提交前运行 `scripts/pre-commit-check.sh all`（fmt → clippy → check → build → 私钥扫描），提交信息遵循 Conventional Commits（`type(scope): subject`）。开发工作流（TDD）、分支与测试要求见 [🤝 贡献指南 · 开发工作流](docs/CONTRIBUTING.md)。
 
 ### 💖 贡献方式
 
@@ -588,8 +588,8 @@ crawlrs 站在以下优秀开源项目的肩膀上：
 | [wreq](https://crates.io/crates/wreq) | BoringSSL TLS 指纹伪装 |
 | [scraper](https://crates.io/crates/scraper) | HTML 解析 |
 | [genai](https://crates.io/crates/genai) | 视觉模型接入（`engine-mllm` MLLM 引擎） |
-| [htmd](https://crates.io/crates/htmd) | HTML→Markdown 转换（转换器链兜底） |
-| [moli-html2md](https://github.com/lexmount/moli) | HTML→Markdown 主转换器（git 依赖钉 rev；GFM 表格/MathML/TeX 保真） |
+| [htmd](https://crates.io/crates/htmd) | HTML→Markdown 转换（诊断臂直通） |
+| [alchemize](https://github.com/Kirky-X/alchemize) | HTML→Markdown 默认转换器（自研 html 引擎：htmd 基础链 + 自研深链；path 依赖） |
 | [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | 正文提取 |
 | [criterion](https://crates.io/crates/criterion) | 基准测试 |
 | [testcontainers](https://crates.io/crates/testcontainers) | 集成测试基础设施 |

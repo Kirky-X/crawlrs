@@ -508,7 +508,7 @@ domain/
 │   │                              #  prompt_builder, chunker, provenance；
 │   │                              #  vision_adapter 由 engine-mllm 门控）
 │   ├── content_extractor/         # 正文提取（trafilatura/dom_smoothie/css_rule/quality_gate/facade）
-│   ├── markdown/                 # 转换器链（moli_adapter/moli_converter/converter_chain）
+│   ├── markdown/                 # 转换器装配（alchemize_converter 默认 + htmd 诊断臂）
 │   ├── markdown_service.rs
 │   ├── relevance_scorer.rs
 │   ├── retry_handler.rs
@@ -1550,22 +1550,22 @@ gated `content` 特性。**三层管线**（html2md-converter-chain 变更后）
 HTML（静态抓取或浏览器渲染产物）
   → ① 提取链（`content_extractor/facade.rs`）：Trafilatura → DomSmoothie → CSS 规则
        （only_main_content=true 时先裁正文；零改动）
-  → ② 转换器链（`markdown/converter_chain.rs`）：moli-html2md 主 → htmd 兜底
-       （[markdown] converter = "moli" 默认；"htmd" 直通诊断，无兜底）
+  → ② 转换器（`markdown/`）：alchemize html 引擎默认（htmd 基础链 + 自研深链，
+       内建空输出防呆/诚实降级/math $TeX$ 保真；[markdown] converter = "alchemize"
+       默认；"htmd" 直通诊断臂）
   → ③ 后处理（`workers/markdown_post_processor.rs`）：only_main_content 三路 +
        链接绝对化（零改动）
 ```
 
-- 抽象：`MarkdownConverter{name,convert}` 窄接口（链成员与 htmd 单转换器共用；
-  旧 `MarkdownServiceTrait` 已删除——一步到位，不留兼容层）
-- 兜底语义：primary `Err` 或「输入含可见文本而输出空白」→ fallback + `log::warn!` +
-  `crawlrs_md_converter_fallback_total{from,to,reason}`；双败 → `ChainFailed` 带两侧原因
-- 适配器：`markdown/moli_adapter.rs` 把 `scraper::Html`（html5ever 树）暴露为
-  `moli_html2md::Dom`（4 个必需方法；注释/doctype→Other；文本已解码不二次转义）；
-  `<template>` 子树按契约暴露但上游按 HTML 规范跳过（script/style/template 不出产物）
-- 依赖：`moli-html2md` 以 git 依赖钉 rev（`2db52b45`，tag v1.1.21；仅
-  `icu_properties` 运行时依赖，无 V8/moli 主 crate）+ `ego-tree`（与 scraper 同版本，
-  树 NodeId 类型同一性）；deny 白名单该 git 源
+- 抽象：`MarkdownConverter{name,convert}` 窄接口（装配面 `markdown::build_converter`
+  按 `[markdown].converter` 选择 alchemize 默认臂或 htmd 诊断臂；旧
+  `MarkdownServiceTrait` 已删除——一步到位，不留兼容层）
+- 兜底语义：alchemize 内建（htmd 基础链 + 自研深链；空输出防呆、双失败诚实报错、
+  math `$TeX$` 保真路由）；旧 `ConverterChain`（moli 主 + htmd 兜底）与其
+  `crawlrs_md_converter_fallback_total` 指标已随 moli-html2md 退役移除
+- 依赖：`alchemize`（自研 html 引擎仓，`html` 特性）为 path 依赖；cargo 解析期
+  即读取 `../alchemize` 清单（其可选 audio 特性才需 `../vecboost`），CI 各 cargo
+  作业经 `.github/actions/alchemize-sibling` 检出同级仓后 symlink
 - `ScrapeResponse.markdown: Option<String>`；`scrape_worker` 经
   `MarkdownPostProcessor` 在 formats 含 `"markdown"` 时生成
 

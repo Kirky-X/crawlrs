@@ -166,7 +166,7 @@ done
 ## 先决条件
 
 ### 必需
-- Rust 1.97+（与主项目 `Cargo.toml` 的 `rust-version` 一致）
+- Rust 1.97.1+（与主项目 `Cargo.toml` 的 `rust-version` 一致）
 - PostgreSQL 16+ 或 SQLite 3.35+（视示例所需）
 
 ### 可选

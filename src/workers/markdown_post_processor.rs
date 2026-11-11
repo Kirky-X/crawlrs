@@ -111,7 +111,7 @@ impl MarkdownPostProcessor {
     /// # 参数
     ///
     /// - `markdown_converter`：Markdown 转换器（实现 `MarkdownConverter` trait），
-    ///   默认注入 [`crate::domain::services::markdown::ConverterChain`]（moli 主 + htmd 兜底）。
+    ///   默认注入 alchemize html 引擎（`markdown::build_converter` 默认装配）。
     ///   通过 `Arc` 共享，多个 worker 可共用同一实例。
     /// - `content_extractor`：可选的正文提取门面。
     ///   `only_main_content=true` 时先提取正文再转 Markdown；`None` 时跳过。
