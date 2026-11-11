@@ -663,7 +663,7 @@ infrastructure/
 │   ├── http_rerank_provider.rs     # 远端 Rerank HTTP 适配（仅 reqwest，无需 feature）
 │   ├── fluxweir_llm_carrier.rs     # 宿主 LLM carrier 注入（T011 退役 rag-remote/genai）
 │   ├── fluxweir_providers.rs       # 嵌入/重排远端兜底（fluxweir 统一出口）
-│   ├── vecboost_provider.rs        # rag-local：本地嵌入/重排（Candle CPU）
+│   ├── vecboost_provider.rs        # rag-local：本地嵌入/重排（vecboost）
 │   └── webhook_sender_impl.rs
 ├── dns/                    # DNS resolution + caching
 │   ├── mod.rs

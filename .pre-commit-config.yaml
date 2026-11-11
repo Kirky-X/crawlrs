@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # pre-commit 配置 — 与 base/inklog 同基线，cargo 钩子口径对齐本仓 .github/workflows/ci.yml
-# （crawlrs 为 [workspace] members = ["examples"]，故用 --all；不可用 --all-features：
-#  db-postgres/db-sqlite/db-mysql 互斥、rag-local/rag-remote 互斥，由 dbnexus 编译期强制）
+# （fmt 用 -p 定点本仓两包对齐 ci.yml fmt 作业：--all 会遍历未激活 path 依赖声明，
+#  ../alchemize 在位而其可选依赖 ../vecboost 缺失时解析失败，见 ci.yml fmt 注释；
+#  不可用 --all-features：db-postgres/db-sqlite/db-mysql 互斥，由 dbnexus 编译期强制）
 # 安装: pip install pre-commit && pre-commit install
 #       pre-commit install --hook-type post-commit   # 启用提交后清理
 repos:
@@ -49,8 +50,8 @@ repos:
     hooks:
       - id: cargo-fmt
         name: Format Rust code
-        description: Run rustfmt on Rust files（对齐 ci.yml 的 fmt 作业 cargo fmt --all -- --check）
-        entry: cargo fmt --all -- --check
+        description: Run rustfmt on Rust files（对齐 ci.yml 的 fmt 作业 cargo fmt -p crawlrs -p crawlrs-examples -- --check）
+        entry: cargo fmt -p crawlrs -p crawlrs-examples -- --check
         language: system
         types: [rust]
         pass_filenames: false

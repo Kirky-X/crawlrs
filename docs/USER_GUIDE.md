@@ -1001,15 +1001,13 @@ with the matching feature:
 
 | Build feature | Provider | What it does |
 |---------------|----------|--------------|
-| `rag-local` | vecboost (Candle CPU, local model) | One bi-encoder model serves both embedding and re-ranking; no network calls |
-| `rag-remote` | rig-core (OpenAI-compatible endpoint) | Remote embeddings; pair with any re-rank endpoint below |
+| `rag-local` | vecboost (local model) | One bi-encoder model serves both embedding and re-ranking; no network calls |
 | *(none)* | generic HTTP re-rank | `rerank_provider = "http"` works with the default build — only `reqwest` is required |
 
 `rerank_provider = "http"` with `rerank_format = "cohere"` (Cohere v2, Jina, most self-hosted)
 or `"tei"` (text-embeddings-inference). API keys are injected via environment, never config files:
 
 ```bash
-export CRAWLRS__RAG__REMOTE_API_KEY=sk-...
 export CRAWLRS__RAG__RERANK_API_KEY=...
 ```
 
