@@ -235,8 +235,7 @@ The table below is a major subset of the `[features]` section of `Cargo.toml` (f
 | `llm` | LLM extraction boundary (trait + orchestration; provider access injected by the host carrier) | ❌ |
 | `sitemap` | Sitemap generation (`/v1/map` endpoint) | ✅ (platform/standard) |
 | `rag-local` | Local RAG embedding and reranking (vecboost) | ❌ |
-| `rag-remote` | Remote RAG embedding (rig-core) | ❌ |
-| `rag` | RAG bundle (`rag-local` + `rag-remote`) | ❌ |
+| `rag` | RAG bundle (`rag-local` + `gateway`) | ❌ |
 | `openapi` | OpenAPI 3.1 spec generation (`GET /openapi.json`) | ❌ |
 | `test-mocks` | Test-only mock gating (integration tests must enable explicitly) | ❌ |
 
@@ -275,7 +274,7 @@ crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"]
 
 </details>
 
-> RAG (`vecboost`, via `rag-local`/`rag-remote`) and the TLS-fingerprint engine (`wreq`, via `engine-tls-fingerprint`) are **not** part of the supported default embedding combination—they pull extra local sibling path dependencies or the BoringSSL build chain and must be validated per their own features.
+> RAG (`vecboost`, via `rag-local`+`gateway`) and the TLS-fingerprint engine (`wreq`, via `engine-tls-fingerprint`) are **not** part of the supported default embedding combination—they pull extra heavy build chains (Candle/tokenizers or BoringSSL) and must be validated per their own features.
 
 ### LLM carrier injection model
 

@@ -30,7 +30,7 @@
 
 - **moli-html2md 依赖与转换链退役**：删除 `moli_adapter.rs` / `moli_converter.rs` / `converter_chain.rs`（moli 主 + htmd 兜底链），`content` 特性移除 `dep:moli-html2md` 与 `dep:ego-tree`；deny `allow-git` 清空（项目已无 git 源依赖）；`crawlrs_md_converter_fallback_total` 指标随链移除（alchemize 内建兜底不再单独计数）
 - **迁移说明**：`CRAWLRS__MARKDOWN__CONVERTER=moli`（旧默认值）在配置校验期被拒（启动失败），须改为 `alchemize`（默认）或 `htmd`
-- **注意**：alchemize 为 path 依赖（`../alchemize`，cargo 解析期即读取其清单；其可选 `audio` 特性另需 `../vecboost`）——干净 checkout 需携带同级 `../alchemize`，CI 各 cargo 作业经 `.github/actions/alchemize-sibling` 自动检出（含 vecboost，保证确定性）
+- **注意**：alchemize 为 path 依赖（`../alchemize`，cargo 解析期即读取其清单；其可选 `audio` 特性才需 `../vecboost`，crawlrs 固定 `features=["html"]` 不可激活）——干净 checkout 需携带同级 `../alchemize`，CI 各 cargo 作业经 `.github/actions/alchemize-sibling` 自动检出（vecboost 不检出：audio 不可达，实测缺席解析通过）
 
 ## [0.2.0-rc.4] - 2026-11-10
 

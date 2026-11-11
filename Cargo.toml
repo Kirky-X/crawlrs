@@ -98,9 +98,10 @@ content = ["dep:aho-corasick", "dep:htmd", "alchemize"]
 # 上游特性形态（212d1f6/d7bb68d 后）：每个格式一个 feature、依赖全 optional；
 # `html` 特性自含 htmd 基础链 + 自研深链（原 html-deep，引擎名未变）。
 # 注意：① 上游 rust-version = 1.97.1——本仓 MSRV 已对齐到 1.97.1；
-# ② path 依赖在 cargo 解析期即读取 ../alchemize（及其 ../vecboost）清单——
-# sibling 缺失或上游 feature 名与本处声明失配时，全部 cargo 命令解析失败；
-# 上游改名须先落库并推送（CI sibling 检出取远端 main）。
+# ② path 依赖在 cargo 解析期即读取 ../alchemize 清单——sibling 缺失或上游
+# feature 名与本处声明失配时，全部 cargo 命令解析失败；上游改名须先落库
+# 并推送（CI sibling 检出取远端 main，仅检 alchemize：audio 特性才需的
+# ../vecboost 不可激活，未激活的可选 path 依赖不参与解析）。
 # default-features=false 仅剥离 cli/text（sdforge/inklog 等），html 链完整保留。
 alchemize = ["dep:alchemize"]
 

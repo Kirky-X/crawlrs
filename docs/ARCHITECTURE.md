@@ -1564,8 +1564,9 @@ HTML（静态抓取或浏览器渲染产物）
   math `$TeX$` 保真路由）；旧 `ConverterChain`（moli 主 + htmd 兜底）与其
   `crawlrs_md_converter_fallback_total` 指标已随 moli-html2md 退役移除
 - 依赖：`alchemize`（自研 html 引擎仓，`html` 特性）为 path 依赖；cargo 解析期
-  即读取 `../alchemize` 清单（其可选 audio 特性才需 `../vecboost`），CI 各 cargo
-  作业经 `.github/actions/alchemize-sibling` 检出同级仓后 symlink
+  即读取 `../alchemize` 清单，CI 各 cargo 作业经 `.github/actions/alchemize-sibling`
+  检出同级仓后 symlink（仅 alchemize——其 audio 特性才需的 `../vecboost` 不可
+  激活，未激活的可选 path 依赖不参与解析，不检出）
 - `ScrapeResponse.markdown: Option<String>`；`scrape_worker` 经
   `MarkdownPostProcessor` 在 formats 含 `"markdown"` 时生成
 

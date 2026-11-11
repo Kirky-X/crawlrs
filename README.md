@@ -236,8 +236,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `llm` | LLM 提取边界（trait + 编排；供应商访问由宿主 carrier 注入） | ❌ |
 | `sitemap` | 站点地图生成（`/v1/map` 端点） | ✅（platform/standard） |
 | `rag-local` | 本地 RAG 嵌入与重排（vecboost） | ❌ |
-| `rag-remote` | 远程 RAG 嵌入（rig-core） | ❌ |
-| `rag` | RAG 组合包（`rag-local` + `rag-remote`） | ❌ |
+| `rag` | RAG 组合包（`rag-local` + `gateway`） | ❌ |
 | `openapi` | OpenAPI 3.1 规范生成（`GET /openapi.json`） | ❌ |
 | `test-mocks` | 测试专用 mock 门控（集成测试需显式启用） | ❌ |
 
@@ -276,7 +275,7 @@ crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"]
 
 </details>
 
-> RAG（`vecboost`，走 `rag-local`/`rag-remote`）与 TLS 指纹引擎（`wreq`，走 `engine-tls-fingerprint`）**不在**受支持的默认嵌入组合内——它们会引入额外的本地 sibling 路径依赖或 BoringSSL 构建链，需按各自 feature 单独验证。
+> RAG（`vecboost`，走 `rag-local`+`gateway`）与 TLS 指纹引擎（`wreq`，走 `engine-tls-fingerprint`）**不在**受支持的默认嵌入组合内——它们会引入额外的重构建链（Candle/tokenizers 或 BoringSSL），需按各自 feature 单独验证。
 
 ### LLM 承载注入模型
 
