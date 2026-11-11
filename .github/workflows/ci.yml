@@ -205,7 +205,10 @@ jobs:
         with:
           components: rustfmt
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        # -p 定点本仓两包：--all 会遍历 local path 依赖声明（alchemize 未激活也
+        # 加载其清单，连带其未激活可选 path 依赖 vecboost——runner 无该 sibling
+        # 即解析失败，前序提交 CI 实测；与 tests/e2e/e2e-suite.sh 同口径）
+        run: cargo fmt -p crawlrs -p crawlrs-examples -- --check
 
   clippy:
     name: Clippy

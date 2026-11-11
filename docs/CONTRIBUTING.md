@@ -42,7 +42,7 @@ cargo build            # 默认特性（platform + db-postgres）
 cargo build --features full   # 全部引擎与能力
 ```
 
-> 注意：全部自研基座依赖均以 registry 或钉 rev 的 git 依赖引入，无需同级仓库 checkout。`fluxweir`（gateway 特性）当前为 git 依赖 `rev = 2d559ad`——registry 0.1.0 缺 `build_app_with_pool`/`TrustedIdentity`，待其发布含该 API 的新版本后改纯 registry。
+> 注意：自研基座依赖均以 registry 引入（fluxweir 0.1.1、vecboost 0.3.0-rc.3、nebulaid 0.3.0-rc.4 等均已上 registry）。唯一例外是 alchemize（`content` 特性）为 path 依赖 `../alchemize`——干净 checkout 需携带同级 `alchemize` 仓，CI 经 `.github/actions/alchemize-sibling` 自动检出（仅 alchemize：其 `audio` 特性才需的 vecboost 不可激活、不检出）。
 
 ### 验证环境就绪
 
@@ -84,7 +84,7 @@ git commit -m 'feat(engines): 添加惊人功能'
 
 ```bash
 # 1. 格式与静态检查
-cargo fmt --all -- --check
+cargo fmt -p crawlrs -p crawlrs-examples -- --check
 cargo clippy --features "standard" -- -D warnings
 cargo clippy --features "full" -- -D warnings
 
@@ -115,7 +115,7 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 | 1 | `check-default` | `cargo check`（默认特性） |
 | 2 | `check-full` | `cargo check --features "full"` |
 | 3 | `feature-matrix` | 7 组合 + garrison 门控断言 + RSA 前提校验 |
-| 4 | `fmt` | `cargo fmt --all -- --check` |
+| 4 | `fmt` | `cargo fmt -p crawlrs -p crawlrs-examples -- --check` |
 | 5 | `clippy` | `cargo clippy --features "standard" -- -D warnings` + `--features "full" -- -D warnings` |
 | 6 | `test` | `cargo test`（Rust 1.97.1 / stable 矩阵） |
 | 7 | `doc` | `cargo doc --features "full" --no-deps`（`RUSTDOCFLAGS=-D warnings`，零警告） |

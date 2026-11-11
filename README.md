@@ -230,7 +230,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `engine-playwright` | chromiumoxide 浏览器自动化引擎 | ❌ |
 | `engine-flaresolverr` | FlareSolverr 反爬引擎（Full/Cdp/Tls 三模式） | ❌ |
 | `engine-tls-fingerprint` | WreqEngine TLS 指纹伪装（BoringSSL JA3/JA4） | ❌ |
-| `engine-mllm` | MLLM 视觉 LLM 自主导航引擎（隐含 `engine-playwright` + `llm`；视觉面保留 `genai`） | ❌ |
+| `engine-mllm` | MLLM 视觉 LLM 自主导航引擎（隐含 `engine-playwright` + `llm`；视觉面经 fluxweir chat） | ❌ |
 | `engine-moli` | MoliEngine（CDP 控制外部 `moli serve` 的纯 Rust 无头内核）+ 内存水位调度器（sysinfo 三档：Abundant/Tight/Critical 驱动引擎优先级与 Playwright 池门控） | ❌ |
 | `trafilatura` / `dom-smoothie` / `extractors` | 正文提取主路径 / 性能回退 / 全启用 | ❌ |
 | `llm` | LLM 提取边界（trait + 编排；供应商访问由宿主 carrier 注入） | ❌ |
@@ -275,7 +275,7 @@ crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"]
 
 </details>
 
-> RAG（`vecboost`，走 `rag-local`+`gateway`）与 TLS 指纹引擎（`wreq`，走 `engine-tls-fingerprint`）**不在**受支持的默认嵌入组合内——它们会引入额外的重构建链（Candle/tokenizers 或 BoringSSL），需按各自 feature 单独验证。
+> RAG（`vecboost`，走 `rag-local`+`gateway`）与 TLS 指纹引擎（`wreq`，走 `engine-tls-fingerprint`）**不在**受支持的默认嵌入组合内——它们会引入额外的重构建链（tokenizers 或 BoringSSL），需按各自 feature 单独验证。
 
 ### LLM 承载注入模型
 
@@ -418,7 +418,7 @@ cargo test --features "full" --lib
 cargo test --features "full,test-mocks" --tests --no-fail-fast
 
 # Lint、格式与文档门禁（fmt / clippy / doc job）
-cargo fmt --all -- --check
+cargo fmt -p crawlrs -p crawlrs-examples -- --check
 cargo clippy --features "standard" -- -D warnings
 cargo clippy --features "full" -- -D warnings
 cargo doc --features "full" --no-deps          # CI doc job（RUSTDOCFLAGS=-D warnings）
@@ -586,7 +586,7 @@ crawlrs 站在以下优秀开源项目的肩膀上：
 | [chromiumoxide](https://crates.io/crates/chromiumoxide) | Chrome CDP 浏览器自动化 |
 | [wreq](https://crates.io/crates/wreq) | BoringSSL TLS 指纹伪装 |
 | [scraper](https://crates.io/crates/scraper) | HTML 解析 |
-| [genai](https://crates.io/crates/genai) | 视觉模型接入（`engine-mllm` MLLM 引擎） |
+| [fluxweir](https://crates.io/crates/fluxweir) | LLM/嵌入/重排统一出口（`gateway`；`engine-mllm` 视觉面经 chat 承载） |
 | [htmd](https://crates.io/crates/htmd) | HTML→Markdown 转换（诊断臂直通） |
 | [alchemize](https://github.com/Kirky-X/alchemize) | HTML→Markdown 默认转换器（自研 html 引擎：htmd 基础链 + 自研深链；path 依赖） |
 | [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | 正文提取 |

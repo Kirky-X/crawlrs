@@ -175,7 +175,7 @@ cargo test --features "full" --lib
 cargo test --features "full,test-mocks" --tests --no-fail-fast
 
 # Lint / 格式 / 文档 / 供应链
-cargo fmt --all -- --check
+cargo fmt -p crawlrs -p crawlrs-examples -- --check
 cargo clippy --features "standard" -- -D warnings
 cargo clippy --features "full" -- -D warnings
 cargo doc --features "full" --no-deps          # CI doc job（RUSTDOCFLAGS=-D warnings）

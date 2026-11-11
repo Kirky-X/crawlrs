@@ -230,7 +230,7 @@ The table below is a major subset of the `[features]` section of `Cargo.toml` (f
 | `engine-playwright` | chromiumoxide browser automation engine | ❌ |
 | `engine-flaresolverr` | FlareSolverr anti-bot engine (Full/Cdp/Tls modes) | ❌ |
 | `engine-tls-fingerprint` | WreqEngine TLS fingerprint masking (BoringSSL JA3/JA4) | ❌ |
-| `engine-mllm` | MLLM vision-LLM autonomous navigation engine (implies `engine-playwright` + `llm`; keeps `genai` for the vision surface) | ❌ |
+| `engine-mllm` | MLLM vision-LLM autonomous navigation engine (implies `engine-playwright` + `llm`; vision surface via fluxweir chat) | ❌ |
 | `trafilatura` / `dom-smoothie` / `extractors` | Content extraction main path / performance fallback / all enabled | ❌ |
 | `llm` | LLM extraction boundary (trait + orchestration; provider access injected by the host carrier) | ❌ |
 | `sitemap` | Sitemap generation (`/v1/map` endpoint) | ✅ (platform/standard) |
@@ -274,7 +274,7 @@ crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"]
 
 </details>
 
-> RAG (`vecboost`, via `rag-local`+`gateway`) and the TLS-fingerprint engine (`wreq`, via `engine-tls-fingerprint`) are **not** part of the supported default embedding combination—they pull extra heavy build chains (Candle/tokenizers or BoringSSL) and must be validated per their own features.
+> RAG (`vecboost`, via `rag-local`+`gateway`) and the TLS-fingerprint engine (`wreq`, via `engine-tls-fingerprint`) are **not** part of the supported default embedding combination—they pull extra heavy build chains (tokenizers or BoringSSL) and must be validated per their own features.
 
 ### LLM carrier injection model
 
@@ -418,7 +418,7 @@ cargo test --features "full" --lib
 cargo test --features "full,test-mocks" --tests --no-fail-fast
 
 # Lint, format and doc gates (fmt / clippy / doc jobs)
-cargo fmt --all -- --check
+cargo fmt -p crawlrs -p crawlrs-examples -- --check
 cargo clippy --features "standard" -- -D warnings
 cargo clippy --features "full" -- -D warnings
 cargo doc --features "full" --no-deps          # CI doc job (RUSTDOCFLAGS=-D warnings)
@@ -586,7 +586,7 @@ crawlrs stands on the shoulders of these excellent open-source projects:
 | [chromiumoxide](https://crates.io/crates/chromiumoxide) | Chrome CDP browser automation |
 | [wreq](https://crates.io/crates/wreq) | BoringSSL TLS fingerprint masking |
 | [scraper](https://crates.io/crates/scraper) | HTML parsing |
-| [genai](https://crates.io/crates/genai) | Vision-model access (`engine-mllm` MLLM engine) |
+| [fluxweir](https://crates.io/crates/fluxweir) | Unified LLM/embedding/rerank gateway (`gateway`; `engine-mllm` vision surface via chat) |
 | [htmd](https://crates.io/crates/htmd) | HTML→Markdown conversion (diagnostic arm) |
 | [alchemize](https://github.com/Kirky-X/alchemize) | Default HTML→Markdown converter (self-hosted html engine; path dependency) |
 | [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | Content extraction |

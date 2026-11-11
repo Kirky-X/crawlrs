@@ -170,12 +170,12 @@ check_cargo_fmt() {
     start_timer "fmt"
 
     # 使用默认特性进行格式检查（避免特性冲突）
-    if ! cargo fmt --all -- --check >> "$LOG_FILE" 2>&1; then
+    if ! cargo fmt -p crawlrs -p crawlrs-examples -- --check >> "$LOG_FILE" 2>&1; then
         log_error "代码格式化检查失败"
         echo ""
         echo -e "${YELLOW}修复建议:${NC}"
         echo "  运行以下命令格式化代码:"
-        echo "    ${CYAN}cargo fmt --all${NC}"
+        echo "    ${CYAN}cargo fmt -p crawlrs -p crawlrs-examples${NC}"
         echo ""
         # 与其余 9 个检查一致：失败路径同样打印耗时
         end_timer "fmt"

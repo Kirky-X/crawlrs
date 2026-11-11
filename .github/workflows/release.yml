@@ -44,7 +44,8 @@ jobs:
         with:
           shared-key: release-full-deps
       - name: Rustfmt check
-        run: cargo fmt --all -- --check
+        # -p 定点本仓两包（--all 波及未激活 path 依赖 vecboost，sibling 不检出；见 ci.yml fmt 注释）
+        run: cargo fmt -p crawlrs -p crawlrs-examples -- --check
       - name: Clippy (full features)
         run: cargo clippy --features full --lib --tests -- -D warnings
 

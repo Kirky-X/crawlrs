@@ -661,7 +661,8 @@ infrastructure/
 │   ├── limiteron_service.rs
 │   ├── noop_rate_limiting_service.rs
 │   ├── http_rerank_provider.rs     # 远端 Rerank HTTP 适配（仅 reqwest，无需 feature）
-│   ├── rig_embedding_provider.rs   # rag-remote：rig-core 远端嵌入
+│   ├── fluxweir_llm_carrier.rs     # 宿主 LLM carrier 注入（T011 退役 rag-remote/genai）
+│   ├── fluxweir_providers.rs       # 嵌入/重排远端兜底（fluxweir 统一出口）
 │   ├── vecboost_provider.rs        # rag-local：本地嵌入/重排（Candle CPU）
 │   └── webhook_sender_impl.rs
 ├── dns/                    # DNS resolution + caching
@@ -989,7 +990,7 @@ rate-limit = []            # 空数组：只门控装配选择，limiteron crate
 webhook = []
 full    = ["standard", "engine-flaresolverr", "extractors", "llm"]
 llm     = []                # trait + 编排 + ExplicitErrorCarrier，零外部依赖
-engine-mllm = ["engine-playwright", "llm", "dep:genai"]  # genai 仅随视觉面保留
+engine-mllm = ["engine-playwright", "llm", "gateway"]  # 视觉面经 fluxweir chat 承载（genai 已退役）
 
 # sitemap（0.2.0 起并入 platform）：
 sitemap = ["dep:quick-xml"]
@@ -1588,7 +1589,7 @@ gated `trafilatura`/`dom-smoothie`/`extractors`：
 ### LLM Carrier Boundary (`src/domain/services/llm/`)
 
 - `mod.rs` 的 `LLMServiceTrait` 是 crawlrs 唯一 LLM 边界：`extract_data` / `extract_data_chunked` / `extract_data_with_provenance`，接口签名对宿主稳定。
-- 供应商访问不自持：`LLMService` / `provider_adapter` / `llm_provider_strategy` 已删除；`genai` 仅随 `engine-mllm` 的 `GenaiVisionAdapter` 保留（`vision_adapter` 由 `engine-mllm` 门控）。
+- 供应商访问不自持：`LLMService` / `provider_adapter` / `llm_provider_strategy` 已删除；视觉面经 fluxweir `FluxweirClient::chat` 承载（`vision_adapter` 由 `engine-mllm` 门控，genai 已退役）。
 - 默认装配 `ExplicitErrorCarrier`：未注入 carrier 时三入口均返回 i18n 双语结构化错误（`domain-error-llm-carrier-not-injected`），不 panic、不静默降级。
 - 宿主注入三路径：`Services.llm_service` pub 字段、`init_llm_service` 工厂替换、`CrawlRsState::from_kit`。
 - 编排工具保留：`prompt_builder` / `chunker`（F8）/ `provenance`（F9）以公开模块形式供注入 carrier 复用；`[llm]` 只保留 `model` / `request_timeout_secs` / `chunking` / `provenance_*`。
