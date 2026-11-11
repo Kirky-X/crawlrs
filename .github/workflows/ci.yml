@@ -427,9 +427,10 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
-    # 实测基线 ~30m16s（llvm-cov 全量编译+lib/test 双轮），30 分钟阈值边缘超时
-    # （f9653bc0 CI Coverage 作业被 cancelled），抬高到 45 分钟留出 runner 波动余量
-    timeout-minutes: 45
+    # 实测：缓存命中 ~30m；依赖变更导致缓存 miss 时冷编译全树 ~44m25s（a23e8bcf，
+    # alchemize 入树后）——每次 cancelled 都不会回写 rust-cache，故必须容纳整轮冷
+    # 构建；75 分钟留出双倍余量，成功一轮后缓存回写即回到 ~30m。
+    timeout-minutes: 75
     services:
       postgres:
         image: postgres:16
