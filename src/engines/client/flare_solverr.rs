@@ -150,7 +150,7 @@ impl Default for FlareSolverrConfig {
                 "{}",
                 crate::i18n::tr_log_args(
                     "flare-url-not-configured",
-                    &[("fallback", fluent_bundle::FluentValue::from(FALLBACK_URL))],
+                    &[("fallback", FALLBACK_URL.to_string())],
                 )
             );
         }
@@ -161,9 +161,9 @@ impl Default for FlareSolverrConfig {
                 crate::i18n::tr_log_args(
                     "flare-url-validation-failed",
                     &[
-                        ("url", fluent_bundle::FluentValue::from(url.as_str())),
-                        ("error", fluent_bundle::FluentValue::from(e.as_str())),
-                        ("fallback", fluent_bundle::FluentValue::from(FALLBACK_URL)),
+                        ("url", url.as_str().to_string()),
+                        ("error", e.as_str().to_string()),
+                        ("fallback", FALLBACK_URL.to_string()),
                     ],
                 )
             );
@@ -208,9 +208,9 @@ fn log_flaresolverr_validation_fallback(mode: &str, error: &str) {
         crate::i18n::tr_log_args(
             key,
             &[
-                ("mode", fluent_bundle::FluentValue::from(mode)),
-                ("error", fluent_bundle::FluentValue::from(error)),
-                ("fallback", fluent_bundle::FluentValue::from(FALLBACK_URL)),
+                ("mode", mode.to_string()),
+                ("error", error.to_string()),
+                ("fallback", FALLBACK_URL.to_string()),
             ],
         )
     );
@@ -422,7 +422,7 @@ impl FlareSolverrEngine {
                 "{}",
                 crate::i18n::tr_log_args(
                     "flare-url-not-configured-fallback",
-                    &[("fallback", fluent_bundle::FluentValue::from(FALLBACK_URL))],
+                    &[("fallback", FALLBACK_URL.to_string())],
                 )
             );
         }

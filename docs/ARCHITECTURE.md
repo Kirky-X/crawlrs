@@ -1917,7 +1917,7 @@ Configured with rules for:
 | # | 需求 | 现状（过渡态） | 用途 / 收敛路径 |
 |---|------|---------------|----------------|
 | S1 | `unified::http_status_for` 映射集补 502/504（BAD_GATEWAY / GATEWAY_TIMEOUT 对应 `ApiError` 变体） | `CrawlRsError::Network`/`Engine`→502、`Timeout`→504 为显式残留三分支（`src/common/error.rs`），其余 14 变体已委托库映射表 | HTTP 状态码映射（S3）。库补齐后删除残留分支，`status_code` 全量委托 |
-| S2 | `TranslationStore` 支持 fluent 资源装载 + 参数插值 + locale→default→key 回退链（当前仅 `load_from_json`，回退链为 locale→en→key） | crawlrs 保留自有 `I18nBundle`（运行时装载 `locales/*.ftl`，可配置 default locale） | 错误消息 i18n（S3）。库 fluent 面补齐后 `user_message_locale` 可改经库装载 |
+| S2 | ~~`TranslationStore` 支持 fluent 资源装载 + 参数插值 + locale→default→key 回退链~~（消息层已收敛：查询统一走 `sdforge::i18n::translate_for`） | crawlrs `I18nBundle` 仅保留 locale 元数据与协商（`locales/*.ftl` 编译期内嵌，`src/i18n/catalog.rs` 启动期行解析注册进宿主注册表；fluent-bundle 已退役）；格式化层（数字/日期/复数/排序）无消费场景，`I18nFormatter` 未引入 | 错误消息 i18n（S3）。格式化场景出现时再评估 trait-kit `i18n` feature |
 
 > 收敛纪律：库侧补齐后按本表逐项二次收敛（删除 crawlrs 薄封装/残留分支），并在对应 specmark 变更中登记。本表只登记**消费面缺口**，不包含库内部缺陷。
 

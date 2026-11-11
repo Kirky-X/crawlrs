@@ -101,38 +101,36 @@ impl DomainError {
     ///
     /// 根据请求的 locale 返回对应语言的错误消息。
     pub fn user_message_locale(&self, locale: &Locale, bundle: &I18nBundle) -> String {
-        use fluent_bundle::FluentValue;
-
         match self {
             DomainError::CrawlConfigError { message, .. } => bundle.translate_with_args(
                 locale,
                 "domain-error-crawl-config",
-                &[("message", FluentValue::from(message.as_str()))],
+                &[("message", message.as_str().to_string())],
             ),
             DomainError::CrawlDepthExceeded { max, requested } => bundle.translate_with_args(
                 locale,
                 "domain-error-depth-exceeded",
                 &[
-                    ("max", FluentValue::from(*max as i64)),
-                    ("requested", FluentValue::from(*requested as i64)),
+                    ("max", (*max as i64).to_string()),
+                    ("requested", (*requested as i64).to_string()),
                 ],
             ),
             DomainError::PathFiltered { path } => bundle.translate_with_args(
                 locale,
                 "domain-error-path-filtered",
-                &[("path", FluentValue::from(path.as_str()))],
+                &[("path", path.as_str().to_string())],
             ),
             DomainError::TaskNotFound { task_id } => bundle.translate_with_args(
                 locale,
                 "domain-error-task-not-found",
-                &[("task_id", FluentValue::from(task_id.to_string()))],
+                &[("task_id", task_id.to_string())],
             ),
             DomainError::InvalidTaskState { current, expected } => bundle.translate_with_args(
                 locale,
                 "domain-error-invalid-task-state",
                 &[
-                    ("current", FluentValue::from(current.as_str())),
-                    ("expected", FluentValue::from(expected.as_str())),
+                    ("current", current.as_str().to_string()),
+                    ("expected", expected.as_str().to_string()),
                 ],
             ),
             DomainError::TaskExpired { .. } => {
@@ -141,7 +139,7 @@ impl DomainError {
             DomainError::TeamNotFound { team_id } => bundle.translate_with_args(
                 locale,
                 "domain-error-team-not-found",
-                &[("team_id", FluentValue::from(team_id.to_string()))],
+                &[("team_id", team_id.to_string())],
             ),
             DomainError::InsufficientCredits {
                 required,
@@ -150,32 +148,32 @@ impl DomainError {
                 locale,
                 "domain-error-insufficient-credits",
                 &[
-                    ("required", FluentValue::from(*required)),
-                    ("available", FluentValue::from(*available)),
+                    ("required", (*required).to_string()),
+                    ("available", (*available).to_string()),
                 ],
             ),
             DomainError::ConcurrencyLimitExceeded { current, limit } => bundle.translate_with_args(
                 locale,
                 "domain-error-concurrency-limit",
                 &[
-                    ("current", FluentValue::from(*current as i64)),
-                    ("limit", FluentValue::from(*limit as i64)),
+                    ("current", (*current as i64).to_string()),
+                    ("limit", (*limit as i64).to_string()),
                 ],
             ),
             DomainError::InvalidUrl { url } => bundle.translate_with_args(
                 locale,
                 "domain-error-invalid-url",
-                &[("url", FluentValue::from(url.as_str()))],
+                &[("url", url.as_str().to_string())],
             ),
             DomainError::DomainBlacklisted { domain } => bundle.translate_with_args(
                 locale,
                 "domain-error-domain-blacklisted",
-                &[("domain", FluentValue::from(domain.as_str()))],
+                &[("domain", domain.as_str().to_string())],
             ),
             DomainError::RobotsForbidden { url } => bundle.translate_with_args(
                 locale,
                 "domain-error-robots-forbidden",
-                &[("url", FluentValue::from(url.as_str()))],
+                &[("url", url.as_str().to_string())],
             ),
             DomainError::WebhookDeliveryFailed { .. } => {
                 bundle.translate(locale, "domain-error-webhook-delivery-failed")
@@ -183,7 +181,7 @@ impl DomainError {
             DomainError::InvalidWebhookUrl { url } => bundle.translate_with_args(
                 locale,
                 "domain-error-invalid-webhook-url",
-                &[("url", FluentValue::from(url.as_str()))],
+                &[("url", url.as_str().to_string())],
             ),
             DomainError::LLMExtractionFailed { .. } => {
                 bundle.translate(locale, "domain-error-llm-extraction-failed")
@@ -191,14 +189,14 @@ impl DomainError {
             DomainError::InvalidCssSelector { selector } => bundle.translate_with_args(
                 locale,
                 "domain-error-invalid-css-selector",
-                &[("selector", FluentValue::from(selector.as_str()))],
+                &[("selector", selector.as_str().to_string())],
             ),
             DomainError::ValidationError { field, message } => bundle.translate_with_args(
                 locale,
                 "domain-error-validation",
                 &[
-                    ("field", FluentValue::from(field.as_str())),
-                    ("message", FluentValue::from(message.as_str())),
+                    ("field", field.as_str().to_string()),
+                    ("message", message.as_str().to_string()),
                 ],
             ),
         }
@@ -587,8 +585,7 @@ mod tests {
     }
 
     fn make_test_bundle() -> I18nBundle {
-        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
-        I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap()
+        I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap()
     }
 
     #[test]

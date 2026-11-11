@@ -86,61 +86,59 @@ impl SearchError {
     /// 与 `DomainError::user_message_locale` 同构：Display 为英文规范串，
     /// 本地化文案经 FTL（`locales/*/errors.ftl` 的 `search-error-*`）输出。
     pub fn user_message_locale(&self, locale: &Locale, bundle: &I18nBundle) -> String {
-        use fluent_bundle::FluentValue;
-
         match self {
             SearchError::Network(inner) => bundle.translate_with_args(
                 locale,
                 "search-error-network",
-                &[("message", FluentValue::from(inner.to_string()))],
+                &[("message", inner.to_string())],
             ),
             SearchError::Timeout(inner) => bundle.translate_with_args(
                 locale,
                 "search-error-timeout",
-                &[("message", FluentValue::from(inner.to_string()))],
+                &[("message", inner.to_string())],
             ),
             SearchError::Parse(message) => bundle.translate_with_args(
                 locale,
                 "search-error-parse",
-                &[("message", FluentValue::from(message.as_str()))],
+                &[("message", message.as_str().to_string())],
             ),
             SearchError::ContentParsing(message) => bundle.translate_with_args(
                 locale,
                 "search-error-content-parsing",
-                &[("message", FluentValue::from(message.as_str()))],
+                &[("message", message.as_str().to_string())],
             ),
             SearchError::EngineClient(engine, message) => bundle.translate_with_args(
                 locale,
                 "search-error-engine-client",
                 &[
-                    ("engine", FluentValue::from(engine.as_str())),
-                    ("message", FluentValue::from(message.as_str())),
+                    ("engine", engine.as_str().to_string()),
+                    ("message", message.as_str().to_string()),
                 ],
             ),
             SearchError::BadHttpStatus(engine, status) => bundle.translate_with_args(
                 locale,
                 "search-error-bad-http-status",
                 &[
-                    ("engine", FluentValue::from(engine.as_str())),
-                    ("status", FluentValue::from(*status as i64)),
+                    ("engine", engine.as_str().to_string()),
+                    ("status", (*status as i64).to_string()),
                 ],
             ),
             SearchError::RateLimited(reason) => bundle.translate_with_args(
                 locale,
                 "search-error-rate-limited",
-                &[("message", FluentValue::from(reason.as_str()))],
+                &[("message", reason.as_str().to_string())],
             ),
             SearchError::Captcha(engine) => bundle.translate_with_args(
                 locale,
                 "search-error-captcha",
-                &[("engine", FluentValue::from(engine.as_str()))],
+                &[("engine", engine.as_str().to_string())],
             ),
             SearchError::InsufficientContent(engine, message) => bundle.translate_with_args(
                 locale,
                 "search-error-insufficient-content",
                 &[
-                    ("engine", FluentValue::from(engine.as_str())),
-                    ("message", FluentValue::from(message.as_str())),
+                    ("engine", engine.as_str().to_string()),
+                    ("message", message.as_str().to_string()),
                 ],
             ),
             SearchError::AllEnginesFailed => {
@@ -149,27 +147,27 @@ impl SearchError {
             SearchError::EngineFailed(engine) => bundle.translate_with_args(
                 locale,
                 "search-error-engine-failed",
-                &[("engine", FluentValue::from(engine.as_str()))],
+                &[("engine", engine.as_str().to_string())],
             ),
             SearchError::SmartRoutingFailed(message) => bundle.translate_with_args(
                 locale,
                 "search-error-smart-routing-failed",
-                &[("message", FluentValue::from(message.as_str()))],
+                &[("message", message.as_str().to_string())],
             ),
             SearchError::SmartRoutingTimeout(seconds) => bundle.translate_with_args(
                 locale,
                 "search-error-smart-routing-timeout",
-                &[("seconds", FluentValue::from(*seconds as i64))],
+                &[("seconds", (*seconds as i64).to_string())],
             ),
             SearchError::EngineCreationFailed(message) => bundle.translate_with_args(
                 locale,
                 "search-error-engine-creation-failed",
-                &[("message", FluentValue::from(message.as_str()))],
+                &[("message", message.as_str().to_string())],
             ),
             SearchError::CircuitOpen(message) => bundle.translate_with_args(
                 locale,
                 "search-error-circuit-open",
-                &[("message", FluentValue::from(message.as_str()))],
+                &[("message", message.as_str().to_string())],
             ),
             SearchError::NoEngineAvailable => {
                 bundle.translate(locale, "search-error-no-engine-available")
@@ -183,8 +181,7 @@ mod tests {
     use super::*;
 
     fn test_bundle() -> I18nBundle {
-        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
-        I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap()
+        I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap()
     }
 
     #[test]
@@ -263,8 +260,8 @@ mod tests {
                 &en,
                 "search-error-bad-http-status",
                 &[
-                    ("engine", fluent_bundle::FluentValue::from("bing")),
-                    ("status", fluent_bundle::FluentValue::from(503_i64)),
+                    ("engine", "bing".to_string()),
+                    ("status", 503_i64.to_string()),
                 ],
             )
         );

@@ -141,17 +141,13 @@ impl WebContentProcessorTrait for WebContentProcessorComponent {
             tr_log_args(
                 "text-html-structure-detected",
                 &[
-                    (
-                        "is_html",
-                        fluent_bundle::FluentValue::from(is_html.to_string())
-                    ),
+                    ("is_html", is_html.to_string()),
                     (
                         "encoding",
-                        fluent_bundle::FluentValue::from(
-                            declared_encoding
-                                .clone()
-                                .unwrap_or_else(|| "none".to_string())
-                        )
+                        declared_encoding
+                            .clone()
+                            .unwrap_or_else(|| "none".to_string())
+                            .to_string()
                     ),
                 ],
             )
@@ -195,10 +191,7 @@ impl WebContentProcessorComponent {
             Err(e) => {
                 error!(
                     "{}",
-                    tr_log_args(
-                        "text-encoding-failed",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                    )
+                    tr_log_args("text-encoding-failed", &[("error", e.to_string())],)
                 );
                 Err(WebContentError::EncodingError(e))
             }
@@ -322,10 +315,7 @@ impl WebContentProcessor {
             "{}",
             tr_log_args(
                 "text-web-content-started",
-                &[(
-                    "size",
-                    fluent_bundle::FluentValue::from(content.len().to_string())
-                )],
+                &[("size", content.len().to_string())],
             )
         );
         let text_content = self.process_encoding(content)?;
@@ -336,17 +326,13 @@ impl WebContentProcessor {
             tr_log_args(
                 "text-html-structure-detected",
                 &[
-                    (
-                        "is_html",
-                        fluent_bundle::FluentValue::from(is_html.to_string())
-                    ),
+                    ("is_html", is_html.to_string()),
                     (
                         "encoding",
-                        fluent_bundle::FluentValue::from(
-                            declared_encoding
-                                .clone()
-                                .unwrap_or_else(|| "none".to_string())
-                        )
+                        declared_encoding
+                            .clone()
+                            .unwrap_or_else(|| "none".to_string())
+                            .to_string()
                     ),
                 ],
             )
@@ -378,10 +364,7 @@ impl WebContentProcessor {
             Err(e) => {
                 error!(
                     "{}",
-                    tr_log_args(
-                        "text-encoding-failed",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                    )
+                    tr_log_args("text-encoding-failed", &[("error", e.to_string())],)
                 );
                 Err(WebContentError::EncodingError(e))
             }
@@ -566,13 +549,7 @@ impl CrawlTextProcessor {
             "{}",
             tr_log_args(
                 "text-crawl-started",
-                &[
-                    ("url", fluent_bundle::FluentValue::from(url)),
-                    (
-                        "size",
-                        fluent_bundle::FluentValue::from(content_size.to_string())
-                    ),
-                ],
+                &[("url", url.to_string()), ("size", content_size.to_string()),],
             )
         );
         if content_size > self.max_content_size {
@@ -591,17 +568,9 @@ impl CrawlTextProcessor {
             tr_log_args(
                 "text-crawl-completed",
                 &[
-                    ("url", fluent_bundle::FluentValue::from(url)),
-                    (
-                        "elapsed",
-                        fluent_bundle::FluentValue::from(format!("{:?}", processing_time))
-                    ),
-                    (
-                        "length",
-                        fluent_bundle::FluentValue::from(
-                            processed_content.extracted_text.len().to_string()
-                        )
-                    ),
+                    ("url", url.to_string()),
+                    ("elapsed", format!("{:?}", processing_time)),
+                    ("length", processed_content.extracted_text.len().to_string()),
                 ],
             )
         );
@@ -715,10 +684,7 @@ impl CrawlTextProcessor {
             "{}",
             tr_log_args(
                 "text-config-updated",
-                &[(
-                    "config",
-                    fluent_bundle::FluentValue::from(format!("{:?}", config))
-                )],
+                &[("config", format!("{:?}", config))],
             )
         );
     }

@@ -399,7 +399,7 @@ pub fn error_response_locale_with_args(
     locale: &Locale,
     bundle: &Arc<I18nBundle>,
     key: &str,
-    args: &[(&str, fluent_bundle::FluentValue)],
+    args: &[(&str, String)],
 ) -> Response {
     let message = crate::i18n::t_with_args(locale, bundle, key, args);
     error_response(status, message)

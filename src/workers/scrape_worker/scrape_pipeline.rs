@@ -353,13 +353,7 @@ impl ScrapeWorker {
                         "{}",
                         crate::i18n::tr_log_args(
                             "scrape-conditional-lookup-failed",
-                            &[
-                                (
-                                    "task_id",
-                                    fluent_bundle::FluentValue::from(task.id.to_string()),
-                                ),
-                                ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                            ],
+                            &[("task_id", task.id.to_string(),), ("error", e.to_string()),],
                         )
                     );
                 }
@@ -557,14 +551,8 @@ impl ScrapeWorker {
                     crate::i18n::tr_log_args(
                         "scrape-304-reused",
                         &[
-                            (
-                                "task_id",
-                                fluent_bundle::FluentValue::from(task.id.to_string()),
-                            ),
-                            (
-                                "bytes",
-                                fluent_bundle::FluentValue::from(prior.content.len() as i64),
-                            ),
+                            ("task_id", task.id.to_string(),),
+                            ("bytes", (prior.content.len() as i64).to_string(),),
                         ],
                     )
                 );
@@ -575,10 +563,7 @@ impl ScrapeWorker {
                     "{}",
                     crate::i18n::tr_log_args(
                         "scrape-304-no-prior",
-                        &[(
-                            "task_id",
-                            fluent_bundle::FluentValue::from(task.id.to_string()),
-                        )],
+                        &[("task_id", task.id.to_string(),)],
                     )
                 );
                 self.handle_failure(

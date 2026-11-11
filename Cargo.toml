@@ -265,8 +265,11 @@ bytes = { version = "1.12", default-features = false, features = ["std"] }
 # llm prompt 模板加载（domain/services/llm/prompt_builder.rs）运行时解析 toml
 toml = { version = "1.2", default-features = false, features = ["std", "parse", "serde"] }
 
-# vecboost 本地嵌入/重排（rag-local）；关闭服务面避免 dbnexus 互斥 compile_error
-vecboost = { version = "0.3.0-rc.3", optional = true, default-features = false }
+# vecboost 本地嵌入/重排（rag-local）；关闭服务面避免 dbnexus 互斥 compile_error；
+# onnx 主引擎必须显式启用——default-features=false 剥掉 default=["http","onnx"]，
+# 不启用时 provider 钉死的 EngineType::Onnx 在 vecboost 工厂处 fail-fast（禁止静默
+# 落入 candle 降级），rag-local 运行时即败（三维审查发现的 DOA，已修）
+vecboost = { version = "0.3.0-rc.3", optional = true, default-features = false, features = ["onnx"] }
 
 # Dependency Injection
 trait-kit = { version = "0.5.0-rc.12", default-features = false, features = ["async", "confers", "shutdown"] }

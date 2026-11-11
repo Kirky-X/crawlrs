@@ -1096,7 +1096,8 @@ fn default_failure_snapshot_max_total() -> usize {
 
 /// 国际化配置设置
 ///
-/// 配置 Fluent 翻译系统的默认语言、支持语言列表和翻译文件目录。
+/// 配置翻译系统的默认语言与支持语言列表。消息目录为编译期内嵌
+/// （`src/i18n/catalog.rs`），无运行时翻译文件目录。
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__I18N__")]
 pub struct I18nSettings {
@@ -1107,17 +1108,12 @@ pub struct I18nSettings {
     /// 支持的 locale 列表
     #[config(default = vec!["en-US".to_string(), "zh-CN".to_string()])]
     pub supported_locales: Vec<String>,
-
-    /// 翻译文件根目录路径
-    #[config(default = "locales".to_string())]
-    pub locales_dir: String,
 }
 
 /// 验证 i18n 配置有效性
 ///
 /// - `default_locale` 必须是有效 BCP 47 语言标识符
 /// - `supported_locales` 必须包含 `default_locale`
-/// - `locales_dir` 必须存在且至少包含一个有效 locale 子目录
 pub fn validate_i18n(settings: &I18nSettings) -> Result<(), sdforge::validator::ValidationError> {
     use unic_langid::LanguageIdentifier;
 
@@ -1141,25 +1137,6 @@ pub fn validate_i18n(settings: &I18nSettings) -> Result<(), sdforge::validator::
     {
         return Err(sdforge::validator::ValidationError::new(
             "i18n_default_locale_not_in_supported",
-        ));
-    }
-
-    // locales_dir 必须存在
-    let dir = std::path::Path::new(&settings.locales_dir);
-    if !dir.exists() {
-        return Err(sdforge::validator::ValidationError::new(
-            "i18n_locales_dir_not_found",
-        ));
-    }
-
-    // 至少包含一个有效 locale 子目录
-    let has_valid_subdir = settings
-        .supported_locales
-        .iter()
-        .any(|l| dir.join(l).exists());
-    if !has_valid_subdir {
-        return Err(sdforge::validator::ValidationError::new(
-            "i18n_no_valid_locale_directory",
         ));
     }
 

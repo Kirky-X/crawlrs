@@ -214,26 +214,11 @@ impl SessionManager {
                         crate::i18n::tr_log_args(
                             "session-identity-retired",
                             &[
-                                ("id", fluent_bundle::FluentValue::from(existing.id as i64),),
-                                (
-                                    "score",
-                                    fluent_bundle::FluentValue::from(existing.error_score()),
-                                ),
-                                (
-                                    "uses",
-                                    fluent_bundle::FluentValue::from(existing.uses() as i64)
-                                ),
-                                (
-                                    "age",
-                                    fluent_bundle::FluentValue::from(format!(
-                                        "{:?}",
-                                        existing.age()
-                                    )),
-                                ),
-                                (
-                                    "fresh_id",
-                                    fluent_bundle::FluentValue::from(fresh.id as i64)
-                                ),
+                                ("id", (existing.id as i64).to_string(),),
+                                ("score", existing.error_score().to_string(),),
+                                ("uses", (existing.uses() as i64).to_string()),
+                                ("age", format!("{:?}", existing.age()),),
+                                ("fresh_id", (fresh.id as i64).to_string()),
                             ],
                         )
                     );
@@ -286,16 +271,10 @@ impl SessionManager {
                 crate::i18n::tr_log_args(
                     "session-identity-force-retired",
                     &[
-                        ("id", fluent_bundle::FluentValue::from(identity.id as i64)),
-                        ("host", fluent_bundle::FluentValue::from(host)),
-                        (
-                            "score",
-                            fluent_bundle::FluentValue::from(identity.error_score()),
-                        ),
-                        (
-                            "uses",
-                            fluent_bundle::FluentValue::from(identity.uses() as i64)
-                        ),
+                        ("id", (identity.id as i64).to_string()),
+                        ("host", host.to_string()),
+                        ("score", identity.error_score().to_string(),),
+                        ("uses", (identity.uses() as i64).to_string()),
                     ],
                 )
             );
@@ -348,9 +327,9 @@ impl SessionManager {
                     crate::i18n::tr_log_args(
                         "session-cookie-cap-dropped",
                         &[
-                            ("bytes", fluent_bundle::FluentValue::from(pair.len() as i64)),
-                            ("cap", fluent_bundle::FluentValue::from(cap as i64)),
-                            ("id", fluent_bundle::FluentValue::from(identity_id as i64),),
+                            ("bytes", (pair.len() as i64).to_string()),
+                            ("cap", (cap as i64).to_string()),
+                            ("id", (identity_id as i64).to_string(),),
                         ],
                     )
                 );

@@ -26,8 +26,8 @@ fn log_aimd_transition(key: &str, from: usize, to: usize) {
         crate::i18n::tr_log_args(
             key,
             &[
-                ("from", fluent_bundle::FluentValue::from(from as i64)),
-                ("to", fluent_bundle::FluentValue::from(to as i64)),
+                ("from", (from as i64).to_string()),
+                ("to", (to as i64).to_string()),
             ],
         )
     );

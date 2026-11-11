@@ -438,10 +438,7 @@ impl RobotsChecker {
                 "{}",
                 crate::i18n::tr_log_args(
                     "robots-fetch-fail-closed",
-                    &[
-                        ("url", fluent_bundle::FluentValue::from(robots_url)),
-                        ("error", fluent_bundle::FluentValue::from(err.to_string())),
-                    ],
+                    &[("url", robots_url.to_string()), ("error", err.to_string()),],
                 )
             );
             self.store_failure_marker(robots_url).await;

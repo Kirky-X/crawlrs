@@ -42,7 +42,7 @@ impl ScrapeWorker {
                     "{}",
                     crate::i18n::tr_log_args(
                         "scrape-task-encoding-fallback",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                        &[("error", e.to_string())],
                     )
                 );
                 scrape_resp.content.clone()

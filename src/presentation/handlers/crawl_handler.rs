@@ -1679,8 +1679,7 @@ mod tests {
     }
 
     fn test_bundle() -> Arc<I18nBundle> {
-        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
-        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
+        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap())
     }
 
     fn make_socket_addr() -> SocketAddr {

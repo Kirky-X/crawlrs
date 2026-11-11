@@ -108,10 +108,7 @@ where
                 "{}",
                 crate::i18n::tr_log_args(
                     "search-smart-engine-timeout",
-                    &[(
-                        "timeout",
-                        fluent_bundle::FluentValue::from(format!("{timeout:?}")),
-                    )],
+                    &[("timeout", format!("{timeout:?}"),)],
                 )
             );
             Err(SearchError::SmartRoutingTimeout(timeout.as_secs()))
@@ -273,20 +270,11 @@ impl SearchEngine for SmartSearchEngine {
             crate::i18n::tr_log_args(
                 "search-smart-start",
                 &[
-                    ("query", fluent_bundle::FluentValue::from(query.as_str())),
-                    ("limit", fluent_bundle::FluentValue::from(limit as i64)),
-                    (
-                        "lang",
-                        fluent_bundle::FluentValue::from(format!("{:?}", request.lang)),
-                    ),
-                    (
-                        "country",
-                        fluent_bundle::FluentValue::from(format!("{:?}", request.country)),
-                    ),
-                    (
-                        "offset",
-                        fluent_bundle::FluentValue::from(request.offset as i64)
-                    ),
+                    ("query", query.as_str().to_string()),
+                    ("limit", (limit as i64).to_string()),
+                    ("lang", format!("{:?}", request.lang),),
+                    ("country", format!("{:?}", request.country),),
+                    ("offset", (request.offset as i64).to_string()),
                 ],
             )
         );
@@ -351,10 +339,7 @@ impl SearchEngine for SmartSearchEngine {
                 "{}",
                 crate::i18n::tr_log_args(
                     "search-smart-cross-dedup",
-                    &[(
-                        "count",
-                        fluent_bundle::FluentValue::from((before - fused.len()) as i64)
-                    )],
+                    &[("count", ((before - fused.len()) as i64).to_string())],
                 )
             );
         }

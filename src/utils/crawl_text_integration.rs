@@ -69,10 +69,7 @@ impl CrawlTextIntegration {
                     "{}",
                     tr_log_args(
                         "text-integration-failed",
-                        &[
-                            ("url", fluent_bundle::FluentValue::from(url)),
-                            ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                        ],
+                        &[("url", url.to_string()), ("error", e.to_string()),],
                     )
                 );
                 Ok(passthrough_response(
@@ -178,19 +175,15 @@ fn success_response(
         tr_log_args(
             "text-integration-succeeded",
             &[
-                ("url", fluent_bundle::FluentValue::from(url)),
-                (
-                    "length",
-                    fluent_bundle::FluentValue::from(result.processed_content.len().to_string()),
-                ),
+                ("url", url.to_string()),
+                ("length", result.processed_content.len().to_string(),),
                 (
                     "language",
-                    fluent_bundle::FluentValue::from(
-                        result
-                            .language_detected
-                            .clone()
-                            .unwrap_or_else(|| "none".to_string())
-                    ),
+                    result
+                        .language_detected
+                        .clone()
+                        .unwrap_or_else(|| "none".to_string())
+                        .to_string(),
                 ),
             ],
         )
@@ -250,11 +243,8 @@ fn batch_failure_response(
         tr_log_args(
             "text-integration-item-failed",
             &[
-                (
-                    "url",
-                    fluent_bundle::FluentValue::from(response.url.as_str())
-                ),
-                ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                ("url", response.url.as_str().to_string()),
+                ("error", e.to_string()),
             ],
         )
     );

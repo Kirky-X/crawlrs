@@ -97,10 +97,7 @@ async fn click_by_backend_node_id(page: &Page, backend_id: i64) -> Result<Action
         .backend_node_id(BackendNodeId::new(backend_id))
         .build();
     let resolved = page.execute(resolve_params).await.map_err(|e| {
-        crate::i18n::tr_log_args(
-            "mllm-dom-resolve-node-failed",
-            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-        )
+        crate::i18n::tr_log_args("mllm-dom-resolve-node-failed", &[("error", e.to_string())])
     })?;
     let object_id = resolved
         .result
@@ -121,13 +118,13 @@ async fn click_by_backend_node_id(page: &Page, backend_id: i64) -> Result<Action
         .map_err(|e| {
             crate::i18n::tr_log_args(
                 "mllm-call-function-params-invalid",
-                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                &[("error", e.to_string())],
             )
         })?;
     page.execute(call_params).await.map_err(|e| {
         crate::i18n::tr_log_args(
             "mllm-call-function-click-failed",
-            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+            &[("error", e.to_string())],
         )
     })?;
 

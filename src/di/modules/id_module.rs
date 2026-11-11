@@ -46,16 +46,13 @@ fn resolve_algorithm(name: &str) -> Result<AlgorithmType, String> {
     let algorithm = name.parse::<AlgorithmType>().map_err(|e| {
         crate::i18n::tr_log_args(
             "error-id-algorithm-unknown",
-            &[
-                ("algorithm", fluent_bundle::FluentValue::from(name)),
-                ("error", fluent_bundle::FluentValue::from(e.to_string())),
-            ],
+            &[("algorithm", name.to_string()), ("error", e.to_string())],
         )
     })?;
     if !algorithm_factories().contains_key(&algorithm) {
         return Err(crate::i18n::tr_log_args(
             "error-id-algorithm-uncompiled",
-            &[("algorithm", fluent_bundle::FluentValue::from(name))],
+            &[("algorithm", name.to_string())],
         ));
     }
     Ok(algorithm)
@@ -112,18 +109,9 @@ impl AsyncAutoBuilder for IdModule {
                 crate::i18n::tr_log_args(
                     "id-service-initialized",
                     &[
-                        (
-                            "algorithm",
-                            fluent_bundle::FluentValue::from(settings.id.algorithm.to_string()),
-                        ),
-                        (
-                            "workspace",
-                            fluent_bundle::FluentValue::from(settings.id.workspace.as_str()),
-                        ),
-                        (
-                            "group",
-                            fluent_bundle::FluentValue::from(settings.id.group.as_str()),
-                        ),
+                        ("algorithm", settings.id.algorithm.to_string(),),
+                        ("workspace", settings.id.workspace.as_str().to_string(),),
+                        ("group", settings.id.group.as_str().to_string(),),
                     ],
                 )
             );

@@ -490,12 +490,9 @@ fn build_scored_frontier(new_urls: &[String], task: &Task) -> Frontier {
                     tr_log_args(
                         "link-score-skip",
                         &[
-                            (
-                                "task_id",
-                                fluent_bundle::FluentValue::from(task.id.to_string())
-                            ),
-                            ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                            ("url", fluent_bundle::FluentValue::from(url.as_str())),
+                            ("task_id", task.id.to_string()),
+                            ("error", e.to_string()),
+                            ("url", url.as_str().to_string()),
                         ],
                     )
                 );
@@ -508,18 +505,9 @@ fn build_scored_frontier(new_urls: &[String], task: &Task) -> Frontier {
         tr_log_args(
             "link-frontier-enqueued",
             &[
-                (
-                    "task_id",
-                    fluent_bundle::FluentValue::from(task.id.to_string())
-                ),
-                (
-                    "count",
-                    fluent_bundle::FluentValue::from(frontier.len().to_string())
-                ),
-                (
-                    "domains",
-                    fluent_bundle::FluentValue::from(frontier.domain_count().to_string())
-                ),
+                ("task_id", task.id.to_string()),
+                ("count", frontier.len().to_string()),
+                ("domains", frontier.domain_count().to_string()),
             ],
         )
     );

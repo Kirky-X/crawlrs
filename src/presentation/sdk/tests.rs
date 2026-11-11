@@ -65,9 +65,8 @@ use super::mocks::{
 
 /// 构造测试用 i18n bundle（en-US 固定，断言不受宿主系统语言影响）
 fn make_test_i18n() -> (Locale, Arc<I18nBundle>) {
-    let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
     let locale: Locale = "en-US".parse().unwrap();
-    let bundle = Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap());
+    let bundle = Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap());
     (locale, bundle)
 }
 

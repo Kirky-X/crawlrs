@@ -228,8 +228,7 @@ mod tests {
     /// 启动期 i18n 束就绪时双语载荷来自 FTL（en/zh 各自命中语义键）。
     #[test]
     fn test_explicit_error_carrier_bilingual_payload_from_bundle() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/locales");
-        let bundle = crate::i18n::I18nBundle::load("en-US", &["en-US", "zh-CN"], dir)
+        let bundle = crate::i18n::I18nBundle::load("en-US", &["en-US", "zh-CN"])
             .expect("locales bundle should load");
         let en_locale = "en-US".parse::<crate::i18n::Locale>().expect("en locale");
         let zh_locale = "zh-CN".parse::<crate::i18n::Locale>().expect("zh locale");

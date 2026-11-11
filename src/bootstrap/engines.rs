@@ -186,15 +186,12 @@ fn push_playwright_engine(
                 &[
                     (
                         "patterns",
-                        fluent_bundle::FluentValue::from(s.capture_xhr_url_patterns.len() as i64),
+                        (s.capture_xhr_url_patterns.len() as i64).to_string(),
                     ),
-                    (
-                        "max_bytes",
-                        fluent_bundle::FluentValue::from(s.capture_xhr_max_bytes as i64),
-                    ),
+                    ("max_bytes", (s.capture_xhr_max_bytes as i64).to_string(),),
                     (
                         "max_responses",
-                        fluent_bundle::FluentValue::from(s.capture_xhr_max_responses as i64),
+                        (s.capture_xhr_max_responses as i64).to_string(),
                     ),
                 ],
             )

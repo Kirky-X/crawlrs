@@ -135,10 +135,7 @@ pub fn init_shared(max_fingerprints: usize) {
             "{}",
             crate::i18n::tr_log_args(
                 "soft404-already-initialized",
-                &[(
-                    "max_fingerprints",
-                    fluent_bundle::FluentValue::from(max_fingerprints as i64),
-                )],
+                &[("max_fingerprints", (max_fingerprints as i64).to_string(),)],
             )
         );
     }
@@ -223,24 +220,15 @@ impl Soft404Detector {
             crate::i18n::tr_log_args(
                 "soft404-hit",
                 &[
-                    (
-                        "status",
-                        fluent_bundle::FluentValue::from(fingerprint.status_code as i64),
-                    ),
-                    (
-                        "learned_from",
-                        fluent_bundle::FluentValue::from(learned_from as i64)
-                    ),
+                    ("status", (fingerprint.status_code as i64).to_string(),),
+                    ("learned_from", (learned_from as i64).to_string()),
                     (
                         "content_length",
-                        fluent_bundle::FluentValue::from(fingerprint.content_length as i64),
+                        (fingerprint.content_length as i64).to_string(),
                     ),
-                    (
-                        "body_hash",
-                        fluent_bundle::FluentValue::from(format!("{:02x?}", fingerprint.body_hash)),
-                    ),
-                    ("hits", fluent_bundle::FluentValue::from(hits as i64)),
-                    ("total", fluent_bundle::FluentValue::from(total as i64)),
+                    ("body_hash", format!("{:02x?}", fingerprint.body_hash),),
+                    ("hits", (hits as i64).to_string()),
+                    ("total", (total as i64).to_string()),
                 ],
             )
         );

@@ -592,7 +592,7 @@ fetch_initial_backoff_secs = 2
 fetch_max_backoff_secs = 10
 
 # Internationalization (i18n) Configuration
-# 国际化配置，基于 Mozilla Fluent 系统
+# 国际化配置（消息目录编译期内嵌，基于 sdforge i18n 注册表）
 [i18n]
 # 默认 locale（BCP 47 格式）。
 # 语义（unify-rust-i18n）：本值为内置默认值——未显式改写（仍为 "en-US"）时，
@@ -604,8 +604,6 @@ fetch_max_backoff_secs = 10
 default_locale = "en-US"
 # 支持的 locale 列表
 supported_locales = ["en-US", "zh-CN"]
-# 翻译文件根目录路径（相对于工作目录）
-locales_dir = "locales"
 
 # ID Generation (NebulaId)
 # ID 生成配置——全项目 ID 生成/处理经 NebulaId 落地。

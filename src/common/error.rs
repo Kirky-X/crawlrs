@@ -240,8 +240,6 @@ impl CrawlRsError {
     /// 根据请求的 locale 返回对应语言的错误消息。如果翻译 key 不存在，
     /// 回退到 default locale；如果 default locale 也不存在，返回 key 本身。
     pub fn user_message_locale(&self, locale: &Locale, bundle: &I18nBundle) -> String {
-        use fluent_bundle::FluentValue;
-
         match self {
             CrawlRsError::Database(_) => bundle.translate(locale, "error-database"),
             CrawlRsError::Network(_) => bundle.translate(locale, "error-network"),
@@ -249,22 +247,22 @@ impl CrawlRsError {
             CrawlRsError::Validation(msg) => bundle.translate_with_args(
                 locale,
                 "error-validation",
-                &[("message", FluentValue::from(msg.as_str()))],
+                &[("message", msg.as_str().to_string())],
             ),
             CrawlRsError::Unprocessable(msg) => bundle.translate_with_args(
                 locale,
                 "error-validation",
-                &[("message", FluentValue::from(msg.as_str()))],
+                &[("message", msg.as_str().to_string())],
             ),
             CrawlRsError::NotFound(msg) => bundle.translate_with_args(
                 locale,
                 "error-not-found",
-                &[("resource", FluentValue::from(msg.as_str()))],
+                &[("resource", msg.as_str().to_string())],
             ),
             CrawlRsError::Authentication(msg) => bundle.translate_with_args(
                 locale,
                 "error-auth",
-                &[("reason", FluentValue::from(msg.as_str()))],
+                &[("reason", msg.as_str().to_string())],
             ),
             CrawlRsError::PermissionDenied(_) => bundle.translate(locale, "error-permission"),
             CrawlRsError::ServiceUnavailable(_) => {
@@ -1552,8 +1550,7 @@ mod tests {
     #[test]
     fn test_user_message_locale_across_all_variants() {
         use crate::i18n::{I18nBundle, Locale};
-        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap();
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
         let en: Locale = "en-US".parse().unwrap();
         let zh: Locale = "zh-CN".parse().unwrap();
         let variants = vec![
@@ -1712,8 +1709,7 @@ mod tests {
     #[test]
     fn test_user_message_locale_fallback_chain() {
         use crate::i18n::{I18nBundle, Locale};
-        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap();
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
         let en: Locale = "en-US".parse().unwrap();
         let zh: Locale = "zh-CN".parse().unwrap();
 
@@ -1731,7 +1727,7 @@ mod tests {
             "error-nonexistent-key"
         );
 
-        // 参数插值不丢失：Validation 的 message 经 FluentValue 传入
+        // 参数插值不丢失：Validation 的 message 经 String 传入
         let msg = CrawlRsError::Validation("email format invalid".to_string());
         let rendered = msg.user_message_locale(&en, &bundle);
         assert!(

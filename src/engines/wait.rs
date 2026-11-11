@@ -191,7 +191,7 @@ impl WaitFor {
                     "{}",
                     crate::i18n::tr_log_args(
                         "wait-network-idle-subscribe-failed",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                        &[("error", e.to_string())],
                     )
                 );
                 tokio::time::sleep(quiet_window.min(timeout)).await;
@@ -478,10 +478,7 @@ fn log_dom_stable_timeout(timeout: Duration) {
         "{}",
         crate::i18n::tr_log_args(
             "wait-dom-unstable-degraded",
-            &[(
-                "timeout",
-                fluent_bundle::FluentValue::from(timeout.as_millis() as i64),
-            )],
+            &[("timeout", (timeout.as_millis() as i64).to_string(),)],
         )
     );
 }

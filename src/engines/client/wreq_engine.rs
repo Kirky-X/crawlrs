@@ -71,10 +71,7 @@ pub fn emulation_provider(emulation: TlsEmulation) -> wreq::Emulation {
             "{}",
             crate::i18n::tr_log_args(
                 "wreq-non-chromium-emulation",
-                &[(
-                    "emulation",
-                    fluent_bundle::FluentValue::from(format!("{emulation:?}")),
-                )],
+                &[("emulation", format!("{emulation:?}"),)],
             )
         );
     }

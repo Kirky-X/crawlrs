@@ -559,10 +559,7 @@ impl EngineRouter {
             .insert(name.clone(), EngineStats::default());
         info!(
             "{}",
-            tr_log_args(
-                "engine-registered",
-                &[("name", fluent_bundle::FluentValue::from(name.as_str()))],
-            )
+            tr_log_args("engine-registered", &[("name", name.as_str().to_string())],)
         );
     }
 

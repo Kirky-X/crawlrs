@@ -445,7 +445,7 @@ impl ScrapeWorker {
                     "{}",
                     crate::i18n::tr_log_args(
                         "scrape-task-encoding-fallback",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                        &[("error", e.to_string())],
                     )
                 );
                 response.content.clone()
@@ -586,11 +586,8 @@ impl ScrapeWorker {
                 crate::i18n::tr_log_args(
                     "crawl-soft404-detected",
                     &[
-                        ("url", fluent_bundle::FluentValue::from(task.url.as_str())),
-                        (
-                            "task_id",
-                            fluent_bundle::FluentValue::from(task.id.to_string())
-                        ),
+                        ("url", task.url.as_str().to_string()),
+                        ("task_id", task.id.to_string()),
                     ],
                 )
             );
@@ -831,14 +828,8 @@ impl ScrapeWorker {
             crate::i18n::tr_log_args(
                 "crawl-sitemap-feeding",
                 &[
-                    (
-                        "crawl_id",
-                        fluent_bundle::FluentValue::from(crawl_id.to_string())
-                    ),
-                    (
-                        "sitemap_url",
-                        fluent_bundle::FluentValue::from(sitemap_url.as_str())
-                    ),
+                    ("crawl_id", crawl_id.to_string()),
+                    ("sitemap_url", sitemap_url.as_str().to_string()),
                 ],
             )
         );
@@ -928,11 +919,8 @@ fn resolve_sitemap_source_url(task: &Task, crawl_id: crate::domain::id::Id) -> O
                 crate::i18n::tr_log_args(
                     "crawl-sitemap-derive-failed",
                     &[
-                        (
-                            "crawl_id",
-                            fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                        ),
-                        ("url", fluent_bundle::FluentValue::from(task.url.as_str())),
+                        ("crawl_id", crawl_id.to_string(),),
+                        ("url", task.url.as_str().to_string()),
                     ],
                 )
             );
@@ -956,17 +944,9 @@ fn log_sitemap_feed_success(
             crate::i18n::tr_log_args(
                 "crawl-sitemap-feed-resumed",
                 &[
-                    (
-                        "crawl_id",
-                        fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                    ),
-                    ("loc", fluent_bundle::FluentValue::from(resumed as i64)),
-                    (
-                        "pointer",
-                        fluent_bundle::FluentValue::from(
-                            sitemap_feed_pointer_key(crawl_id).as_str(),
-                        ),
-                    ),
+                    ("crawl_id", crawl_id.to_string(),),
+                    ("loc", (resumed as i64).to_string()),
+                    ("pointer", sitemap_feed_pointer_key(crawl_id).to_string(),),
                 ],
             )
         );
@@ -976,27 +956,12 @@ fn log_sitemap_feed_success(
         crate::i18n::tr_log_args(
             "crawl-sitemap-feed-done",
             &[
-                (
-                    "crawl_id",
-                    fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                ),
-                (
-                    "enqueued",
-                    fluent_bundle::FluentValue::from(stats.enqueued as i64)
-                ),
-                (
-                    "filtered",
-                    fluent_bundle::FluentValue::from(stats.filtered_out as i64)
-                ),
-                (
-                    "duplicates",
-                    fluent_bundle::FluentValue::from(stats.duplicates_skipped as i64),
-                ),
-                (
-                    "consumed",
-                    fluent_bundle::FluentValue::from(stats.consumed as i64)
-                ),
-                ("sitemap_url", fluent_bundle::FluentValue::from(sitemap_url),),
+                ("crawl_id", crawl_id.to_string(),),
+                ("enqueued", (stats.enqueued as i64).to_string()),
+                ("filtered", (stats.filtered_out as i64).to_string()),
+                ("duplicates", (stats.duplicates_skipped as i64).to_string(),),
+                ("consumed", (stats.consumed as i64).to_string()),
+                ("sitemap_url", sitemap_url.to_string(),),
             ],
         )
     );
@@ -1014,12 +979,9 @@ fn log_sitemap_feed_failure(
         crate::i18n::tr_log_args(
             "crawl-sitemap-feed-failed",
             &[
-                (
-                    "crawl_id",
-                    fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                ),
-                ("sitemap_url", fluent_bundle::FluentValue::from(sitemap_url),),
-                ("error", fluent_bundle::FluentValue::from(error.to_string())),
+                ("crawl_id", crawl_id.to_string(),),
+                ("sitemap_url", sitemap_url.to_string(),),
+                ("error", error.to_string()),
             ],
         )
     );

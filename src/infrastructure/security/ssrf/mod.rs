@@ -475,9 +475,7 @@ pub(crate) fn ssrf_protection_disabled() -> bool {
                         "ssrf-protection-disabled",
                         &[(
                             "env",
-                            fluent_bundle::FluentValue::from(
-                                crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION,
-                            ),
+                            crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION.to_string(),
                         )],
                     )
                 );

@@ -265,7 +265,7 @@ fn validate_ip_whitelist(
                         locale,
                         i18n,
                         "team-invalid-ip-cidr",
-                        &[("value", fluent_bundle::FluentValue::from(ip.as_str()))],
+                        &[("value", ip.as_str().to_string())],
                     ),
                 ));
             }
@@ -1073,8 +1073,7 @@ mod tests {
 
     /// en-US i18n bundle（固定，断言不受宿主系统语言影响）
     fn make_test_i18n_bundle() -> Arc<crate::i18n::I18nBundle> {
-        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
-        Arc::new(crate::i18n::I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
+        Arc::new(crate::i18n::I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap())
     }
 
     struct MockCreditsRepository {

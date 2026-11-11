@@ -184,10 +184,7 @@ impl FailureSnapshotter {
             }
             Err(e) => log::debug!(
                 "{}",
-                crate::i18n::tr_log_args(
-                    "snapshot-join-failed",
-                    &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                )
+                crate::i18n::tr_log_args("snapshot-join-failed", &[("error", e.to_string())],)
             ),
         }
     }
@@ -309,13 +306,7 @@ fn persist_snapshot(
             "{}",
             crate::i18n::tr_log_args(
                 "snapshot-dir-create-failed",
-                &[
-                    (
-                        "dir",
-                        fluent_bundle::FluentValue::from(dir.display().to_string())
-                    ),
-                    ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                ],
+                &[("dir", dir.display().to_string()), ("error", e.to_string()),],
             )
         );
         return (0, 0);
@@ -360,11 +351,8 @@ fn log_snapshot_write_failed(path: &Path, error: &std::io::Error) {
         crate::i18n::tr_log_args(
             "snapshot-write-failed",
             &[
-                (
-                    "path",
-                    fluent_bundle::FluentValue::from(path.display().to_string())
-                ),
-                ("error", fluent_bundle::FluentValue::from(error.to_string())),
+                ("path", path.display().to_string()),
+                ("error", error.to_string()),
             ],
         )
     );
@@ -383,13 +371,7 @@ fn evict_oldest(dir: &Path, needed: u64, max_total: usize) -> u64 {
                 "{}",
                 crate::i18n::tr_log_args(
                     "snapshot-read-dir-failed",
-                    &[
-                        (
-                            "dir",
-                            fluent_bundle::FluentValue::from(dir.display().to_string())
-                        ),
-                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                    ],
+                    &[("dir", dir.display().to_string()), ("error", e.to_string()),],
                 )
             );
             return 0;
@@ -423,11 +405,8 @@ fn evict_oldest(dir: &Path, needed: u64, max_total: usize) -> u64 {
                 crate::i18n::tr_log_args(
                     "snapshot-evict-failed",
                     &[
-                        (
-                            "path",
-                            fluent_bundle::FluentValue::from(path.display().to_string())
-                        ),
-                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                        ("path", path.display().to_string()),
+                        ("error", e.to_string()),
                     ],
                 )
             ),

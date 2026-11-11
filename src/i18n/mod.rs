@@ -3,14 +3,15 @@
 
 //! 国际化（i18n）模块
 //!
-//! 基于 Mozilla Fluent 系统提供多语言翻译支持。
-//! 翻译文件位于项目根目录 `locales/` 下，按 locale 子目录组织。
+//! 消息层基于 `sdforge::i18n` 宿主注册表：`locales/` 下的 FTL 文件
+//! （消息真源）编译期内嵌（`catalog` 模块），启动期行解析注册。
 //!
 //! 另提供启动期全局束（`init_startup_i18n` / `startup_i18n`）：主程序在
 //! 读取配置后立即初始化，供无请求上下文的对外出口（`CrawlRsError` 错误响应、
-//! RAG 配置校验消息、worker 运维日志）经 Fluent 输出。
+//! RAG 配置校验消息、worker 运维日志）输出。
 
 mod bundle;
+mod catalog;
 mod locale;
 #[cfg(any(feature = "platform", feature = "web-axum"))]
 mod middleware;
@@ -36,12 +37,12 @@ static STARTUP_LOCALE: OnceLock<Locale> = OnceLock::new();
 
 /// 从 i18n 配置构建启动 bundle（default_locale 经检测链决议）
 ///
-/// 加载失败（locales 目录缺失/FTL 解析错误）返回 `None`，调用方保持未初始化
+/// 加载失败（locale 非法/无内嵌消息源）返回 `None`，调用方保持未初始化
 /// 状态，各出口回退英文规范串/键名。
 pub fn build_startup_bundle(cfg: &I18nSettings) -> Option<Arc<I18nBundle>> {
     let supported: Vec<&str> = cfg.supported_locales.iter().map(|s| s.as_str()).collect();
     let default_locale = resolve_startup_default_locale(&cfg.default_locale, &supported);
-    I18nBundle::load(&default_locale.to_string(), &supported, &cfg.locales_dir)
+    I18nBundle::load(&default_locale.to_string(), &supported)
         .map(Arc::new)
         .ok()
 }

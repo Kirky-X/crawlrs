@@ -124,10 +124,7 @@ impl GlobalIdGen {
             Err(e) => {
                 log::error!(
                     "{}",
-                    crate::i18n::tr_log_args(
-                        "id-refill-failed",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                    )
+                    crate::i18n::tr_log_args("id-refill-failed", &[("error", e.to_string())],)
                 );
                 0
             }
@@ -173,14 +170,8 @@ pub async fn init(
             crate::i18n::tr_log_args(
                 "id-global-generator-initialized",
                 &[
-                    (
-                        "workspace",
-                        fluent_bundle::FluentValue::from(global.workspace.as_str()),
-                    ),
-                    (
-                        "group",
-                        fluent_bundle::FluentValue::from(global.group.as_str())
-                    ),
+                    ("workspace", global.workspace.as_str().to_string(),),
+                    ("group", global.group.as_str().to_string()),
                 ],
             )
         );

@@ -655,7 +655,7 @@ async fn apply_viewport_and_stealth(
                 "{}",
                 crate::i18n::tr_log_args(
                     "playwright-stealth-inject-failed",
-                    &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    &[("error", e.to_string())],
                 )
             );
         }
@@ -1119,7 +1119,7 @@ impl XhrCaptureSession {
                     "{}",
                     crate::i18n::tr_log_args(
                         "playwright-xhr-setup-failed",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                        &[("error", e.to_string())],
                     )
                 );
                 None
@@ -1138,10 +1138,7 @@ impl XhrCaptureSession {
                 "{}",
                 crate::i18n::tr_log_args(
                     "playwright-xhr-unfinished-at-collect",
-                    &[(
-                        "count",
-                        fluent_bundle::FluentValue::from(pending_left as i64)
-                    )],
+                    &[("count", (pending_left as i64).to_string())],
                 )
             );
         }
@@ -1155,22 +1152,10 @@ impl XhrCaptureSession {
                 crate::i18n::tr_log_args(
                     "playwright-xhr-dropped",
                     &[
-                        (
-                            "oversize",
-                            fluent_bundle::FluentValue::from(stats.oversized_dropped as i64),
-                        ),
-                        (
-                            "decode_failed",
-                            fluent_bundle::FluentValue::from(stats.decode_failed as i64),
-                        ),
-                        (
-                            "fetch_failed",
-                            fluent_bundle::FluentValue::from(stats.fetch_failed as i64),
-                        ),
-                        (
-                            "overflow",
-                            fluent_bundle::FluentValue::from(stats.overflow_skipped as i64),
-                        ),
+                        ("oversize", (stats.oversized_dropped as i64).to_string(),),
+                        ("decode_failed", (stats.decode_failed as i64).to_string(),),
+                        ("fetch_failed", (stats.fetch_failed as i64).to_string(),),
+                        ("overflow", (stats.overflow_skipped as i64).to_string(),),
                     ],
                 )
             );
@@ -1217,7 +1202,7 @@ fn spawn_xhr_capture_task(
                             "{}",
                             crate::i18n::tr_log_args(
                                 "playwright-xhr-internal-blocked",
-                                &[("url", fluent_bundle::FluentValue::from(url.as_str()))],
+                                &[("url", url.as_str().to_string())],
                             )
                         );
                         continue;
@@ -1292,7 +1277,7 @@ async fn fetch_and_store(
                         "{}",
                         crate::i18n::tr_log_args(
                             "playwright-xhr-body-oversize",
-                            &[("url", fluent_bundle::FluentValue::from(entry.url.as_str()))],
+                            &[("url", entry.url.as_str().to_string())],
                         )
                     );
                     buf.note_oversize();
@@ -1302,7 +1287,7 @@ async fn fetch_and_store(
                         "{}",
                         crate::i18n::tr_log_args(
                             "playwright-xhr-body-decode-failed",
-                            &[("url", fluent_bundle::FluentValue::from(entry.url.as_str()))],
+                            &[("url", entry.url.as_str().to_string())],
                         )
                     );
                     buf.note_decode_failed();
@@ -1315,8 +1300,8 @@ async fn fetch_and_store(
                 crate::i18n::tr_log_args(
                     "playwright-xhr-fetch-body-failed",
                     &[
-                        ("url", fluent_bundle::FluentValue::from(entry.url.as_str())),
-                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                        ("url", entry.url.as_str().to_string()),
+                        ("error", e.to_string()),
                     ],
                 )
             );
@@ -1704,7 +1689,7 @@ mod tests {
                         "{}",
                         crate::i18n::tr_log_args(
                             "playwright-handler-event-error",
-                            &[("error", fluent_bundle::FluentValue::from(format!("{e:?}")))],
+                            &[("error", format!("{e:?}"))],
                         )
                     );
                 }

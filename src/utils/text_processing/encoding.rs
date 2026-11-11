@@ -89,13 +89,7 @@ impl TextEncodingProcessor {
     fn process_short_text(&self, input: &[u8]) -> Result<String, TextEncodingError> {
         debug!(
             "{}",
-            tr_log_args(
-                "text-short-input",
-                &[(
-                    "length",
-                    fluent_bundle::FluentValue::from(input.len().to_string())
-                )],
-            )
+            tr_log_args("text-short-input", &[("length", input.len().to_string())],)
         );
         if let Ok(utf8_str) = std::str::from_utf8(input) {
             if self.contains_unicode_escapes(utf8_str) {
@@ -111,13 +105,7 @@ impl TextEncodingProcessor {
     fn process_long_text(&self, input: &[u8]) -> Result<String, TextEncodingError> {
         debug!(
             "{}",
-            tr_log_args(
-                "text-long-input",
-                &[(
-                    "length",
-                    fluent_bundle::FluentValue::from(input.len().to_string())
-                )],
-            )
+            tr_log_args("text-long-input", &[("length", input.len().to_string())],)
         );
         let cache_key = self.generate_cache_key(input);
         if let Some(cached_result) = self.get_cached_detection(&cache_key) {
@@ -125,10 +113,7 @@ impl TextEncodingProcessor {
                 "{}",
                 tr_log_args(
                     "text-cached-detection",
-                    &[(
-                        "detection",
-                        fluent_bundle::FluentValue::from(format!("{:?}", cached_result))
-                    )],
+                    &[("detection", format!("{:?}", cached_result))],
                 )
             );
             return self.apply_cached_conversion(input, &cached_result);
@@ -210,7 +195,7 @@ impl TextEncodingProcessor {
             "{}",
             tr_log_args(
                 "text-unicode-escapes-parsed",
-                &[("result", fluent_bundle::FluentValue::from(parsed.clone()))],
+                &[("result", parsed.clone().to_string())],
             )
         );
         Ok(parsed)
@@ -238,11 +223,8 @@ impl TextEncodingProcessor {
             tr_log_args(
                 "text-encoding-detected",
                 &[
-                    ("encoding", fluent_bundle::FluentValue::from(encoding_name)),
-                    (
-                        "confidence",
-                        fluent_bundle::FluentValue::from(format!("{:.2}", confidence))
-                    ),
+                    ("encoding", encoding_name.to_string()),
+                    ("confidence", format!("{:.2}", confidence)),
                 ],
             )
         );
@@ -280,10 +262,7 @@ impl TextEncodingProcessor {
                 "{}",
                 tr_log_args(
                     "text-detection-low-confidence",
-                    &[(
-                        "confidence",
-                        fluent_bundle::FluentValue::from(format!("{:.2}", confidence))
-                    )],
+                    &[("confidence", format!("{:.2}", confidence))],
                 )
             );
         }

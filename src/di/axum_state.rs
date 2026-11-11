@@ -300,12 +300,9 @@ fn load_i18n_bundle(
         );
     }
     let i18n_bundle = Arc::new(
-        I18nBundle::load(
-            &default_locale.to_string(),
-            &supported,
-            &settings.i18n.locales_dir,
-        )
-        .map_err(|e| ModuleBuildError::SettingsNotConfigured(format!("i18n load failed: {e}")))?,
+        I18nBundle::load(&default_locale.to_string(), &supported).map_err(|e| {
+            ModuleBuildError::SettingsNotConfigured(format!("i18n load failed: {e}"))
+        })?,
     );
     // 启动时验证 key 一致性（warn on mismatches）
     let warnings = i18n_bundle.validate_key_consistency();

@@ -12,7 +12,6 @@
 //! 开关——当前 SDK 回环形态下 crawlrs 不注入 TrustedIdentity，保持 false；
 //! 供未来 HTTP 直连身份桥启用。
 
-use fluent_bundle::FluentValue;
 use serde::{Deserialize, Serialize};
 
 /// 配置校验消息出口（双轨基准模式，与 [`crate::config::rag`] 同惯例）
@@ -23,7 +22,7 @@ use serde::{Deserialize, Serialize};
 fn fluxweir_config_message(
     key: &str,
     english: impl std::fmt::Display,
-    args: &[(&str, FluentValue)],
+    args: &[(&str, String)],
 ) -> String {
     match crate::i18n::startup_i18n() {
         Some((locale, bundle)) => crate::i18n::t_with_args(locale, bundle, key, args),
@@ -144,7 +143,7 @@ impl FluxweirSettings {
                     format!(
                         "invalid fluxweir.mode value \"{other}\" (supported: embedded/external)"
                     ),
-                    &[("value", FluentValue::from(other))],
+                    &[("value", other.to_string())],
                 ));
             }
         }

@@ -254,7 +254,7 @@ impl SearchClient {
                     "{}",
                     crate::i18n::tr_log_args(
                         "search-engine-disabled-by-config",
-                        &[("engine", fluent_bundle::FluentValue::from(*name))],
+                        &[("engine", (*name).to_string())],
                     )
                 );
             }
@@ -284,7 +284,7 @@ impl SearchClient {
                     "{}",
                     crate::i18n::tr_log_args(
                         "search-default-engine-not-registered",
-                        &[("engine", fluent_bundle::FluentValue::from(name))],
+                        &[("engine", name.to_string())],
                     )
                 );
                 default_engine_type()
@@ -294,7 +294,7 @@ impl SearchClient {
                     "{}",
                     crate::i18n::tr_log_args(
                         "search-default-engine-unknown",
-                        &[("engine", fluent_bundle::FluentValue::from(name))],
+                        &[("engine", name.to_string())],
                     )
                 );
                 default_engine_type()

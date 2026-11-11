@@ -6,7 +6,6 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use fluent_bundle::FluentValue;
 use log::error;
 use std::sync::Arc;
 
@@ -269,7 +268,7 @@ fn search_error_response(
                 locale,
                 bundle,
                 "search-error-unknown-engine",
-                &[("name", FluentValue::from(name.as_str()))],
+                &[("name", name.as_str().to_string())],
             );
             error_response(StatusCode::BAD_REQUEST, msg)
         }
@@ -278,7 +277,7 @@ fn search_error_response(
                 locale,
                 bundle,
                 "search-error-smart-search",
-                &[("message", FluentValue::from(detail.as_str()))],
+                &[("message", detail.as_str().to_string())],
             );
             error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
         }
@@ -1387,8 +1386,7 @@ mod tests {
     }
 
     fn test_bundle() -> Arc<I18nBundle> {
-        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
-        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
+        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap())
     }
 
     /// Build a sample domain SearchResponse for testing.

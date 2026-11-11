@@ -12,7 +12,6 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use fluent_bundle::FluentValue;
 use log::error;
 use std::sync::Arc;
 
@@ -103,7 +102,7 @@ async fn map_core(
                 locale,
                 bundle,
                 "api-map-sitemap-status",
-                &[("status", FluentValue::from(status as i64))],
+                &[("status", (status as i64).to_string())],
             );
             log_map_target_unreachable(&payload.url, &msg);
             error_response_with_code(StatusCode::BAD_GATEWAY, "MAP_TARGET_UNREACHABLE", msg)
@@ -113,7 +112,7 @@ async fn map_core(
                 locale,
                 bundle,
                 "api-map-origin-unparsable",
-                &[("url", FluentValue::from(url.as_str()))],
+                &[("url", url.as_str().to_string())],
             );
             error_response(StatusCode::BAD_REQUEST, msg)
         }
@@ -127,10 +126,7 @@ fn log_map_target_unreachable(url: &str, message: &str) {
         "{}",
         crate::i18n::tr_log_args(
             "map-target-unreachable",
-            &[
-                ("url", FluentValue::from(url)),
-                ("message", FluentValue::from(message)),
-            ],
+            &[("url", url.to_string()), ("message", message.to_string()),],
         )
     );
 }
@@ -194,8 +190,7 @@ mod tests {
     }
 
     fn test_bundle() -> Arc<I18nBundle> {
-        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
-        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
+        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap())
     }
 
     fn test_locale() -> Locale {

@@ -3,7 +3,8 @@
 
 //! vecboost 本地推理 provider（`rag-local` feature）
 //!
-//! 进程内嵌入 + 重排：[`VecBoostLibrary`] 在构造时加载 Candle CPU 模型，
+//! 进程内嵌入 + 重排：[`VecBoostLibrary`] 在构造时加载 ONNX 模型（vecboost
+//! onnx-primary，ort/load-dynamic 运行时加载 libonnxruntime），
 //! 一个 bi-encoder 模型同时覆盖 [`EmbeddingProvider`] 与 [`RerankProvider`]
 //! （vecboost 引擎的默认 rerank 实现 = embed query/docs → 余弦 → sigmoid）。
 
@@ -61,7 +62,7 @@ impl VecboostProvider {
 fn build_model_config(settings: &RagSettings) -> ModelConfig {
     ModelConfig {
         name: settings.local_model_name.clone(),
-        engine_type: EngineType::Candle,
+        engine_type: EngineType::Onnx,
         model_path: PathBuf::from(&settings.local_model_path),
         tokenizer_path: None,
         device: DeviceType::Cpu,
@@ -171,7 +172,7 @@ mod tests {
         let config = build_model_config(&settings);
         assert_eq!(config.name, "BAAI/bge-small-zh-v1.5");
         assert_eq!(config.model_path, PathBuf::from("/tmp/some-model"));
-        assert_eq!(config.engine_type, EngineType::Candle);
+        assert_eq!(config.engine_type, EngineType::Onnx);
         assert_eq!(config.device, DeviceType::Cpu);
         assert_eq!(config.expected_dimension, Some(384));
         assert!(!config.oom_fallback_enabled);

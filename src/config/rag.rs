@@ -13,7 +13,6 @@
 //! 消费方：搜索结果精准重排（[`crate::domain::services::rerank`]）与
 //! schema 抽取的 RAG 上下文（`extract_with_rag_auto`）。
 
-use fluent_bundle::FluentValue;
 use serde::{Deserialize, Serialize};
 
 /// 配置校验消息出口（双轨基准模式）
@@ -24,7 +23,7 @@ use serde::{Deserialize, Serialize};
 fn rag_config_message(
     key: &str,
     english: impl std::fmt::Display,
-    args: &[(&str, FluentValue)],
+    args: &[(&str, String)],
 ) -> String {
     match crate::i18n::startup_i18n() {
         Some((locale, bundle)) => crate::i18n::t_with_args(locale, bundle, key, args),
@@ -169,7 +168,7 @@ impl RagSettings {
                     format!(
                         "invalid rag.embedding_provider value \"{other}\" (supported: \"\"/local)"
                     ),
-                    &[("value", FluentValue::from(other))],
+                    &[("value", other.to_string())],
                 ));
             }
         }
@@ -212,7 +211,7 @@ impl RagSettings {
                         return Err(rag_config_message(
                             "rag-config-rerank-format-invalid",
                             format!("invalid rag.rerank_format value \"{other}\" (supported: cohere/tei)"),
-                            &[("value", FluentValue::from(other))],
+                            &[("value", other.to_string())],
                         ));
                     }
                 }
@@ -223,7 +222,7 @@ impl RagSettings {
                     format!(
                         "invalid rag.rerank_provider value \"{other}\" (supported: \"\"/local/http)"
                     ),
-                    &[("value", FluentValue::from(other))],
+                    &[("value", other.to_string())],
                 ));
             }
         }

@@ -199,7 +199,7 @@ impl BrowserDownloadManager {
                         "{}",
                         tr_log_args(
                             "browser-fetcher-download-failed",
-                            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                            &[("error", e.to_string())],
                         )
                     );
                 }
@@ -291,13 +291,7 @@ pub async fn find_system_browser() -> Option<PathBuf> {
         if path.is_file() {
             log::info!(
                 "{}",
-                tr_log_args(
-                    "browser-system-found",
-                    &[(
-                        "path",
-                        fluent_bundle::FluentValue::from(format!("{:?}", path))
-                    )],
-                )
+                tr_log_args("browser-system-found", &[("path", format!("{:?}", path))],)
             );
             return Some(path.clone());
         }

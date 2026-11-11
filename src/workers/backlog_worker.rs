@@ -112,10 +112,7 @@ impl BacklogWorker {
             "{}",
             tr_log_args(
                 "backlog-pending-found",
-                &[(
-                    "count",
-                    fluent_bundle::FluentValue::from(pending_backlogs.len().to_string())
-                )],
+                &[("count", pending_backlogs.len().to_string())],
             )
         );
 
@@ -146,14 +143,8 @@ impl BacklogWorker {
             tr_log_args(
                 "backlog-team-processing",
                 &[
-                    (
-                        "team_id",
-                        fluent_bundle::FluentValue::from(team_id.to_string())
-                    ),
-                    (
-                        "count",
-                        fluent_bundle::FluentValue::from(team_backlogs.len().to_string())
-                    ),
+                    ("team_id", team_id.to_string()),
+                    ("count", team_backlogs.len().to_string()),
                 ],
             )
         );
@@ -170,10 +161,7 @@ impl BacklogWorker {
                 Err(e) => {
                     error!(
                         "{}",
-                        tr_log_args(
-                            "backlog-processing-failed",
-                            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                        )
+                        tr_log_args("backlog-processing-failed", &[("error", e.to_string())],)
                     );
                     counts.failed += 1;
                 }
@@ -215,10 +203,7 @@ impl BacklogWorker {
             "{}",
             tr_log_args(
                 "backlog-expired-marked",
-                &[(
-                    "task_id",
-                    fluent_bundle::FluentValue::from(backlog.id.to_string())
-                )],
+                &[("task_id", backlog.id.to_string())],
             )
         );
 
@@ -244,10 +229,7 @@ impl BacklogWorker {
             "{}",
             tr_log_args(
                 "backlog-retry-exhausted-marked",
-                &[(
-                    "task_id",
-                    fluent_bundle::FluentValue::from(backlog.id.to_string())
-                )],
+                &[("task_id", backlog.id.to_string())],
             )
         );
 
@@ -278,15 +260,9 @@ impl BacklogWorker {
                     tr_log_args(
                         "backlog-concurrency-denied",
                         &[
-                            (
-                                "team_id",
-                                fluent_bundle::FluentValue::from(backlog.team_id.to_string())
-                            ),
-                            ("reason", fluent_bundle::FluentValue::from(reason)),
-                            (
-                                "task_id",
-                                fluent_bundle::FluentValue::from(backlog.id.to_string())
-                            ),
+                            ("team_id", backlog.team_id.to_string()),
+                            ("reason", reason.to_string()),
+                            ("task_id", backlog.id.to_string()),
                         ],
                     )
                 );
@@ -298,10 +274,7 @@ impl BacklogWorker {
                     "{}",
                     tr_log_args(
                         "backlog-unexpected-requeue",
-                        &[(
-                            "task_id",
-                            fluent_bundle::FluentValue::from(backlog.id.to_string())
-                        )],
+                        &[("task_id", backlog.id.to_string())],
                     )
                 );
                 Ok(BacklogOutcome::Queued)
@@ -311,7 +284,7 @@ impl BacklogWorker {
                     "{}",
                     tr_log_args(
                         "backlog-concurrency-check-failed",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                        &[("error", e.to_string())],
                     )
                 );
                 Err(WorkerError::ServiceError(e.to_string()))
@@ -338,10 +311,7 @@ impl BacklogWorker {
                     "{}",
                     tr_log_args(
                         "backlog-reactivated",
-                        &[(
-                            "task_id",
-                            fluent_bundle::FluentValue::from(backlog.id.to_string())
-                        )],
+                        &[("task_id", backlog.id.to_string())],
                     )
                 );
                 Ok(BacklogOutcome::Reactivated)
@@ -361,10 +331,7 @@ impl BacklogWorker {
     ) -> Result<BacklogOutcome, WorkerError> {
         error!(
             "{}",
-            tr_log_args(
-                "backlog-reactivation-failed",
-                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-            )
+            tr_log_args("backlog-reactivation-failed", &[("error", e.to_string())],)
         );
 
         // 失败重试：在原始 Pending 快照上累加重试次数并持久化，
@@ -414,10 +381,7 @@ impl BacklogWorker {
             "{}",
             tr_log_args(
                 "backlog-task-reactivated",
-                &[(
-                    "task_id",
-                    fluent_bundle::FluentValue::from(task.id.to_string())
-                )],
+                &[("task_id", task.id.to_string())],
             )
         );
         Ok(())
@@ -435,14 +399,8 @@ impl BacklogWorker {
             tr_log_args(
                 "backlog-task-status-not-activatable",
                 &[
-                    (
-                        "task_id",
-                        fluent_bundle::FluentValue::from(task.id.to_string())
-                    ),
-                    (
-                        "status",
-                        fluent_bundle::FluentValue::from(task.status.to_string())
-                    ),
+                    ("task_id", task.id.to_string()),
+                    ("status", task.status.to_string()),
                 ],
             )
         );
@@ -486,10 +444,7 @@ impl BacklogWorker {
                 Err(e) => {
                     error!(
                         "{}",
-                        tr_log_args(
-                            "backlog-cleanup-failed",
-                            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                        )
+                        tr_log_args("backlog-cleanup-failed", &[("error", e.to_string())],)
                     );
                 }
             }
@@ -499,10 +454,7 @@ impl BacklogWorker {
             "{}",
             tr_log_args(
                 "backlog-cleanup-completed",
-                &[(
-                    "count",
-                    fluent_bundle::FluentValue::from(cleaned_count.to_string())
-                )],
+                &[("count", cleaned_count.to_string())],
             )
         );
         Ok(())
@@ -517,10 +469,7 @@ impl BacklogWorker {
             "{}",
             tr_log_args(
                 "backlog-cleanup-processing",
-                &[(
-                    "task_id",
-                    fluent_bundle::FluentValue::from(backlog.id.to_string())
-                )],
+                &[("task_id", backlog.id.to_string())],
             )
         );
 
@@ -555,10 +504,7 @@ impl BacklogWorker {
                     "{}",
                     tr_log_args(
                         "backlog-task-marked-failed-by-expiry",
-                        &[(
-                            "task_id",
-                            fluent_bundle::FluentValue::from(task.id.to_string())
-                        )],
+                        &[("task_id", task.id.to_string())],
                     )
                 );
             }
@@ -575,14 +521,8 @@ fn log_backlog_concurrency_available(backlog: &TasksBacklog) {
         tr_log_args(
             "backlog-concurrency-available",
             &[
-                (
-                    "team_id",
-                    fluent_bundle::FluentValue::from(backlog.team_id.to_string())
-                ),
-                (
-                    "task_id",
-                    fluent_bundle::FluentValue::from(backlog.id.to_string())
-                ),
+                ("team_id", backlog.team_id.to_string()),
+                ("task_id", backlog.id.to_string()),
             ],
         )
     );
@@ -601,15 +541,9 @@ fn begin_backlog_processing(backlog: &TasksBacklog) -> Option<TasksBacklog> {
             tr_log_args(
                 "backlog-state-transition-skipped",
                 &[
-                    (
-                        "task_id",
-                        fluent_bundle::FluentValue::from(backlog.id.to_string())
-                    ),
-                    (
-                        "current",
-                        fluent_bundle::FluentValue::from(backlog.status.to_string())
-                    ),
-                    ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                    ("task_id", backlog.id.to_string()),
+                    ("current", backlog.status.to_string()),
+                    ("error", e.to_string()),
                 ],
             )
         );
@@ -640,34 +574,13 @@ fn log_backlog_summary(counts: &BacklogCounts) {
         tr_log_args(
             "backlog-processing-summary",
             &[
-                (
-                    "reactivated",
-                    fluent_bundle::FluentValue::from(counts.reactivated.to_string())
-                ),
-                (
-                    "expired",
-                    fluent_bundle::FluentValue::from(counts.expired.to_string())
-                ),
-                (
-                    "retry_exhausted",
-                    fluent_bundle::FluentValue::from(counts.retry_exhausted.to_string())
-                ),
-                (
-                    "denied",
-                    fluent_bundle::FluentValue::from(counts.denied.to_string())
-                ),
-                (
-                    "queued",
-                    fluent_bundle::FluentValue::from(counts.queued.to_string())
-                ),
-                (
-                    "skipped",
-                    fluent_bundle::FluentValue::from(counts.skipped.to_string())
-                ),
-                (
-                    "failed",
-                    fluent_bundle::FluentValue::from(counts.failed.to_string())
-                ),
+                ("reactivated", counts.reactivated.to_string()),
+                ("expired", counts.expired.to_string()),
+                ("retry_exhausted", counts.retry_exhausted.to_string()),
+                ("denied", counts.denied.to_string()),
+                ("queued", counts.queued.to_string()),
+                ("skipped", counts.skipped.to_string()),
+                ("failed", counts.failed.to_string()),
             ],
         )
     );
@@ -683,7 +596,7 @@ impl WorkerProcess for BacklogWorker {
         if let Err(e) = self.process_backlog().await {
             return ProcessResult::Error(tr_log_args(
                 "backlog-process-error",
-                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                &[("error", e.to_string())],
             ));
         }
 
@@ -693,7 +606,7 @@ impl WorkerProcess for BacklogWorker {
             if let Err(e) = self.cleanup_expired_tasks().await {
                 return ProcessResult::Error(tr_log_args(
                     "backlog-cleanup-error",
-                    &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    &[("error", e.to_string())],
                 ));
             }
         }

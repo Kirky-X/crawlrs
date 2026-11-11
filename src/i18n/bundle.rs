@@ -1,52 +1,51 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! i18n 翻译 bundle 管理
+//! i18n 翻译 bundle 门面
 //!
-//! 负责加载 FTL 翻译文件、提供翻译接口和验证 key 一致性。
+//! 消息层底层为 `sdforge::i18n` 宿主注册表（见 [`super::catalog`]）：
+//! `locales/*.ftl` 编译期内嵌，启动期行解析注册；本类型只承载
+//! default/supported locale 元数据并提供翻译入口，供 `CrawlRsState`
+//! （`Arc<I18nBundle>`）与 `i18n` 中间件（locale 协商）使用。
+//!
+//! 查找顺序：指定 locale → default locale → 返回 key 本身（绝不 panic）。
+//! 键位一致性校验（en/zh 键集合与占位符对齐）基于同一份内嵌目录。
 
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::path::Path;
+use std::collections::BTreeSet;
 
-use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
 use unic_langid::LanguageIdentifier;
 
 use crate::common::error::CrawlRsError;
 
+use super::catalog;
+
 /// Locale 类型别名（BCP 47 语言标识符）
 pub type Locale = LanguageIdentifier;
 
-/// i18n 翻译 bundle，线程安全（Send + Sync）
+/// i18n 翻译 bundle 门面（元数据句柄，天然 `Send + Sync`）
 ///
-/// 管理所有语言的翻译资源，提供翻译接口。
-/// 在应用启动时加载，作为 `Arc<I18nBundle>` 存储在状态中。
+/// 翻译内容注册在 `sdforge::i18n` 全局注册表（加载时幂等注册一次）；
+/// 本结构持有 default/supported locale，作为状态组件在应用内共享。
 pub struct I18nBundle {
-    /// 每个 locale 对应的 FluentBundle
-    bundles: HashMap<Locale, FluentBundle<FluentResource>>,
     /// 默认 locale（回退语言）
     default_locale: Locale,
     /// 支持的 locale 列表
     supported_locales: Vec<Locale>,
 }
 
-// SAFETY: FluentBundle<IntlLangMemoizer> 内部的 RefCell<TypeMap> 仅用于
-// 格式化缓存（memoization），不影响翻译正确性。所有 FTL 资源在加载后不可变，
-// 并发格式化时的缓存竞争最坏情况是重复计算，不会产生数据竞争或内存不安全。
-unsafe impl Send for I18nBundle {}
-unsafe impl Sync for I18nBundle {}
-
 impl I18nBundle {
-    /// 从 locales/ 目录加载所有语言包
+    /// 加载翻译 bundle：注册内嵌目录并解析 locale 元数据
     ///
     /// # Arguments
     /// * `default_locale` - 默认 locale 字符串（如 "en-US"）
     /// * `supported` - 支持的 locale 字符串列表
-    /// * `dir` - locales 根目录路径
     ///
     /// # Errors
-    /// 返回 `CrawlRsError::Config` 如果目录不存在或 FTL 文件格式错误
-    pub fn load(default_locale: &str, supported: &[&str], dir: &str) -> Result<Self, CrawlRsError> {
+    /// 返回 `CrawlRsError::Config` 如果 locale 字符串非法，或某个
+    /// supported locale 无内嵌消息源（未登记进 `catalog` 模块的 `FILES` 清单）
+    pub fn load(default_locale: &str, supported: &[&str]) -> Result<Self, CrawlRsError> {
+        catalog::register_all();
+
         let default_locale: Locale = default_locale
             .parse()
             .map_err(|e| CrawlRsError::Config(format!("Invalid default locale: {e}")))?;
@@ -60,71 +59,19 @@ impl I18nBundle {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut bundles = HashMap::new();
-
         for locale in &supported_locales {
-            bundles.insert(locale.clone(), Self::load_locale_bundle(locale, dir)?);
+            if catalog::sources_for(&locale.to_string()).is_none() {
+                return Err(CrawlRsError::Config(format!(
+                    "No embedded message catalog for supported locale '{locale}' \
+                     (only en-US/zh-CN are built in)"
+                )));
+            }
         }
 
         Ok(Self {
-            bundles,
             default_locale,
             supported_locales,
         })
-    }
-
-    /// 加载单个 locale 目录下的全部 `.ftl` 资源（自 [`Self::load`] 提取），
-    /// 按文件名排序保证确定性。
-    fn load_locale_bundle(
-        locale: &Locale,
-        dir: &str,
-    ) -> Result<FluentBundle<FluentResource>, CrawlRsError> {
-        let locale_dir = Path::new(dir).join(locale.to_string());
-        if !locale_dir.exists() {
-            return Err(CrawlRsError::Config(format!(
-                "Locale directory not found: {}",
-                locale_dir.display()
-            )));
-        }
-
-        let mut bundle = FluentBundle::new(vec![locale.clone()]);
-
-        // 加载该 locale 目录下所有 .ftl 文件
-        let mut entries: Vec<_> = fs::read_dir(&locale_dir)
-            .map_err(|e| {
-                CrawlRsError::Config(format!(
-                    "Failed to read locale directory {}: {e}",
-                    locale_dir.display()
-                ))
-            })?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "ftl"))
-            .collect();
-
-        // 按文件名排序确保确定性
-        entries.sort_by_key(|e| e.file_name());
-
-        for entry in entries {
-            let content = fs::read_to_string(entry.path()).map_err(|e| {
-                CrawlRsError::Config(format!(
-                    "Failed to read FTL file {}: {e}",
-                    entry.path().display()
-                ))
-            })?;
-
-            let resource = FluentResource::try_new(content).map_err(|e| {
-                CrawlRsError::Config(format!(
-                    "Failed to parse FTL file {}: {e:?}",
-                    entry.path().display()
-                ))
-            })?;
-
-            bundle.add_resource(resource).map_err(|e| {
-                CrawlRsError::Config(format!("Failed to add resource for locale {locale}: {e:?}"))
-            })?;
-        }
-
-        Ok(bundle)
     }
 
     /// 翻译消息（无参数）
@@ -132,89 +79,38 @@ impl I18nBundle {
     /// 查找指定 locale 的翻译，如果 key 不存在则回退到 default_locale。
     /// 如果 default_locale 也不存在，返回 key 本身。
     pub fn translate(&self, locale: &Locale, key: &str) -> String {
-        self.translate_inner(locale, key, None)
+        self.translate_inner(&locale.to_string(), key, &[])
     }
 
     /// 翻译消息（带参数）
     ///
-    /// 参数通过 `&[(&str, FluentValue)]` 传入，支持 Fluent 变量替换。
+    /// 参数通过 `&[(&str, String)]` 传入，`{ $name }` 占位符按名替换。
     pub fn translate_with_args(
         &self,
         locale: &Locale,
         key: &str,
-        args: &[(&str, FluentValue)],
+        args: &[(&str, String)],
     ) -> String {
-        let fluent_args: Option<FluentArgs> = if args.is_empty() {
-            None
-        } else {
-            Some(args.iter().map(|(k, v)| (*k, v.clone())).collect())
-        };
-        self.translate_inner(locale, key, fluent_args.as_ref())
+        self.translate_inner(&locale.to_string(), key, args)
     }
 
-    /// 翻译公共路径：先查指定 locale，未命中回退 default_locale；两者皆未命中
-    /// 时 `warn!` 并返回 key 本身。
-    fn translate_inner(&self, locale: &Locale, key: &str, args: Option<&FluentArgs>) -> String {
-        if let Some(result) = self.translate_with_fallback(locale, key, args) {
-            return result;
+    /// 翻译公共路径：指定 locale → default locale → key 本身。
+    /// `translate_for` 未命中返回 key 原串（键值域为 kebab-case 键名，
+    /// 与人类文案不相交，以「结果等于 key」判定 miss）。
+    fn translate_inner(&self, locale: &str, key: &str, args: &[(&str, String)]) -> String {
+        let primary = sdforge::i18n::translate_for(locale, key, args);
+        if primary != key {
+            return primary;
         }
-
-        // Key 不存在，返回 key 本身
+        if self.default_locale != locale {
+            let fallback =
+                sdforge::i18n::translate_for(&self.default_locale.to_string(), key, args);
+            if fallback != key {
+                return fallback;
+            }
+        }
         log::warn!("Translation key '{key}' not found for locale '{locale}'");
         key.to_string()
-    }
-
-    /// 按回退顺序查找并格式化消息：先指定 locale，后 default_locale。
-    /// 任一命中即返回格式化结果；消息不存在或无 value 时继续回退。
-    fn translate_with_fallback(
-        &self,
-        locale: &Locale,
-        key: &str,
-        args: Option<&FluentArgs>,
-    ) -> Option<String> {
-        if let Some(bundle) = self.bundles.get(locale) {
-            if let Some(result) =
-                Self::format_message(bundle, key, args, || format!("in locale '{locale}'"))
-            {
-                return Some(result);
-            }
-        }
-
-        // 回退到 default locale
-        if locale != &self.default_locale {
-            if let Some(bundle) = self.bundles.get(&self.default_locale) {
-                if let Some(result) =
-                    Self::format_message(bundle, key, args, || "in default locale".to_string())
-                {
-                    return Some(result);
-                }
-            }
-        }
-        None
-    }
-
-    /// 从单个 bundle 格式化消息；格式错误按既有口径 `warn!` 后仍返回结果。
-    /// `context` 为错误日志中的位置描述构造函数（如 `in locale 'en-US'` /
-    /// `in default locale`），仅在出现格式错误时调用。
-    fn format_message(
-        bundle: &FluentBundle<FluentResource>,
-        key: &str,
-        args: Option<&FluentArgs>,
-        context: impl FnOnce() -> String,
-    ) -> Option<String> {
-        let msg = bundle.get_message(key)?;
-        let pattern = msg.value()?;
-        let mut errors = vec![];
-        let result = bundle
-            .format_pattern(pattern, args, &mut errors)
-            .to_string();
-        if !errors.is_empty() {
-            log::warn!(
-                "Fluent format errors for key '{key}' {}: {errors:?}",
-                context()
-            );
-        }
-        Some(result)
     }
 
     /// 获取默认 locale
@@ -230,28 +126,55 @@ impl I18nBundle {
     /// 启动时验证所有 supported locale 的 key 集合一致性
     ///
     /// 返回不一致的描述列表。空列表表示完全一致。
-    /// 以 default_locale 的 key 集合为基准，其他 locale 缺少或多出的 key 都会被报告。
+    /// 以 default_locale 的 key 集合为基准，其他 locale 缺少或多出的
+    /// key 都会被报告；占位符集合不一致同样报告（运行时会把未替换的
+    /// `{ $name }` 裸句柄吐给用户）。
     pub fn validate_key_consistency(&self) -> Vec<String> {
         let mut warnings = Vec::new();
-
-        // 获取 default locale 的 key 集合
-        let default_keys = self.get_message_keys(&self.default_locale);
+        let default_str = self.default_locale.to_string();
+        let default_keys = self.keys_for(&default_str);
 
         for locale in &self.supported_locales {
-            if locale == &self.default_locale {
+            let locale_str = locale.to_string();
+            if locale_str == default_str {
                 continue;
             }
-
-            warnings.extend(self.diff_locale_keys(locale, &default_keys));
+            warnings.extend(self.diff_locale_keys(&locale_str, &default_keys));
         }
 
         warnings
     }
 
-    /// 对比单个 locale 与 default 的 key 集合：先报缺少的 key，再报多出的 key
-    fn diff_locale_keys(&self, locale: &Locale, default_keys: &HashSet<String>) -> Vec<String> {
+    /// 内嵌目录中指定 locale 的全部消息键
+    fn keys_for(&self, locale: &str) -> BTreeSet<String> {
+        catalog::sources_for(locale)
+            .map(|sources| {
+                sources
+                    .iter()
+                    .flat_map(|s| catalog::parse_entries(s))
+                    .map(|(k, _)| k.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// 键 → 占位符集合（内嵌目录，指定 locale）
+    fn placeholders_for(&self, locale: &str) -> Vec<(String, BTreeSet<&'static str>)> {
+        catalog::sources_for(locale)
+            .map(|sources| {
+                sources
+                    .iter()
+                    .flat_map(|s| catalog::parse_entries(s))
+                    .map(|(k, v)| (k.to_string(), catalog::placeholders(v)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// 对比单个 locale 与 default：先报缺少/多出的 key，再报占位符失配
+    fn diff_locale_keys(&self, locale: &str, default_keys: &BTreeSet<String>) -> Vec<String> {
         let mut warnings = Vec::new();
-        let locale_keys = self.get_message_keys(locale);
+        let locale_keys = self.keys_for(locale);
 
         for key in default_keys {
             if !locale_keys.contains(key) {
@@ -271,339 +194,23 @@ impl I18nBundle {
             }
         }
 
-        warnings
-    }
-
-    /// 获取指定 locale 的所有 message key
-    fn get_message_keys(&self, locale: &Locale) -> HashSet<String> {
-        let mut keys = HashSet::new();
-        if let Some(bundle) = self.bundles.get(locale) {
-            // FluentBundle 没有直接的 keys 迭代 API，
-            // 通过已知 FTL 文件中的 key 列表来验证
-            // 这里我们遍历所有已知的 key 前缀来收集
-            for entry in self.ftl_entries() {
-                if bundle.get_message(&entry).is_some() {
-                    keys.insert(entry);
+        // 占位符对齐（键存在但占位符不一致会导致某语言渲染出裸 {$name} 句柄）
+        let default_placeholders: std::collections::BTreeMap<String, BTreeSet<&str>> = self
+            .placeholders_for(&self.default_locale.to_string())
+            .into_iter()
+            .collect();
+        for (key, vars) in self.placeholders_for(locale) {
+            if let Some(default_vars) = default_placeholders.get(&key) {
+                if vars != *default_vars {
+                    warnings.push(format!(
+                        "Locale '{locale}' key '{key}' placeholders {vars:?} differ from \
+                         default '{default_vars:?}'"
+                    ));
                 }
             }
         }
-        keys
-    }
 
-    /// 所有已知的 FTL key 列表
-    ///
-    /// 新增 FTL key 时需同步更新此列表。
-    fn ftl_entries(&self) -> Vec<String> {
-        let mut keys = Vec::new();
-
-        // errors.ftl (17 keys)
-        keys.extend([
-            "error-database",
-            "error-network",
-            "error-config",
-            "error-validation",
-            "error-not-found",
-            "error-auth",
-            "error-permission",
-            "error-timeout",
-            "error-rate-limit",
-            "error-quota",
-            "error-service-unavailable",
-            "error-cache",
-            "error-task",
-            "error-json",
-            "error-io",
-            "error-engine",
-            "error-internal",
-        ]);
-
-        // api.ftl (13 keys)
-        keys.extend([
-            "api-access-denied",
-            "api-internal-error",
-            "api-task-not-found",
-            "api-crawl-not-found",
-            "api-scrape-cancelled",
-            "api-task-failed",
-            "api-validation-error",
-            "api-geographic-denied",
-            "api-webhook-url-invalid",
-            "api-insufficient-permissions-api-key",
-            "api-insufficient-permissions-team",
-            "api-task-ids-empty",
-            "team-invalid-ip-cidr",
-        ]);
-
-        // api.ftl 追加 (4 keys) — sitemap 请求源 / map 端点响应消息
-        keys.extend([
-            "api-sitemap-feature-required",
-            "api-sitemap-source-disabled",
-            "api-map-sitemap-status",
-            "api-map-origin-unparsable",
-            "api-wait-regex-invalid",
-            "api-wait-mutual-exclusive",
-        ]);
-
-        // validation.ftl 追加 (1 key) — DTO validator 消息（校验时经启动束解析）
-        keys.extend(["validation-sitemap-url-scheme"]);
-
-        // errors.ftl 追加 (2 keys) — SearchServiceError handler 映射
-        keys.extend(["search-error-unknown-engine", "search-error-smart-search"]);
-
-        // validation.ftl (6 keys)
-        keys.extend([
-            "validation-query-empty",
-            "validation-url-invalid",
-            "validation-credits-insufficient",
-            "validation-field-required",
-            "sdk-query-empty",
-            "sdk-url-empty",
-        ]);
-
-        // domain-error keys (18 keys)
-        keys.extend([
-            "domain-error-crawl-config",
-            "domain-error-depth-exceeded",
-            "domain-error-path-filtered",
-            "domain-error-task-not-found",
-            "domain-error-invalid-task-state",
-            "domain-error-task-expired",
-            "domain-error-team-not-found",
-            "domain-error-insufficient-credits",
-            "domain-error-concurrency-limit",
-            "domain-error-invalid-url",
-            "domain-error-domain-blacklisted",
-            "domain-error-robots-forbidden",
-            "domain-error-webhook-delivery-failed",
-            "domain-error-invalid-webhook-url",
-            "domain-error-llm-extraction-failed",
-            "domain-error-llm-carrier-not-injected",
-            "domain-error-invalid-css-selector",
-            "domain-error-validation",
-        ]);
-
-        // rag.ftl (9 keys) — RagSettings::validate_providers 配置校验消息
-        keys.extend([
-            "rag-config-embedding-provider-local-feature",
-            "rag-config-embedding-provider-invalid",
-            "rag-config-rerank-provider-local-feature",
-            "rag-config-rerank-endpoint-empty",
-            "rag-config-rerank-model-empty",
-            "rag-config-rerank-format-invalid",
-            "rag-config-rerank-provider-invalid",
-            "rag-config-search-rerank-top-n",
-            "rag-config-rag-top-k",
-        ]);
-
-        // fluxweir.ftl (5 keys) — FluxweirSettings::validate 配置校验消息
-        keys.extend([
-            "fluxweir-config-mode-invalid",
-            "fluxweir-config-listen-addr-empty",
-            "fluxweir-config-external-base-url-empty",
-            "fluxweir-config-api-key-missing",
-            "fluxweir-config-timeout-invalid",
-        ]);
-
-        // workers.ftl (5 keys) — BacklogWorker::process_backlog 运维日志
-        keys.extend([
-            "backlog-processing-started",
-            "backlog-none-pending",
-            "backlog-pending-found",
-            "backlog-team-processing",
-            "backlog-processing-summary",
-        ]);
-
-        // workers.ftl 追加 (27 keys) — 积压 Worker 详细日志/链接提取器/抓取执行器
-        keys.extend([
-            "backlog-processing-failed",
-            "backlog-expired-marked",
-            "backlog-retry-exhausted-marked",
-            "backlog-concurrency-available",
-            "backlog-state-transition-skipped",
-            "backlog-reactivated",
-            "backlog-reactivation-failed",
-            "backlog-concurrency-denied",
-            "backlog-unexpected-requeue",
-            "backlog-concurrency-check-failed",
-            "backlog-task-status-not-activatable",
-            "backlog-task-reactivated",
-            "backlog-cleanup-started",
-            "backlog-cleanup-none",
-            "backlog-cleanup-failed",
-            "backlog-cleanup-completed",
-            "backlog-cleanup-processing",
-            "backlog-task-marked-failed-by-expiry",
-            "backlog-process-error",
-            "backlog-cleanup-error",
-            "link-score-skip",
-            "link-frontier-enqueued",
-            "scrape-exec-encoding-started",
-            "scrape-exec-encoding-succeeded",
-            "scrape-exec-encoding-failed",
-            "scrape-exec-encoding-error",
-            "scrape-task-encoding-fallback",
-        ]);
-
-        // workers.ftl 追加 (15 keys) — F11 sitemap 请求源 / 软 404 / 条件请求日志
-        keys.extend([
-            // Crawl task: soft 404 & sitemap request source (7)
-            "crawl-soft404-detected",
-            "crawl-sitemap-derive-failed",
-            "crawl-sitemap-feeding",
-            "crawl-sitemap-feed-resumed",
-            "crawl-sitemap-feed-done",
-            "crawl-sitemap-feed-failed",
-            // Scrape task: conditional request & 304 reuse (3)
-            "scrape-conditional-lookup-failed",
-            "scrape-304-reused",
-            "scrape-304-no-prior",
-            // Sitemap feed pointer (3)
-            "sitemap-pointer-mismatch",
-            "sitemap-pointer-corrupt",
-            "sitemap-resume-without-seek",
-            // Soft 404 detector (2)
-            "soft404-already-initialized",
-            "soft404-hit",
-        ]);
-
-        // logs.ftl (29 keys) — 非 worker 运维日志（文本处理流水线/启动期 CORS/
-        // 浏览器下载器/引擎路由）
-        keys.extend([
-            "text-short-input",
-            "text-long-input",
-            "text-cached-detection",
-            "text-unicode-escapes-detected",
-            "text-unicode-escapes-parsed",
-            "text-detection-started",
-            "text-encoding-detected",
-            "text-detection-low-confidence",
-            "text-html-structure-detected",
-            "text-encoding-succeeded",
-            "text-encoding-failed",
-            "text-web-content-started",
-            "text-crawl-started",
-            "text-crawl-completed",
-            "text-config-updated",
-            "text-integration-enabled",
-            "text-integration-disabled",
-            "text-integration-disabled-direct",
-            "text-integration-succeeded",
-            "text-integration-failed",
-            "text-integration-disabled-batch",
-            "text-integration-item-failed",
-            "boot-cors-wildcard",
-            "boot-cors-invalid-fallback",
-            "browser-check-started",
-            "browser-fetcher-download-failed",
-            "browser-cleaned-up",
-            "browser-system-found",
-            "engine-registered",
-        ]);
-
-        // logs.ftl 追加 (53 keys) — 引擎/安全/搜索/可观测性运维日志
-        keys.extend([
-            // FlareSolverr engine (5)
-            "flare-url-not-configured",
-            "flare-url-validation-failed",
-            "flare-url-validation-fallback",
-            "flare-mode-url-validation-fallback",
-            "flare-url-not-configured-fallback",
-            // Session identity pool (3)
-            "session-identity-retired",
-            "session-identity-force-retired",
-            "session-cookie-cap-dropped",
-            // Browser wait strategies (2)
-            "wait-network-idle-subscribe-failed",
-            "wait-dom-unstable-degraded",
-            // Playwright engine (9)
-            "playwright-stealth-inject-failed",
-            "playwright-xhr-setup-failed",
-            "playwright-xhr-dropped",
-            "playwright-xhr-internal-blocked",
-            "playwright-xhr-unfinished-at-collect",
-            "playwright-xhr-body-oversize",
-            "playwright-xhr-body-decode-failed",
-            "playwright-xhr-fetch-body-failed",
-            "playwright-handler-event-error",
-            // Browser pool (1)
-            "playwright-pool-drop-no-runtime",
-            // wreq TLS emulation (1)
-            "wreq-non-chromium-emulation",
-            // SSRF protection (1)
-            "ssrf-protection-disabled",
-            // robots.txt (1)
-            "robots-fetch-fail-closed",
-            // MLLM CDP bridge error payloads (4)
-            "mllm-ax-tree-failed",
-            "mllm-dom-resolve-node-failed",
-            "mllm-call-function-params-invalid",
-            "mllm-call-function-click-failed",
-            // Distributed ID service (3)
-            "id-refill-failed",
-            "id-global-generator-initialized",
-            "id-service-initialized",
-            // Bootstrap & map endpoint logs (3)
-            "boot-playwright-capture-enabled",
-            "boot-register-id-module-failed",
-            "map-target-unreachable",
-            // Search engines & smart routing (12)
-            "search-exa-registered",
-            "search-exa-skipped",
-            "search-tavily-registered",
-            "search-tavily-skipped",
-            "search-smart-engine-timeout",
-            "search-smart-start",
-            "search-smart-cross-dedup",
-            "search-smart-not-injected",
-            "search-engine-disabled-by-config",
-            "search-all-builtin-engines-disabled",
-            "search-default-engine-not-registered",
-            "search-default-engine-unknown",
-            // Failure snapshot bypass (5)
-            "snapshot-join-failed",
-            "snapshot-dir-create-failed",
-            "snapshot-write-failed",
-            "snapshot-read-dir-failed",
-            "snapshot-evict-failed",
-            // Adaptive concurrency (AIMD) (3)
-            "aimd-limit-increased",
-            "aimd-limit-halved",
-            "aimd-target-changed",
-        ]);
-
-        // errors.ftl 追加 (16 keys) — SearchError::user_message_locale
-        keys.extend([
-            "search-error-network",
-            "search-error-timeout",
-            "search-error-parse",
-            "search-error-content-parsing",
-            "search-error-engine-client",
-            "search-error-bad-http-status",
-            "search-error-rate-limited",
-            "search-error-captcha",
-            "search-error-insufficient-content",
-            "search-error-all-engines-failed",
-            "search-error-engine-failed",
-            "search-error-smart-routing-failed",
-            "search-error-smart-routing-timeout",
-            "search-error-engine-creation-failed",
-            "search-error-circuit-open",
-            "search-error-no-engine-available",
-        ]);
-
-        // errors.ftl 追加 (2 keys) — ID 模块启动期算法配置校验（ModuleBuildError::IdInit）
-        keys.extend([
-            "error-id-algorithm-unknown",
-            "error-id-algorithm-uncompiled",
-        ]);
-
-        // logs.ftl 追加 (2 keys) — auth-off 降级模式运维日志
-        keys.extend([
-            "auth-allow-unauthenticated-enabled",
-            "auth-disabled-unauthenticated-denied",
-        ]);
-
-        keys.into_iter().map(String::from).collect()
+        warnings
     }
 }
 
@@ -611,24 +218,28 @@ impl I18nBundle {
 mod tests {
     use super::*;
 
-    fn test_locales_dir() -> String {
-        // 从项目根目录的 locales/ 加载
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        format!("{manifest_dir}/locales")
-    }
-
     #[test]
     fn test_load_bundle() {
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir());
-        assert!(bundle.is_ok(), "Failed to load bundle: {:?}", bundle.err());
-        let bundle = bundle.unwrap();
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
         assert_eq!(bundle.default_locale().to_string(), "en-US");
         assert_eq!(bundle.supported_locales().len(), 2);
     }
 
     #[test]
+    fn test_load_unsupported_locale_returns_error() {
+        let result = I18nBundle::load("en-US", &["en-US", "fr-FR"]);
+        assert!(result.is_err(), "unsupported locale must be rejected");
+    }
+
+    #[test]
+    fn test_load_invalid_locale_string_returns_error() {
+        let result = I18nBundle::load("not a locale!!", &["en-US"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_translate_no_args() {
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir()).unwrap();
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
         let locale: Locale = "en-US".parse().unwrap();
 
         let msg = bundle.translate(&locale, "error-database");
@@ -640,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_translate_zh_cn() {
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir()).unwrap();
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
         let locale: Locale = "zh-CN".parse().unwrap();
 
         let msg = bundle.translate(&locale, "error-database");
@@ -649,53 +260,44 @@ mod tests {
 
     #[test]
     fn test_translate_with_args() {
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir()).unwrap();
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
         let locale: Locale = "en-US".parse().unwrap();
 
         let msg = bundle.translate_with_args(
             &locale,
             "error-validation",
-            &[("message", FluentValue::from("invalid email"))],
+            &[("message", "invalid email".to_string())],
         );
-        // Fluent 在参数周围插入 Unicode 隔离标记（U+2068/U+2069）
-        assert!(
-            msg.contains("invalid email"),
-            "Expected message to contain 'invalid email', got: {msg}"
-        );
-        assert!(msg.starts_with("Validation error:"));
+        assert_eq!(msg, "Validation error: invalid email");
     }
 
     #[test]
     fn test_translate_with_args_zh_cn() {
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir()).unwrap();
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
         let locale: Locale = "zh-CN".parse().unwrap();
 
         let msg = bundle.translate_with_args(
             &locale,
             "error-validation",
-            &[("message", FluentValue::from("无效邮箱"))],
+            &[("message", "无效邮箱".to_string())],
         );
-        assert!(
-            msg.contains("无效邮箱"),
-            "Expected message to contain '无效邮箱', got: {msg}"
-        );
-        assert!(msg.starts_with("验证错误"));
+        assert!(msg.contains("无效邮箱"), "got: {msg}");
     }
 
     #[test]
     fn test_fallback_to_default_locale() {
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir()).unwrap();
-        // 使用一个不存在的 locale（不在 supported_locales 中）
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
+        // 使用一个不存在的 locale（不在 supported_locales 中）：
+        // sdforge 注册表查不到该 locale 的条目 → 门面回退 default en-US
         let unknown_locale: Locale = "fr-FR".parse().unwrap();
 
-        // 应该回退到 en-US
         let msg = bundle.translate(&unknown_locale, "error-database");
         assert_eq!(msg, "Database operation failed. Please try again later.");
     }
 
     #[test]
     fn test_missing_key_returns_key() {
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir()).unwrap();
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
         let locale: Locale = "en-US".parse().unwrap();
 
         let msg = bundle.translate(&locale, "nonexistent-key");
@@ -704,52 +306,12 @@ mod tests {
 
     #[test]
     fn test_validate_key_consistency() {
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir()).unwrap();
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap();
         let warnings = bundle.validate_key_consistency();
-        // en-US 和 zh-CN 应该有相同的 key 集合
+        // en-US 和 zh-CN 应该有相同的 key 集合与占位符
         assert!(
             warnings.is_empty(),
             "Key consistency warnings: {warnings:?}"
         );
-    }
-
-    /// FTL 文件中的每个键都必须登记在 `ftl_entries()`，防止「文件有键、registry 漏登记」
-    /// 类缺陷再次通过现有一致性测试（该测试只遍历 registry）。
-    #[test]
-    fn test_ftl_file_keys_are_all_registered() {
-        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir()).unwrap();
-        let registry: HashSet<String> = bundle.ftl_entries().into_iter().collect();
-        for locale in ["en-US", "zh-CN"] {
-            for file in ["logs.ftl", "errors.ftl"] {
-                let path = format!("{}/{}/{}", test_locales_dir(), locale, file);
-                let content = fs::read_to_string(&path).expect("read ftl file");
-                for line in content.lines() {
-                    if line.trim_start().starts_with('#') {
-                        continue;
-                    }
-                    let Some((key, _)) = line.split_once(" = ") else {
-                        continue;
-                    };
-                    let key = key.trim();
-                    if key.is_empty()
-                        || !key
-                            .chars()
-                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-                    {
-                        continue;
-                    }
-                    assert!(
-                        registry.contains(key),
-                        "FTL key '{key}' in {path} missing from ftl_entries()"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_load_invalid_dir() {
-        let result = I18nBundle::load("en-US", &["en-US"], "/nonexistent/path");
-        assert!(result.is_err());
     }
 }

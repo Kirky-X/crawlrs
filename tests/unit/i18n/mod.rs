@@ -10,17 +10,12 @@ use crawlrs::i18n::{
     detect_locale_from, detect_system_locale, negotiate_locale, parse_accept_language,
     resolve_startup_default_locale, t, t_with_args, I18nBundle, Locale,
 };
-use fluent_bundle::FluentValue;
 use std::sync::Arc;
 
 // 辅助函数
 
-fn locales_dir() -> String {
-    format!("{}/locales", env!("CARGO_MANIFEST_DIR"))
-}
-
 fn test_bundle() -> I18nBundle {
-    I18nBundle::load("en-US", &["en-US", "zh-CN"], &locales_dir()).unwrap()
+    I18nBundle::load("en-US", &["en-US", "zh-CN"]).unwrap()
 }
 
 fn en_locale() -> Locale {
@@ -41,14 +36,15 @@ fn test_load_both_locales() {
 }
 
 #[test]
-fn test_load_invalid_dir_returns_error() {
-    let result = I18nBundle::load("en-US", &["en-US"], "/nonexistent/locales");
+fn test_load_unsupported_locale_returns_error() {
+    // supported 列表含未内嵌目录的 locale → 拒绝加载
+    let result = I18nBundle::load("en-US", &["en-US", "fr-FR"]);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_load_invalid_locale_string() {
-    let result = I18nBundle::load("not-a-locale!!!", &["not-a-locale!!!"], &locales_dir());
+    let result = I18nBundle::load("not-a-locale!!!", &["en-US"]);
     assert!(result.is_err());
 }
 
@@ -133,14 +129,9 @@ fn test_translate_with_args_en() {
     let msg = bundle.translate_with_args(
         &locale,
         "error-validation",
-        &[("message", FluentValue::from("invalid email"))],
+        &[("message", "invalid email".to_string())],
     );
-    // Fluent 在参数周围插入 Unicode 隔离标记（U+2068/U+2069）
-    assert!(
-        msg.contains("invalid email"),
-        "Expected 'invalid email' in: {msg}"
-    );
-    assert!(msg.starts_with("Validation error:"));
+    assert_eq!(msg, "Validation error: invalid email");
 }
 
 #[test]
@@ -151,7 +142,7 @@ fn test_translate_with_args_zh() {
     let msg = bundle.translate_with_args(
         &locale,
         "error-validation",
-        &[("message", FluentValue::from("无效邮箱"))],
+        &[("message", "无效邮箱".to_string())],
     );
     assert!(msg.contains("无效邮箱"), "Expected '无效邮箱' in: {msg}");
     assert!(msg.starts_with("验证错误"));
@@ -175,7 +166,7 @@ fn test_t_with_args_helper_function() {
         &locale,
         &bundle,
         "error-not-found",
-        &[("resource", FluentValue::from("user 42"))],
+        &[("resource", "user 42".to_string())],
     );
     assert!(msg.contains("user 42"), "Expected 'user 42' in: {msg}");
     assert!(msg.starts_with("Resource not found:"));
@@ -189,10 +180,7 @@ fn test_domain_error_args() {
     let msg = bundle.translate_with_args(
         &locale,
         "domain-error-depth-exceeded",
-        &[
-            ("max", FluentValue::from(5i64)),
-            ("requested", FluentValue::from(10i64)),
-        ],
+        &[("max", 5i64.to_string()), ("requested", 10i64.to_string())],
     );
     assert!(msg.contains("5"), "Expected '5' in: {msg}");
     assert!(msg.contains("10"), "Expected '10' in: {msg}");
@@ -218,7 +206,7 @@ fn test_fallback_with_args_unknown_locale() {
     let msg = bundle.translate_with_args(
         &unknown,
         "error-validation",
-        &[("message", FluentValue::from("bad input"))],
+        &[("message", "bad input".to_string())],
     );
     assert!(
         msg.contains("bad input"),
@@ -243,11 +231,8 @@ fn test_missing_key_with_args_returns_key_itself() {
     let bundle = test_bundle();
     let locale = en_locale();
 
-    let msg = bundle.translate_with_args(
-        &locale,
-        "also-nonexistent",
-        &[("foo", FluentValue::from("bar"))],
-    );
+    let msg =
+        bundle.translate_with_args(&locale, "also-nonexistent", &[("foo", "bar".to_string())]);
     assert_eq!(msg, "also-nonexistent");
 }
 

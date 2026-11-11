@@ -41,11 +41,8 @@ pub async fn process_text_encoding<'a>(
         tr_log_args(
             "scrape-exec-encoding-started",
             &[
-                (
-                    "task_id",
-                    fluent_bundle::FluentValue::from(task.id.to_string())
-                ),
-                ("url", fluent_bundle::FluentValue::from(task.url.as_str())),
+                ("task_id", task.id.to_string()),
+                ("url", task.url.as_str().to_string()),
             ],
         )
     );
@@ -78,10 +75,7 @@ pub async fn process_text_encoding<'a>(
         Err(e) => {
             warn!(
                 "{}",
-                tr_log_args(
-                    "scrape-exec-encoding-error",
-                    &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                )
+                tr_log_args("scrape-exec-encoding-error", &[("error", e.to_string())],)
             );
             Err(anyhow::anyhow!("Text encoding processing exception: {}", e))
         }
@@ -100,24 +94,16 @@ fn encoding_result_to_cow<'a>(
                 &[
                     (
                         "encoding",
-                        fluent_bundle::FluentValue::from(
-                            processed_response
-                                .encoding_detected
-                                .clone()
-                                .unwrap_or_else(|| "none".to_string())
-                        )
+                        processed_response
+                            .encoding_detected
+                            .clone()
+                            .unwrap_or_else(|| "none".to_string())
+                            .to_string()
                     ),
-                    (
-                        "elapsed",
-                        fluent_bundle::FluentValue::from(
-                            processed_response.processing_success.to_string()
-                        )
-                    ),
+                    ("elapsed", processed_response.processing_success.to_string()),
                     (
                         "quality",
-                        fluent_bundle::FluentValue::from(
-                            processed_response.processing_error.is_none().to_string()
-                        )
+                        processed_response.processing_error.is_none().to_string()
                     ),
                 ],
             )
@@ -133,7 +119,7 @@ fn encoding_result_to_cow<'a>(
             "{}",
             tr_log_args(
                 "scrape-exec-encoding-failed",
-                &[("error", fluent_bundle::FluentValue::from(error_msg.clone()))],
+                &[("error", error_msg.clone().to_string())],
             )
         );
         Err(anyhow::anyhow!(

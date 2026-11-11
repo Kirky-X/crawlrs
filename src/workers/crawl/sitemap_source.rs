@@ -130,15 +130,9 @@ async fn load_pointer(
                 crate::i18n::tr_log_args(
                     "sitemap-pointer-mismatch",
                     &[
-                        (
-                            "crawl_id",
-                            fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                        ),
-                        (
-                            "pointer_url",
-                            fluent_bundle::FluentValue::from(p.sitemap_url.as_str()),
-                        ),
-                        ("sitemap_url", fluent_bundle::FluentValue::from(sitemap_url)),
+                        ("crawl_id", crawl_id.to_string(),),
+                        ("pointer_url", p.sitemap_url.as_str().to_string(),),
+                        ("sitemap_url", sitemap_url.to_string()),
                     ],
                 )
             );
@@ -150,11 +144,8 @@ async fn load_pointer(
                 crate::i18n::tr_log_args(
                     "sitemap-pointer-corrupt",
                     &[
-                        (
-                            "crawl_id",
-                            fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                        ),
-                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                        ("crawl_id", crawl_id.to_string(),),
+                        ("error", e.to_string()),
                     ],
                 )
             );
@@ -257,14 +248,8 @@ async fn resolve_seek_position(
                     crate::i18n::tr_log_args(
                         "sitemap-resume-without-seek",
                         &[
-                            (
-                                "crawl_id",
-                                fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                            ),
-                            (
-                                "consumed",
-                                fluent_bundle::FluentValue::from(consumed as i64)
-                            ),
+                            ("crawl_id", crawl_id.to_string(),),
+                            ("consumed", (consumed as i64).to_string()),
                         ],
                     )
                 );
