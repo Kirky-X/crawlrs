@@ -1,13 +1,13 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! alchemize html-deep 单转换器（`alchemize` 特性；试验接入）
+//! alchemize html 引擎单转换器（`alchemize` 特性；试验接入）
 //!
 //! 桥接自研引擎仓 alchemize 的同步门面 [`alchemize::Alchemize::convert_sync`]：
-//! html-deep 引擎链（自研引擎主 → htmd 兜底 → 空输出防呆/双失败诚实报错，
-//! math `$TeX$` 保真路由）在 alchemize 侧内建，此处单转换器直通——与 htmd 臂
-//! 同构，无 crawlrs 侧二次兜底。空壳/纯脚本页返回空串（正确抑制，与 moli 链
-//! 语义一致）。
+//! `html` 特性链（htmd 基础链 + 自研深链主路径；深链名 `html-deep`，含空输出
+//! 防呆/双失败诚实报错、math `$TeX$` 保真路由）在 alchemize 侧内建，此处单
+//! 转换器直通——与 htmd 臂同构，无 crawlrs 侧二次兜底。空壳/纯脚本页返回空串
+//! （正确抑制，与 moli 链语义一致）。
 //!
 //! 与 moli 链的可观察差异（切换评估已完成，见 alchemize-html-deep-replacement
 //! 实测记录）：math 页产出 `$TeX$` 而非泄漏 MathML；隐藏/导航元素启发式不同；

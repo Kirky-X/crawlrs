@@ -22,7 +22,7 @@
 
 ### Added（试验）
 
-- **alchemize 转换器接入**：自研引擎仓 alchemize 以 path 依赖引入（新特性 `alchemize`，不并入 default/standard/full——上游 MSRV 1.97.1 高于本仓 1.97，且 path 依赖在 cargo 解析期即读取 sibling 清单，干净 checkout 需携带 `../alchemize` 且上游 feature 名与本处声明一致，当前依赖上游 `html` 特性的未提交改名需先行落库）；`[markdown].converter = "alchemize"` 选用，经 `Alchemize::convert_sync` 同步门面直通（内建 htmd 兜底、math `$TeX$` 保真路由、空壳抑制）。默认构建不编译 alchemize。等价性实测（复现：`/tmp/alch-cmp` 双 path 依赖 harness，crawlrs moli 链 vs alchemize html 引擎）：13 用例（5 真实页 wiki/docsrs/blog/hn/example + 8 合成）10/13 字节等价（仅尾换行），math 页由泄漏 MathML 改善为 `$TeX$`，2 处导航件启发式差异（无内容丢失，deep 侧保留更多）；吞吐 wiki 1.06MB×20：moli 105.6 vs deep 96.8 MB/s（-8%）；crawlrs 装配链输出与 alchemize 原生 5 真实页逐字节一致，markdown 域单测 55/55。已知差异：内建兜底不计入 `crawlrs_md_converter_fallback_total` 指标（quality 标注 `local_fallback`）
+- **alchemize 转换器接入**：自研引擎仓 alchemize 以 path 依赖引入（新特性 `alchemize`，不并入 default/standard/full——上游 MSRV 1.97.1 高于本仓 1.97；上游特性形态为每格式一 feature、依赖全 optional，`html` 自含 htmd 基础链+自研深链；path 依赖在 cargo 解析期即读取 sibling 清单，干净 checkout 需携带 `../alchemize`（及 alchemize 自身的 `../vecboost`）且上游 feature 名与本处声明一致）。`[markdown].converter = "alchemize"` 选用，经 `Alchemize::convert_sync` 同步门面直通（内建兜底、math `$TeX$` 保真路由、空壳抑制）。默认构建不编译 alchemize。等价性实测（复现：`/tmp/alch-cmp` 双 path 依赖 harness，crawlrs moli 链 vs alchemize html 引擎）：13 用例（5 真实页 wiki/docsrs/blog/hn/example + 8 合成）10/13 字节等价（仅尾换行），math 页由泄漏 MathML 改善为 `$TeX$`，2 处导航件启发式差异（无内容丢失，deep 侧保留更多）；吞吐 wiki 1.06MB×20：moli 105.6 vs deep 96.8 MB/s（-8%）；crawlrs 装配链输出与 alchemize 原生 5 真实页逐字节一致，markdown 域单测 55/55。已知差异：内建兜底不计入 `crawlrs_md_converter_fallback_total` 指标（quality 标注 `local_fallback`）
 
 ## [0.2.0-rc.4] - 2026-11-10
 

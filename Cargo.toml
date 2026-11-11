@@ -93,13 +93,16 @@ engine-mllm = ["engine-playwright", "llm", "gateway"]
 # 内容处理：aho-corasick 多模式匹配；moli-html2md 主转换器 + htmd 兜底（转换器链）
 content = ["dep:aho-corasick", "dep:ego-tree", "dep:moli-html2md", "dep:htmd"]
 
-# alchemize：HTML→Markdown 试验性替代转换器（自研 html-deep 引擎，path 依赖）。
+# alchemize：HTML→Markdown 试验性替代转换器（自研 html 引擎，path 依赖）。
+# 上游特性形态（212d1f6/d7bb68d 后）：每个格式一个 feature、依赖全 optional；
+# `html` 特性自含 htmd 基础链 + 自研深链（原 html-deep，引擎名未变）。
 # 注意：① 上游 rust-version = 1.97.1 高于本仓 1.97——启用本特性的工具链须
 # ≥1.97.1，因此不并入 default/standard/full/CI 矩阵；② path 依赖在 cargo 解析期
 # 即读取 ../alchemize 清单——本目录缺失该 sibling、或上游 feature 名与本处声明
-# 失配时，全部 cargo 命令（含默认构建）解析失败；上游该依赖处于未提交改名态
-# （html-deep→html），合入前须先落其提交。converter 内建 htmd 兜底与 math($TeX$)
-# 保真路由，[markdown].converter = "alchemize" 选用（编译产物层面默认构建零涉及）。
+# 失配时，全部 cargo 命令（含默认构建）解析失败；上游改名须先落库并推送
+# （CI sibling 检出取远端 main）。default-features=false 现仅剥离 cli/text
+# （sdforge/inklog 等），html 链完整保留；[markdown].converter = "alchemize" 选用
+# （编译产物层面默认构建零涉及）。
 alchemize = ["dep:alchemize"]
 
 # 正文提取：rs-trafilatura 主路径（移植自 trafilatura，质量最高）
@@ -202,7 +205,7 @@ htmd = { version = "0.5", default-features = false, optional = true }
 # moli-html2md：钉 release v1.1.21 锚定 commit（同 moli 二进制 PoC 版本）；只编译该
 # member（独立 crate，运行时依赖仅 icu_properties，无浏览器/V8 耦合）
 moli-html2md = { version = "0.1.0", git = "https://github.com/lexmount/moli", rev = "2db52b45ba47874bb85b59f6f8793a8786669f47", default-features = false, optional = true } # pragma: allowlist secret — rev 是 commit SHA 非密钥
-# alchemize：自研 HTML→Markdown 引擎仓（html 引擎=原 html-deep，改名未提交态），path 依赖试验接入（见 features 段注释）
+# alchemize：自研 HTML→Markdown 引擎仓（`html` 特性=htmd 基础链+自研深链），path 依赖试验接入（见 features 段注释）
 alchemize = { path = "../alchemize", optional = true, default-features = false, features = ["html"] }
 # scraper 内部树（ego-tree 0.11）——moli-html2md Dom 适配器需要命名字典树 NodeId；
 # 版本须与 scraper 0.29 的 ego-tree 依赖一致（类型同一性），仅 content 特性使用
