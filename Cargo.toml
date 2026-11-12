@@ -272,7 +272,7 @@ toml = { version = "1.2", default-features = false, features = ["std", "parse", 
 vecboost = { version = "0.3.0-rc.3", optional = true, default-features = false, features = ["onnx"] }
 
 # Dependency Injection
-trait-kit = { version = "0.5.0-rc.12", default-features = false, features = ["async", "confers", "shutdown"] }
+trait-kit = { version = "0.5.0-rc.14", default-features = false, features = ["async", "confers", "shutdown"] }
 # NebulaId registry 依赖（rc.4 已发布，与本地 checkout 源码一致）；仅 sdk 特性
 nebulaid = { version = "0.3.0-rc.4", default-features = false, features = ["sdk", "uuid-v8"] }
 # oxcache 特性裁剪：memory + serialization + metrics + bloom（macros/batch 零使用）
@@ -416,7 +416,7 @@ base64 = { version = "0.23", default-features = false, features = ["std"] }
 dbnexus = { version = "0.6.0-rc.11", default-features = false, features = ["cache", "macros", "migration", "auto-migrate", "config-env", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
 sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
-sdforge = { version = "0.5.0-rc.10", default-features = false, features = ["http"] }
+sdforge = { version = "0.5.0-rc.11", default-features = false, features = ["http"] }
 # Web framework（form/matched-path/original-uri/tower-log/tracing 全仓零引用，裁掉）
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
 

@@ -300,7 +300,7 @@ crawlrs 不再内置任何 LLM 供应商访问（原 `LLMService` / `provider_ad
 | `inklog` | `0.3.0-rc.12` | 日志（`log::` facade 后端） |
 | `limiteron` | `0.3.0-rc.10` | 限流 / 熔断 / 退避 |
 | `confers` | `0.6.0-rc.13` | 配置加载 |
-| `trait-kit` | `0.5.0-rc.12` | 异步 DI（AsyncKit） |
+| `trait-kit` | `0.5.0-rc.14` | 异步 DI（AsyncKit） |
 | `oxcache` | `0.5.0-rc.12` | 多级缓存 |
 | `garrison` | `0.9.0-rc.5` | 认证引擎（经 default 的 `auth` 引入） |
 
