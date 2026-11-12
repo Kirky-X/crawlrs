@@ -279,8 +279,8 @@ nebulaid = { version = "0.3.0-rc.4", default-features = false, features = ["sdk"
 oxcache = { version = "0.5.0-rc.12", default-features = false, features = ["memory", "serialization", "metrics", "bloom"] }
 ahash = { version = "0.8", default-features = false, features = ["std", "runtime-rng"] }
 
-# Internationalization (i18n) — Mozilla Fluent system
-fluent-bundle = { version = "0.16", default-features = false }
+# Internationalization (i18n) — 消息注册/查询统一走 sdforge::i18n 宿主注册
+# （src/i18n/catalog.rs），本仓不再直接依赖 fluent-bundle（零引用点，保留即为死依赖）
 unic-langid = { version = "0.9", default-features = false }
 # 系统语言检测（unify-rust-i18n 检测链末端：env 链之后探测 OS locale）
 sys-locale = { version = "0.3", default-features = false }

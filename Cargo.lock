@@ -1912,7 +1912,6 @@ dependencies = [
  "dirs 7.0.0",
  "dom_smoothie",
  "encoding_rs",
- "fluent-bundle",
  "fluxweir",
  "futures",
  "garrison",
