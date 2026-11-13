@@ -10,6 +10,9 @@ on:
 
 permissions:
   contents: read
+  # rustsec/audit-check v2 把审计结果以 check-run 形式回写（含已豁免警告的
+  # 注记），缺该权限时报 "Resource not accessible by integration"（R-17 实证）。
+  checks: write
 
 jobs:
   security:
