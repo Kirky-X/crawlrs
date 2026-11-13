@@ -160,10 +160,7 @@ impl CacheContext {
             }
         }
         // 2. HTTP method 检查：POST 非幂等，不可缓存
-        if matches!(self.method, HttpMethod::Post) {
-            return false;
-        }
-        true
+        !matches!(self.method, HttpMethod::Post)
     }
 }
 

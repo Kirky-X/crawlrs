@@ -500,11 +500,8 @@ impl ScrapeWorker {
         // 失败显性化但不传播：喂入失败不影响种子任务已完成的事实，
         // crawl 继续以页面链接发现运行。
         #[cfg(feature = "sitemap")]
-        if depth == 0
-            && task.payload.get("sitemap_seed").and_then(|v| v.as_bool()) == Some(true)
-            && self.feed_sitemap_source(task, crawl_id, config).await
-        {
-            return Ok(true);
+        if depth == 0 && task.payload.get("sitemap_seed").and_then(|v| v.as_bool()) == Some(true) {
+            return Ok(self.feed_sitemap_source(task, crawl_id, config).await);
         }
 
         Ok(false)
