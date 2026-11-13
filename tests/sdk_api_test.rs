@@ -48,11 +48,10 @@ fn make_server() -> TestServer {
     let pool = create_test_pool_or_panic();
     let auth_state = AuthState::new(pool, team_id, api_key_id, ApiKeyScope::default());
 
-    let locale_dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
     let locale: Locale = "en-US".parse().expect("valid en-US locale");
+    // bundle 载入已改经 sdforge::i18n 宿主注册面（无磁盘 locale_dir 形参）。
     let i18n = std::sync::Arc::new(
-        I18nBundle::load("en-US", &["en-US", "zh-CN"], &locale_dir)
-            .expect("load en-US i18n bundle"),
+        I18nBundle::load("en-US", &["en-US", "zh-CN"]).expect("load en-US i18n bundle"),
     );
 
     let app = build_sdk_router()
