@@ -109,7 +109,8 @@ class TestScrapeEndpoints:
             sync_wait_ms=5000,
         )
         assert result.success, f"创建抓取任务失败: {result.error_message}"
-        assert result.response.status_code in [200, 202, 422]
+        # 2026-11 现行契约：任务创建返回 201 Created（原断言仅收 200/202/422）
+        assert result.response.status_code in [200, 201, 202, 422]
 
 
 class TestExtractEndpoints:

@@ -42,13 +42,10 @@ async fn stop_testcontainers_pg() -> bool {
 
 /// 关停 inklog 日志 worker（未初始化时为 no-op）。
 fn shutdown_logger() {
-    match crate::support::LOGGER_MANAGER.get() {
-        Some(manager) => {
-            if let Err(e) = manager.shutdown() {
-                eprintln!("[teardown] inklog shutdown error: {e}");
-            }
-            eprintln!("[teardown] inklog workers shut down");
+    if let Some(manager) = crate::support::LOGGER_MANAGER.get() {
+        if let Err(e) = manager.shutdown() {
+            eprintln!("[teardown] inklog shutdown error: {e}");
         }
-        None => {}
+        eprintln!("[teardown] inklog workers shut down");
     }
 }
