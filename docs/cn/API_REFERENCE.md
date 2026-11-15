@@ -92,7 +92,7 @@ API keys carry an `ApiKeyScope` with three boolean permissions plus two hourly l
 | `search_limit` | Maximum search requests per hour |
 | `scrape_limit` | Maximum scrape requests per hour |
 
-> **重要现状（0.2.0-rc.2）：** `scope_middleware` 虽已实现（`src/presentation/middleware/auth_middleware.rs`），但**未挂载到生产路由**——仅存在于测试 Router 装配。除 `POST /v1/admin/api-keys` 在 handler 内部显式校验 `Admin` 权限外，其余端点目前不校验 API Key scope，仅校验 key 有效性。请勿误以为 RBAC 已在端点层生效。
+> **重要现状（0.2.0）：** `scope_middleware` 虽已实现（`src/presentation/middleware/auth_middleware.rs`），但**未挂载到生产路由**——仅存在于测试 Router 装配。除 `POST /v1/admin/api-keys` 在 handler 内部显式校验 `Admin` 权限外，其余端点目前不校验 API Key scope，仅校验 key 有效性。请勿误以为 RBAC 已在端点层生效。
 
 ### Auth Disabled Behavior (auth-off)
 
@@ -1641,9 +1641,11 @@ func Scrape(url string) error {
 
 ## 📋 Changelog
 
-### Unreleased
+### 0.2.0 (2026-11-15)
+- 首个 crates.io 稳定版：自研依赖归一稳定版（minor 精度）、alchemize 切 registry（无 path/git 依赖）、i18n 宿主注册重写、release.yml OIDC + token 兜底
+- acceptance teardown clippy 修复；SDK 测试 I18nBundle 两参调用
 
-**Changed:**
+**Changed（原 Unreleased 条目，已随 0.2.0 线发布）:**
 - ID 体系全量迁移至 NebulaId（`domain::id::Id`，默认 `uuid_v8` 算法；API JSON 契约保持 UUID 字符串不变）
 - `/v1/search` 无 `engine` 参数时行为从"单引擎 bing"变为 smart 聚合（多引擎 fan-out + RRF 融合）
 - auth-off 语义：protected routes 默认 401 拒绝，须显式 `allow_unauthenticated_protected()` opt-in；opt-in 后注入 `ApiKeyScope::denied()` 受限匿名身份（`DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`），非 `full_access()`
@@ -1655,10 +1657,6 @@ func Scrape(url string) error {
 
 **Observability:**
 - 5 个新 Prometheus 指标：`crawlrs_queue_depth` / `crawlrs_engine_success_total` / `crawlrs_engine_duration_seconds` / `crawlrs_cache_hit_total` / `crawlrs_webhook_delivery_total`
-
-### 0.2.0 (2026-11-15)
-- 首个 crates.io 稳定版：自研依赖归一稳定版（minor 精度）、alchemize 切 registry（无 path/git 依赖）、i18n 宿主注册重写、release.yml OIDC + token 兜底
-- acceptance teardown clippy 修复；SDK 测试 I18nBundle 两参调用
 
 ### 0.2.0-rc.4 (2026-11-10)
 - 发布流水线全量补跑：CI 五组合/engine-moli/BDD 修复复绿；CodeQL 18 条裁决归零；security 审计豁免同源登记

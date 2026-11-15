@@ -174,8 +174,8 @@ curl -X POST http://localhost:8899/v1/admin/api-keys \
 
 | 变量 | 作用 | 代码位置 |
 |------|------|----------|
-| `CRAWLRS_BOOTSTRAP_ADMIN` | `true`/`1` 时 API 进程在启动时调用 `run_bootstrap` 自举 admin key | `src/main.rs:88` |
-| `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` | bootstrap 时复用的 `<team_id_uuid>`（可选；缺省自动创建 `bootstrap-admin-team`） | `src/bootstrap/services.rs:611` |
+| `CRAWLRS_BOOTSTRAP_ADMIN` | `true`/`1` 时 API 进程在启动时调用 `run_bootstrap` 自举 admin key | `src/main.rs:118` |
+| `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` | bootstrap 时复用的 `<team_id_uuid>`（可选；缺省自动创建 `bootstrap-admin-team`） | `src/bootstrap/services/auth/bootstrap_admin_key.rs:23` |
 
 ```bash
 CRAWLRS_BOOTSTRAP_ADMIN=true ./target/release/crawlrs
@@ -207,7 +207,7 @@ curl -H "Authorization: Bearer garrison_key_id.garrison_secret" http://localhost
 - 新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入
 - 开发/测试环境可设 `CRAWLRS_BOOTSTRAP_ADMIN=true`，由 API 进程自身在启动时签发 admin key（须在同一进程内，garrison 的 DAO 为进程内 oxcache，跨进程签发的 key 不可见）
 
-**`migrations/005_deprecate_legacy_api_keys.sql` 行为：**
+**`migrations/postgres/005_deprecate_legacy_api_keys.sql` 行为：**
 
 - 给 `api_keys` 表追加 `deprecated_at` 列并回填 `NOW()`
 - 给 `scopes` 表追加 `deprecated_at` 列并回填 `NOW()`
@@ -267,7 +267,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 # retry-after: 60
 ```
 
-> 已知缺口：`Retry-After`（429）是唯一会被设置的限流响应头（`src/presentation/middleware/rate_limit_middleware.rs:243-247`）；配额余额类响应头未实现。需要了解剩余配额时，改为轮询 `GET /v1/teams/me/usage`。
+> 已知缺口：`Retry-After`（429）是唯一会被设置的限流响应头（`src/presentation/middleware/rate_limit_middleware.rs:193-196`）；配额余额类响应头未实现。需要了解剩余配额时，改为轮询 `GET /v1/teams/me/usage`。
 
 Check your current usage:
 
@@ -317,7 +317,7 @@ When `auth` is disabled, the `default_identity_middleware` injects a fixed `Auth
 
 The injected `AuthState` carries `ApiKeyScope::denied()` (read/write/admin all `false`, limits `0`). Protected routes therefore **reject every request with 401** unless `allow_unauthenticated_protected()` is called explicitly; opt-in also yields the denied scope, not full access. Do not expose an auth-off instance to a public network.
 
-Timeline: deny-by-default was introduced in 0.2.0-rc.1, lost during the 0.2.0-rc.2 assembly refactor, and restored in 0.2.0-rc.3 (see `docs/CHANGELOG.md`, Breaking).
+Timeline: deny-by-default was introduced in 0.2.0-rc.1, lost during the 0.2.0-rc.2 assembly refactor, and restored in 0.2.0-rc.3 (see `CHANGELOG.md`, Breaking).
 
 ### Noop Service Implementations
 
@@ -950,7 +950,7 @@ curl -X POST http://localhost:8899/v1/search \
 
 **Languages / regions (常见取值示例 — 当前版本尚未生效):**
 
-`lang` and `country` are free-form strings in the request DTO (`src/application/dto/search_request.rs:17-18`), and `perform_search` currently ignores them (`src/domain/services/search_service.rs:284-285` — parameters are prefixed `_`). Common values you can send:
+`lang` and `country` are free-form strings in the request DTO (`src/application/dto/search_request.rs:15-16`), and `perform_search` currently ignores them (`src/domain/services/search_service.rs:390-394` — parameters are prefixed `_`). Common values you can send:
 
 - **Languages:** `en` (English), `zh` (Chinese), `es` (Spanish), `fr` (French), `de` (German), `ja` (Japanese), `ko` (Korean)
 - **Regions:** `us` (United States), `uk` (United Kingdom), `ca` (Canada), `au` (Australia), `jp` (Japan), `cn` (China)
@@ -1030,7 +1030,7 @@ instead of silently degrading.
 
 ### Extract from URLs
 
-Submit one or more URLs for asynchronous extraction. The request body takes `urls` (1–100, http/https) plus exactly one of `prompt` / `schema` / `rules`; the endpoint enqueues a task and returns `{id, status: "pending"}` (see `docs/API_REFERENCE.md` for the full contract):
+Submit one or more URLs for asynchronous extraction. The request body takes `urls` (1–100, http/https) plus exactly one of `prompt` / `schema` / `rules`; the endpoint enqueues a task and returns `{id, status: "pending"}` (see `API_REFERENCE.md` for the full contract):
 
 ```bash
 curl -X POST http://localhost:8899/v1/extract \
@@ -1234,7 +1234,7 @@ app.listen(3000, () => {
 
 ## 📋 Tasks
 
-> `/v1/tasks/_query` and `/v1/tasks/_cancel` are registered in the production assembly (`src/presentation/routes/task.rs:20-30`, wired in `src/bootstrap/routes.rs:396`).
+> `/v1/tasks/_query` and `/v1/tasks/_cancel` are registered in the production assembly (`src/presentation/routes/task.rs:36-47`, wired in `src/bootstrap/routes.rs:507`).
 
 ### Query Tasks
 

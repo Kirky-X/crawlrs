@@ -230,12 +230,12 @@ python3 tests/e2e/api_semantics_test.py --base-url http://localhost:8899 \
 
 ## 📊 Statistics Summary
 
-As of 0.2.0 (counted via `grep -rE '^\s*#\[(tokio::)?test\]'`):
+As of HEAD on 2026-11-16 (counted via `grep -rE '^\s*#\[(tokio::)?test\]'`):
 
 | Metric | Count |
 |---|---|
-| `src/` inline tests (`#[test]` / `#[tokio::test]`) | 6,548 (476 `.rs` files, 229,992 lines) |
-| `tests/` directory tests | 994 test functions (124 `.rs` files, of which `tests/unit/` has 71 files) |
+| `src/` inline tests (`#[test]` / `#[tokio::test]`) | 6,553 (477 `.rs` files, 229,345 lines) |
+| `tests/` directory tests | 994 test functions (125 `.rs` files, of which `tests/unit/` has 71 files) |
 | Explicit `[[test]]` targets | 6 (integration_tests / main / sdk_api_test / route_diag_test / ws_task_status / acceptance) |
 | Criterion benchmark groups | 9 (`benches/benchmark.rs`) |
 | Python test suites | 5 (`tests/python/`) |

@@ -45,7 +45,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 ### 我们的承诺
 
 - 修复期间与报告者保持沟通；披露时间线与报告者协商确定。
-- 修复随下一个受支持版本发布，并在 `docs/CHANGELOG.md` 的 Security 小节记录（如 0.2.0 的暴力破解防护加固）。
+- 修复随下一个受支持版本发布，并在 `CHANGELOG.md` 的 Security 小节记录（如 0.2.0 的暴力破解防护加固）。
 
 ---
 
@@ -120,7 +120,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 - [ ] CORS 配置为具体来源（禁用 `*` 通配）
 - [ ] 根据容量设置速率限制（`default_rpm` / `burst_size`）与团队并发（`concurrency.default_team_limit`）
 - [ ] 配置 `[trusted_proxies]`（CIDR）防止 IP 伪造绕过防火墙/限流
-- [ ] 启用 Prometheus 指标导出并接入告警（指标端点已真实导出）（docker/prometheus/ 提供配置样例）。**注意**：`/metrics` 已返回真实 Prometheus 文本指标（进程内 recorder；公开、免认证、免限流，不含租户/URL/凭证标签；生产建议网络层 allowlist）；`docker/prometheus/` 配置样例仅作参考，真实指标清单见 `docs/PERFORMANCE.md`
+- [ ] 启用 Prometheus 指标导出并接入告警（指标端点已真实导出）（docker/prometheus/ 提供配置样例）。**注意**：`/metrics` 已返回真实 Prometheus 文本指标（进程内 recorder；公开、免认证、免限流，不含租户/URL/凭证标签；生产建议网络层 allowlist）；`docker/prometheus/` 配置样例仅作参考，真实指标清单见 `PERFORMANCE.md`
 - [ ] 启用结构化日志聚合（inklog），审计日志（`/v1/audit/logs`）纳入巡检
 - [ ] 在 TLS 终止（反向代理/网关）之后部署，健康检查走 `/health`
 - [ ] 审查 Webhook `secret` 配置，验证接收端签名校验

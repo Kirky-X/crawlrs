@@ -856,7 +856,7 @@ bootstrap/                 # Application bootstrap
 
 ### Dependency Injection (trait-kit 0.5)
 
-DI uses **trait-kit 0.5** with async module builders. `src/main.rs:389-405` registers **9 Modules** into the `AsyncKit`:
+DI uses **trait-kit 0.5** with async module builders. `src/main.rs:541-567` registers **9 Modules** into the `AsyncKit`:
 
 | # | Module | Provides |
 |---|--------|------|
@@ -870,9 +870,9 @@ DI uses **trait-kit 0.5** with async module builders. `src/main.rs:389-405` regi
 | 8 | `ServiceModule` | rate-limit/search/webhook/team services + queue + worker |
 | 9 | `IdModule` | `IdService` (NebulaId ID generation) |
 
-`EngineModule` provides 5 engine implementations: `ReqwestEngine` / `PlaywrightEngine` / `WreqEngine` (`engine-tls-fingerprint`) / `FlareSolverrEngine` (`engine-flaresolverr`) / `MllmEngine` (`engine-mllm`).
+`EngineModule` provides 5 engine implementations by default (+`MoliEngine` when `engine-moli` is enabled): `ReqwestEngine` / `PlaywrightEngine` / `WreqEngine` (`engine-tls-fingerprint`) / `FlareSolverrEngine` (`engine-flaresolverr`) / `MllmEngine` (`engine-mllm`).
 
-**CrawlRsState** is the runtime state, extracted from the fully built kit by `CrawlRsState::from_kit` (`src/di/axum_state.rs:207`); it requires 5 modules: `InfrastructureModule`, `EngineModule`, `ServiceModule`, `SettingsModule`, `IdModule`. Since v0.2.0 (the `feature-gate-optional-modules` change), 7 fields are gated by `#[cfg(feature = "...")]` and compiled only when the corresponding business feature is enabled:
+**CrawlRsState** is the runtime state, extracted from the fully built kit by `CrawlRsState::from_kit` (`src/di/axum_state.rs:217`); it requires 5 modules: `InfrastructureModule`, `EngineModule`, `ServiceModule`, `SettingsModule`, `IdModule`. Since v0.2.0 (the `feature-gate-optional-modules` change), 7 fields are gated by `#[cfg(feature = "...")]` and compiled only when the corresponding business feature is enabled:
 
 ```rust
 #[derive(Clone)]
@@ -926,7 +926,7 @@ pub struct CrawlRsState {
 }
 ```
 
-`regex_cache` is no longer on `CrawlRsState` (no such field). The default build (platform, including teams/sitemap) has **36 fields** in total: 29 always compiled + 7 cfg-gated (`webhook_repo`/`webhook_event_repo`/`webhook_worker` gated by `webhook`, `team_service`/`geo_location_service`/`geo_restriction_repo` by `teams`, `map_use_case` by `sitemap`). The field count is authoritative at `src/di/axum_state.rs:70-193`.
+`regex_cache` is no longer on `CrawlRsState` (no such field). The default build (platform, including teams/sitemap) has **38 fields** in total: 31 always compiled + 7 cfg-gated (`webhook_repo`/`webhook_event_repo`/`webhook_worker` gated by `webhook`, `team_service`/`geo_location_service`/`geo_restriction_repo` by `teams`, `map_use_case` by `sitemap`). The field count is authoritative at `src/di/axum_state.rs:72-204`.
 
 | Field | Gated By | Off-mode Behavior |
 |-------|----------|-------------------|
@@ -941,7 +941,7 @@ See [Feature Gate Architecture](#feature-gate-architecture) for the full gating 
 
 State is injected into Axum handlers via `Extension<CrawlRsState>`.
 
-**Module dependency graph** (the registration order at `src/main.rs:389-405` is the dependency order; `CrawlRsState::from_kit` requires 5 of them):
+**Module dependency graph** (the registration order at `src/main.rs:541-567` is the dependency order; `CrawlRsState::from_kit` requires 5 of them):
 
 ```text
 SettingsModule (Arc<Settings> + i18n configuration)
@@ -1060,7 +1060,7 @@ The `feature-matrix` job in `.github/workflows/ci.yml` runs `cargo check` agains
 
 When a feature is off, the corresponding endpoints return **404** (not 401/403) because routes are not registered at startup. Operators switching from full to stripped-down builds should:
 
-- For `auth`-off: pre-provision credits for `DEFAULT_TEAM_ID` via `add_credits` CLI (see `docs/USER_GUIDE.md` → Single-Tenant / No-Auth Deployment)
+- For `auth`-off: pre-provision credits for `DEFAULT_TEAM_ID` via `add_credits` CLI (see `USER_GUIDE.md` → Single-Tenant / No-Auth Deployment)
 - For `rate-limit`-off: ensure upstream gateways enforce their own rate limiting
 - For `webhook`-off: notify clients that completion callbacks will not be delivered
 - For `teams`-off: only `DEFAULT_TEAM_ID` exists; multi-tenant data isolation is enforced at the application layer (all rows owned by `DEFAULT_TEAM_ID`)
@@ -1714,11 +1714,11 @@ pub struct PostgresTaskQueue {
 }
 ```
 
-The `TaskRepository` provides `acquire_next(worker_id)` which uses `FOR UPDATE SKIP LOCKED` semantics for safe concurrent worker access. Ordering is `priority ASC, created_at ASC` (smaller values first), supported by the two partial indexes from `migrations/003` (`idx_tasks_acquire_queued` / `idx_tasks_acquire_stale`) for orderly task pickup. See [Queue Architecture](#-queue-system).
+The `TaskRepository` provides `acquire_next(worker_id)` which uses `FOR UPDATE SKIP LOCKED` semantics for safe concurrent worker access. Ordering is `priority ASC, created_at ASC` (smaller values first), supported by the two partial indexes from `migrations/postgres/003_add_acquire_next_indexes.sql` (`idx_tasks_acquire_queued` / `idx_tasks_acquire_stale`) for orderly task pickup. See [Queue Architecture](#-queue-system).
 
 ### Worker Types
 
-There are actually **4 worker types** running:
+There are actually **6 worker types** running (4 always-on task workers plus the 2 SearXNG collector/health workers started conditionally when `[search.searxng]` is enabled):
 
 | Worker | Purpose | Started by | Driven by |
 |--------|---------|--------|----------|
@@ -1727,9 +1727,9 @@ There are actually **4 worker types** running:
 | `backlog_worker` | Reprocess expired/pending tasks | `spawn_common_workers` | the `AbstractWorker` template |
 | `expiration_worker` | Expire stale tasks past their TTL | `spawn_common_workers` | the `AbstractWorker` template |
 
-The latter three (webhook/backlog/expiration) are started by `spawn_common_workers` at `src/bootstrap/workers.rs:20-57`, shared between API mode and worker mode, and **do not go through the manager**; scrape_worker is started by the manager. `src/workers/task_state_machine.rs` has zero callers repo-wide (dead code, no runtime wiring).
+The latter three (webhook/backlog/expiration) and the two SearXNG periodic workers (collector/health) are started by `spawn_common_workers` at `src/bootstrap/workers.rs:22-77`, shared between API mode and worker mode, and **do not go through the manager**; scrape_worker is started by the manager. `src/workers/task_state_machine.rs` has zero callers repo-wide (dead code, no runtime wiring).
 
-**Worker template**: `AbstractWorker<P>` drives only the common workers (webhook/backlog/expiration); scrape_worker serves the task queue with its own `run` loop:
+**Worker template**: `AbstractWorker<P>` drives the common workers (webhook/backlog/expiration plus the SearXNG periodic workers); scrape_worker serves the task queue with its own `run` loop:
 
 ```rust
 pub struct AbstractWorker<P>
@@ -1745,7 +1745,7 @@ Worker lifecycle:
 1. At API/worker process startup, `spawn_common_workers` starts webhook/backlog/expiration; in worker mode the manager additionally starts N scrape_workers
 2. Each worker runs its `process()` on a configurable interval
 3. Workers share the same TaskRepository for task coordination via `FOR UPDATE SKIP LOCKED`
-4. **Graceful shutdown** is coordinated by the `ShutdownCoordinator` (`src/workers/shutdown.rs:35-44`): it embeds trait-kit's `AsyncShutdownCoordinator` for phased shutdown hooks, and `listen_unix_signals` catches SIGTERM/SIGINT to set the shutdown flag; within the grace period (default 30s) workers drain active tasks, and the `ShutdownPhase::DrainQueue` hook triggers `rollback_pending_tasks` to roll unfinished tasks back to `queued` — all visible in `src/main.rs:130-203`. The broadcast channel is used only for RequestCoalescer's same-URL concurrent waiting, not in the shutdown flow
+4. **Graceful shutdown** is coordinated by the `ShutdownCoordinator` (`src/workers/shutdown.rs:35-44`): it embeds trait-kit's `AsyncShutdownCoordinator` for phased shutdown hooks, and `listen_unix_signals` catches SIGTERM/SIGINT to set the shutdown flag; within the grace period (default 30s) workers drain active tasks, and the `ShutdownPhase::DrainQueue` hook triggers `rollback_pending_tasks` to roll unfinished tasks back to `queued` — all visible in `src/main.rs:196-266`. The broadcast channel is used only for RequestCoalescer's same-URL concurrent waiting, not in the shutdown flow
 
 ---
 
@@ -1989,7 +1989,7 @@ All are constructed via `ApiKeyScope::with_custom_limits` (`DEFAULT_SEARCH_LIMIT
 pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response, StatusCode>
 ```
 
-`scope_middleware` (`src/presentation/middleware/auth_middleware.rs:487`) reads the `ApiKeyScope` from `AuthState.scope`, calls `determine_required_scope(path, method)` to derive the required `ScopePermission`, and verifies it with `ApiKeyScope::has_permission`. The `ScopePermission` enum: `Read` / `Write` / `Admin` (`src/domain/auth/mod.rs:35`). Note this middleware is not mounted in the production router.
+`scope_middleware` (`src/presentation/middleware/auth_middleware.rs:556`) reads the `ApiKeyScope` from `AuthState.scope`, calls `determine_required_scope(path, method)` to derive the required `ScopePermission`, and verifies it with `ApiKeyScope::has_permission`. The `ScopePermission` enum: `Read` / `Write` / `Admin` (`src/domain/auth/mod.rs:35`). Note this middleware is not mounted in the production router.
 
 Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
 
@@ -2008,7 +2008,7 @@ Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
 Migration is complete. New teams get API Keys issued via `POST /v1/admin/api-keys` with no ops-tooling involvement.
 In dev/test environments, admin keys can be issued automatically via the `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` environment variable.
 
-**Behavior of `migrations/005_deprecate_legacy_api_keys.sql`:**
+**Behavior of `migrations/postgres/005_deprecate_legacy_api_keys.sql`:**
 - Only adds a `deprecated_at` column to the `api_keys` table and backfills `NOW()`
 - Only adds a `deprecated_at` column to the `scopes` table and backfills `NOW()`
 - Deletes no data and drops no columns, easing rollback and historical audit
@@ -2066,7 +2066,7 @@ flowchart TB
     subgraph Container [Docker Container]
         subgraph App [crawlrs Application]
             S1[Axum Server<br/>port 8899]
-            S2[Scrape Workers + Common Workers<br/>4 worker types]
+            S2[Scrape Workers + Common Workers<br/>6 worker types]
         end
     end
 

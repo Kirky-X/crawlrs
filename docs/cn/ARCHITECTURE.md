@@ -856,7 +856,7 @@ bootstrap/                 # Application bootstrap
 
 ### Dependency Injection (trait-kit 0.5)
 
-DI uses **trait-kit 0.5** with async module builders. `src/main.rs:389-405` registers **9 个 Module** 到 `AsyncKit`：
+DI uses **trait-kit 0.5** with async module builders. `src/main.rs:541-567` registers **9 个 Module** 到 `AsyncKit`：
 
 | # | Module | 提供 |
 |---|--------|------|
@@ -870,9 +870,9 @@ DI uses **trait-kit 0.5** with async module builders. `src/main.rs:389-405` regi
 | 8 | `ServiceModule` | 限流/搜索/webhook/团队服务 + 队列 + worker |
 | 9 | `IdModule` | `IdService`（NebulaId ID 生成） |
 
-`EngineModule` 提供 5 个引擎实现：`ReqwestEngine` / `PlaywrightEngine` / `WreqEngine`（`engine-tls-fingerprint`）/ `FlareSolverrEngine`（`engine-flaresolverr`）/ `MllmEngine`（`engine-mllm`）。
+`EngineModule` 默认提供 5 个引擎实现（`engine-moli` 启用时另加 `MoliEngine`）：`ReqwestEngine` / `PlaywrightEngine` / `WreqEngine`（`engine-tls-fingerprint`）/ `FlareSolverrEngine`（`engine-flaresolverr`）/ `MllmEngine`（`engine-mllm`）。
 
-**CrawlRsState** 是运行时状态，由 `CrawlRsState::from_kit`（`src/di/axum_state.rs:207`）从构建完成的 kit 提取；它 require 5 个模块：`InfrastructureModule`、`EngineModule`、`ServiceModule`、`SettingsModule`、`IdModule`。自 v0.2.0（`feature-gate-optional-modules` change）起，有 7 个字段被 `#[cfg(feature = "...")]` 门控，仅在对应对业务特性启用时编译：
+**CrawlRsState** 是运行时状态，由 `CrawlRsState::from_kit`（`src/di/axum_state.rs:217`）从构建完成的 kit 提取；它 require 5 个模块：`InfrastructureModule`、`EngineModule`、`ServiceModule`、`SettingsModule`、`IdModule`。自 v0.2.0（`feature-gate-optional-modules` change）起，有 7 个字段被 `#[cfg(feature = "...")]` 门控，仅在对应对业务特性启用时编译：
 
 ```rust
 #[derive(Clone)]
@@ -926,7 +926,7 @@ pub struct CrawlRsState {
 }
 ```
 
-`regex_cache` 已不在 `CrawlRsState` 上（无此字段）。默认构建（platform，含 teams/sitemap）下共 **36 个字段**：29 个恒定编译 + 7 个 cfg 门控（`webhook_repo`/`webhook_event_repo`/`webhook_worker` 受 `webhook`，`team_service`/`geo_location_service`/`geo_restriction_repo` 受 `teams`，`map_use_case` 受 `sitemap`）。字段数以 `src/di/axum_state.rs:70-193` 为准。
+`regex_cache` 已不在 `CrawlRsState` 上（无此字段）。默认构建（platform，含 teams/sitemap）下共 **38 个字段**：31 个恒定编译 + 7 个 cfg 门控（`webhook_repo`/`webhook_event_repo`/`webhook_worker` 受 `webhook`，`team_service`/`geo_location_service`/`geo_restriction_repo` 受 `teams`，`map_use_case` 受 `sitemap`）。字段数以 `src/di/axum_state.rs:72-204` 为准。
 
 | Field | Gated By | Off-mode Behavior |
 |-------|----------|-------------------|
@@ -941,7 +941,7 @@ See [Feature Gate Architecture](#feature-gate-architecture) for the full gating 
 
 State is injected into Axum handlers via `Extension<CrawlRsState>`.
 
-**Module dependency graph**（`src/main.rs:389-405` 的注册顺序即依赖顺序；`CrawlRsState::from_kit` require 其中 5 个）：
+**Module dependency graph**（`src/main.rs:541-567` 的注册顺序即依赖顺序；`CrawlRsState::from_kit` require 其中 5 个）：
 
 ```text
 SettingsModule (Arc<Settings> + i18n 配置)
@@ -1060,7 +1060,7 @@ The `feature-matrix` job in `.github/workflows/ci.yml` runs `cargo check` agains
 
 When a feature is off, the corresponding endpoints return **404** (not 401/403) because routes are not registered at startup. Operators switching from full to stripped-down builds should:
 
-- For `auth`-off: pre-provision credits for `DEFAULT_TEAM_ID` via `add_credits` CLI (see `docs/USER_GUIDE.md` → Single-Tenant / No-Auth Deployment)
+- For `auth`-off: pre-provision credits for `DEFAULT_TEAM_ID` via `add_credits` CLI (see `USER_GUIDE.md` → Single-Tenant / No-Auth Deployment)
 - For `rate-limit`-off: ensure upstream gateways enforce their own rate limiting
 - For `webhook`-off: notify clients that completion callbacks will not be delivered
 - For `teams`-off: only `DEFAULT_TEAM_ID` exists; multi-tenant data isolation is enforced at the application layer (all rows owned by `DEFAULT_TEAM_ID`)
@@ -1711,11 +1711,11 @@ pub struct PostgresTaskQueue {
 }
 ```
 
-The `TaskRepository` provides `acquire_next(worker_id)` which uses `FOR UPDATE SKIP LOCKED` semantics for safe concurrent worker access. Ordering is `priority ASC, created_at ASC`（数值越小越优先），由 `migrations/003` 的两个 partial index（`idx_tasks_acquire_queued` / `idx_tasks_acquire_stale`）支撑有序取任务。详见 [Queue Architecture](#-queue-system)。
+The `TaskRepository` provides `acquire_next(worker_id)` which uses `FOR UPDATE SKIP LOCKED` semantics for safe concurrent worker access. Ordering is `priority ASC, created_at ASC`（数值越小越优先），由 `migrations/postgres/003_add_acquire_next_indexes.sql` 的两个 partial index（`idx_tasks_acquire_queued` / `idx_tasks_acquire_stale`）支撑有序取任务。详见 [Queue Architecture](#-queue-system)。
 
 ### Worker Types
 
-实际运行 **4 类 worker**：
+实际运行 **6 类 worker**（任务面 4 类常驻 + SearXNG 采集/探活 2 类在 `[search.searxng] enabled` 时条件拉起）：
 
 | Worker | Purpose | 启动方 | 驱动方式 |
 |--------|---------|--------|----------|
@@ -1724,9 +1724,9 @@ The `TaskRepository` provides `acquire_next(worker_id)` which uses `FOR UPDATE S
 | `backlog_worker` | Reprocess expired/pending tasks | `spawn_common_workers` | `AbstractWorker` 模板 |
 | `expiration_worker` | Expire stale tasks past their TTL | `spawn_common_workers` | `AbstractWorker` 模板 |
 
-后三者（webhook/backlog/expiration）由 `src/bootstrap/workers.rs:20-57` 的 `spawn_common_workers` 启动，API 模式与 worker 模式共享，**不经 manager**；scrape_worker 由 manager 启动。`src/workers/task_state_machine.rs` 全仓零调用方（死代码，无运行时接线）。
+后三者（webhook/backlog/expiration）与 SearXNG 双周期 worker（collector/health）由 `src/bootstrap/workers.rs:22-77` 的 `spawn_common_workers` 启动，API 模式与 worker 模式共享，**不经 manager**；scrape_worker 由 manager 启动。`src/workers/task_state_machine.rs` 全仓零调用方（死代码，无运行时接线）。
 
-**Worker 模板**：`AbstractWorker<P>` 只驱动通用 worker（webhook/backlog/expiration）；scrape_worker 用自己的 `run` 循环服务于任务队列：
+**Worker 模板**：`AbstractWorker<P>` 驱动通用 worker（webhook/backlog/expiration 与 SearXNG 双周期 worker）；scrape_worker 用自己的 `run` 循环服务于任务队列：
 
 ```rust
 pub struct AbstractWorker<P>
@@ -1742,7 +1742,7 @@ Worker lifecycle:
 1. API/worker 进程启动时 `spawn_common_workers` 拉起 webhook/backlog/expiration；worker 模式下 manager 另起 N 个 scrape_worker
 2. Each worker runs its `process()` on a configurable interval
 3. Workers share the same TaskRepository for task coordination via `FOR UPDATE SKIP LOCKED`
-4. **Graceful shutdown** 由 `ShutdownCoordinator`（`src/workers/shutdown.rs:35-44`）协调：内嵌 trait-kit 的 `AsyncShutdownCoordinator` 做分阶段停机 hook，`listen_unix_signals` 捕获 SIGTERM/SIGINT 置位关闭 flag；宽限期（默认 30s）内 worker 排空活跃任务，`ShutdownPhase::DrainQueue` 阶段 hook 触发 `rollback_pending_tasks` 把未完成任务回滚为 `queued`，全部见 `src/main.rs:130-203`。broadcast channel 只用于 RequestCoalescer 的同 URL 并发等待，不参与停机流程
+4. **Graceful shutdown** 由 `ShutdownCoordinator`（`src/workers/shutdown.rs:35-44`）协调：内嵌 trait-kit 的 `AsyncShutdownCoordinator` 做分阶段停机 hook，`listen_unix_signals` 捕获 SIGTERM/SIGINT 置位关闭 flag；宽限期（默认 30s）内 worker 排空活跃任务，`ShutdownPhase::DrainQueue` 阶段 hook 触发 `rollback_pending_tasks` 把未完成任务回滚为 `queued`，全部见 `src/main.rs:196-266`。broadcast channel 只用于 RequestCoalescer 的同 URL 并发等待，不参与停机流程
 
 ---
 
@@ -1986,7 +1986,7 @@ garrison v0.9 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖：
 pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response, StatusCode>
 ```
 
-`scope_middleware`（`src/presentation/middleware/auth_middleware.rs:487`）从 `AuthState.scope` 读取 `ApiKeyScope`，调用 `determine_required_scope(path, method)` 推导所需 `ScopePermission`，再用 `ApiKeyScope::has_permission` 校验。`ScopePermission` 枚举：`Read` / `Write` / `Admin`（`src/domain/auth/mod.rs:35`）。注意该中间件未挂载生产路由。
+`scope_middleware`（`src/presentation/middleware/auth_middleware.rs:556`）从 `AuthState.scope` 读取 `ApiKeyScope`，调用 `determine_required_scope(path, method)` 推导所需 `ScopePermission`，再用 `ApiKeyScope::has_permission` 校验。`ScopePermission` 枚举：`Read` / `Write` / `Admin`（`src/domain/auth/mod.rs:35`）。注意该中间件未挂载生产路由。
 
 Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
 
@@ -2005,7 +2005,7 @@ Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
 迁移已完成。新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入。
 开发/测试环境可通过 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动签发 admin key。
 
-**`migrations/005_deprecate_legacy_api_keys.sql` 行为：**
+**`migrations/postgres/005_deprecate_legacy_api_keys.sql` 行为：**
 - 仅给 `api_keys` 表追加 `deprecated_at` 列并回填 `NOW()`
 - 仅给 `scopes` 表追加 `deprecated_at` 列并回填 `NOW()`
 - 不删除任何数据、不删除任何列，便于回滚与历史审计
@@ -2063,7 +2063,7 @@ flowchart TB
     subgraph Container [Docker Container]
         subgraph App [crawlrs Application]
             S1[Axum Server<br/>port 8899]
-            S2[Scrape Workers + Common Workers<br/>4 worker types]
+            S2[Scrape Workers + Common Workers<br/>6 worker types]
         end
     end
 

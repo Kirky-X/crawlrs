@@ -174,8 +174,8 @@ Two environment variables with different purposes:
 
 | Variable | Purpose | Code Location |
 |------|------|----------|
-| `CRAWLRS_BOOTSTRAP_ADMIN` | When `true`/`1`, the API process calls `run_bootstrap` at startup to bootstrap an admin key | `src/main.rs:88` |
-| `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` | The `<team_id_uuid>` reused during bootstrap (optional; by default `bootstrap-admin-team` is created automatically) | `src/bootstrap/services.rs:611` |
+| `CRAWLRS_BOOTSTRAP_ADMIN` | When `true`/`1`, the API process calls `run_bootstrap` at startup to bootstrap an admin key | `src/main.rs:118` |
+| `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` | The `<team_id_uuid>` reused during bootstrap (optional; by default `bootstrap-admin-team` is created automatically) | `src/bootstrap/services/auth/bootstrap_admin_key.rs:23` |
 
 ```bash
 CRAWLRS_BOOTSTRAP_ADMIN=true ./target/release/crawlrs
@@ -207,7 +207,7 @@ curl -H "Authorization: Bearer garrison_key_id.garrison_secret" http://localhost
 - New teams get API Keys issued via `POST /v1/admin/api-keys` with no ops-tooling involvement
 - In dev/test environments, set `CRAWLRS_BOOTSTRAP_ADMIN=true` so the API process itself issues the admin key at startup (it must be the same process: garrison's DAO is in-process oxcache, so keys issued by another process are invisible)
 
-**Behavior of `migrations/005_deprecate_legacy_api_keys.sql`:**
+**Behavior of `migrations/postgres/005_deprecate_legacy_api_keys.sql`:**
 
 - Adds a `deprecated_at` column to the `api_keys` table and backfills it with `NOW()`
 - Adds a `deprecated_at` column to the `scopes` table and backfills it with `NOW()`
@@ -267,7 +267,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 # retry-after: 60
 ```
 
-> Known gap: `Retry-After` (429) is the only rate-limit response header that gets set (`src/presentation/middleware/rate_limit_middleware.rs:243-247`); quota-balance response headers are not implemented. To learn your remaining quota, poll `GET /v1/teams/me/usage` instead.
+> Known gap: `Retry-After` (429) is the only rate-limit response header that gets set (`src/presentation/middleware/rate_limit_middleware.rs:193-196`); quota-balance response headers are not implemented. To learn your remaining quota, poll `GET /v1/teams/me/usage` instead.
 
 Check your current usage:
 
@@ -317,7 +317,7 @@ When `auth` is disabled, the `default_identity_middleware` injects a fixed `Auth
 
 The injected `AuthState` carries `ApiKeyScope::denied()` (read/write/admin all `false`, limits `0`). Protected routes therefore **reject every request with 401** unless `allow_unauthenticated_protected()` is called explicitly; opt-in also yields the denied scope, not full access. Do not expose an auth-off instance to a public network.
 
-Timeline: deny-by-default was introduced in 0.2.0-rc.1, lost during the 0.2.0-rc.2 assembly refactor, and restored in 0.2.0-rc.3 (see `docs/CHANGELOG.md`, Breaking).
+Timeline: deny-by-default was introduced in 0.2.0-rc.1, lost during the 0.2.0-rc.2 assembly refactor, and restored in 0.2.0-rc.3 (see `CHANGELOG.md`, Breaking).
 
 ### Noop Service Implementations
 
@@ -950,7 +950,7 @@ curl -X POST http://localhost:8899/v1/search \
 
 **Languages / regions (common example values — not yet effective in the current version):**
 
-`lang` and `country` are free-form strings in the request DTO (`src/application/dto/search_request.rs:17-18`), and `perform_search` currently ignores them (`src/domain/services/search_service.rs:284-285` — parameters are prefixed `_`). Common values you can send:
+`lang` and `country` are free-form strings in the request DTO (`src/application/dto/search_request.rs:15-16`), and `perform_search` currently ignores them (`src/domain/services/search_service.rs:390-394` — parameters are prefixed `_`). Common values you can send:
 
 - **Languages:** `en` (English), `zh` (Chinese), `es` (Spanish), `fr` (French), `de` (German), `ja` (Japanese), `ko` (Korean)
 - **Regions:** `us` (United States), `uk` (United Kingdom), `ca` (Canada), `au` (Australia), `jp` (Japan), `cn` (China)
@@ -1030,7 +1030,7 @@ instead of silently degrading.
 
 ### Extract from URLs
 
-Submit one or more URLs for asynchronous extraction. The request body takes `urls` (1–100, http/https) plus exactly one of `prompt` / `schema` / `rules`; the endpoint enqueues a task and returns `{id, status: "pending"}` (see `docs/API_REFERENCE.md` for the full contract):
+Submit one or more URLs for asynchronous extraction. The request body takes `urls` (1–100, http/https) plus exactly one of `prompt` / `schema` / `rules`; the endpoint enqueues a task and returns `{id, status: "pending"}` (see `API_REFERENCE.md` for the full contract):
 
 ```bash
 curl -X POST http://localhost:8899/v1/extract \
@@ -1234,7 +1234,7 @@ On failure the event's `status` is `"failed"` with an `"error"` field attached.
 
 ## 📋 Tasks
 
-> `/v1/tasks/_query` and `/v1/tasks/_cancel` are registered in the production assembly (`src/presentation/routes/task.rs:20-30`, wired in `src/bootstrap/routes.rs:396`).
+> `/v1/tasks/_query` and `/v1/tasks/_cancel` are registered in the production assembly (`src/presentation/routes/task.rs:36-47`, wired in `src/bootstrap/routes.rs:507`).
 
 ### Query Tasks
 

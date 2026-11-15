@@ -45,7 +45,7 @@ Where possible, include: affected versions and feature combination (feature flag
 ### Our Commitment
 
 - We will stay in contact with the reporter during the fix; the disclosure timeline is negotiated with the reporter.
-- Fixes ship with the next supported release and are recorded in the Security section of `docs/CHANGELOG.md` (e.g. the brute-force protection hardening in 0.2.0).
+- Fixes ship with the next supported release and are recorded in the Security section of `CHANGELOG.md` (e.g. the brute-force protection hardening in 0.2.0).
 
 ---
 
@@ -120,7 +120,7 @@ Known and accepted risks are commented line by line in `deny.toml` (risk rating 
 - [ ] Configure CORS with concrete origins (no `*` wildcard)
 - [ ] Set rate limits (`default_rpm` / `burst_size`) and team concurrency (`concurrency.default_team_limit`) according to capacity
 - [ ] Configure `[trusted_proxies]` (CIDR) to prevent IP spoofing from bypassing the firewall/rate limiting
-- [ ] Enable Prometheus metrics export and wire up alerting (the metrics endpoint performs real exports) (docker/prometheus/ provides sample configurations). **Note**: `/metrics` now returns real Prometheus text metrics (in-process recorder; public, unauthenticated, un-rate-limited, with no tenant/URL/credential labels; a network-layer allowlist is advised in production); the `docker/prometheus/` samples are for reference only — see `docs/PERFORMANCE.md` for the real metric list
+- [ ] Enable Prometheus metrics export and wire up alerting (the metrics endpoint performs real exports) (docker/prometheus/ provides sample configurations). **Note**: `/metrics` now returns real Prometheus text metrics (in-process recorder; public, unauthenticated, un-rate-limited, with no tenant/URL/credential labels; a network-layer allowlist is advised in production); the `docker/prometheus/` samples are for reference only — see `PERFORMANCE.md` for the real metric list
 - [ ] Enable structured log aggregation (inklog) and include audit logs (`/v1/audit/logs`) in patrols
 - [ ] Deploy behind TLS termination (reverse proxy/gateway); health checks go through `/health`
 - [ ] Review the Webhook `secret` configuration and verify receiver-side signature checks

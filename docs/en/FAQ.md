@@ -47,7 +47,7 @@ Rust 1.97.1+ (`Cargo.toml` `rust-version`; building needs protoc), PostgreSQL 16
 
 ### ❓ How do I choose a feature combination?
 
-Pick a preset by scenario: default (full platform), `standard` (production recommended), `full` (all features), `--no-default-features` (single-tenant/embedding), `agent-lib` (minimal agent library surface). For the item-by-item matrix see the README "🎨 Feature Flags"; for how combinations are compile-verified see [🧪 Test Scenario Matrix](TEST_SCENARIOS.md).
+Pick a preset by scenario: default (full platform), `standard` (production recommended), `full` (all features), `--no-default-features` (single-tenant/embedding), `agent-lib` (minimal agent library surface). For the item-by-item matrix see [Feature Flags · User Guide](USER_GUIDE.md#-feature-flags); for how combinations are compile-verified see [🧪 Test Scenario Matrix](TEST_SCENARIOS.md).
 
 ### ❓ Which databases are supported?
 
@@ -89,7 +89,7 @@ Two ways: `POST /v1/admin/api-keys` (requires the `crawlrs:admin` permission); i
 
 Yes, but with **deny by default**. `cargo build --release --no-default-features` builds a single-tenant/no-auth version: `default_identity_middleware` injects a fixed identity, all requests belong to the default team; when rate-limit / webhook are off, Noop implementations are likewise injected, invisible to business logic.
 
-> ⚠️ auth-off is not "allow everything": `src/bootstrap/routes.rs:179-188` injects `ApiKeyScope::denied()` (read/write/admin all false, limits 0), so protected routes that have not explicitly called `crawlrs::presentation::middleware::auth_middleware::allow_unauthenticated_protected()` **always return 401**. To make a route anonymously accessible under auth-off, you must explicitly opt in in code; at startup a WARNING reminds you the instance runs in unauthenticated degraded mode — **never expose it to the public internet**.
+> ⚠️ auth-off is not "allow everything": `src/bootstrap/routes.rs:183-191` injects `ApiKeyScope::denied()` (read/write/admin all false, limits 0), so protected routes that have not explicitly called `crawlrs::presentation::middleware::auth_middleware::allow_unauthenticated_protected()` **always return 401**. To make a route anonymously accessible under auth-off, you must explicitly opt in in code; at startup a WARNING reminds you the instance runs in unauthenticated degraded mode — **never expose it to the public internet**.
 
 ---
 
@@ -129,12 +129,12 @@ Integration tests use testcontainers to start a PostgreSQL 16 container automati
 
 ### ❓ How large is the test suite?
 
-As of 0.2.0 (methodology: inline test attributes counted via `grep -rE '^\s*#\[(tokio::)?test\]'`):
+As of HEAD on 2026-11-16 (methodology: inline test attributes counted via `grep -rE '^\s*#\[(tokio::)?test\]'`):
 
 | Item | Count |
 |---|---|
-| `src/` | 476 `.rs` files, 229,992 lines, 6,548 inline test attributes |
-| `tests/` | 124 `.rs` files, 994 test functions (of which `tests/unit/` has 71 files) |
+| `src/` | 477 `.rs` files, 229,345 lines, 6,553 inline test attributes |
+| `tests/` | 125 `.rs` files, 994 test functions (of which `tests/unit/` has 71 files) |
 | Criterion benchmark groups | 9 (`benches/benchmark.rs`) |
 | Python test suites | 5 (`tests/python/`) |
 | BDD acceptance | `tests/acceptance/` 61 scenarios / 10 feature files (2 `@external` ones do not run locally) |

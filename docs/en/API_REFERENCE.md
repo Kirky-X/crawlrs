@@ -92,7 +92,7 @@ API keys carry an `ApiKeyScope` with three boolean permissions plus two hourly l
 | `search_limit` | Maximum search requests per hour |
 | `scrape_limit` | Maximum scrape requests per hour |
 
-> **Current status (0.2.0-rc.2):** although `scope_middleware` is implemented (`src/presentation/middleware/auth_middleware.rs`), it is **not mounted in the production router** — it exists only in the test Router assembly. Except for `POST /v1/admin/api-keys`, whose handler explicitly checks the `Admin` permission, no other endpoint currently validates the API Key scope — only key validity. Do not assume RBAC is enforced at the endpoint layer.
+> **Current status (0.2.0):** although `scope_middleware` is implemented (`src/presentation/middleware/auth_middleware.rs`), it is **not mounted in the production router** — it exists only in the test Router assembly. Except for `POST /v1/admin/api-keys`, whose handler explicitly checks the `Admin` permission, no other endpoint currently validates the API Key scope — only key validity. Do not assume RBAC is enforced at the endpoint layer.
 
 ### Auth Disabled Behavior (auth-off)
 
@@ -1641,9 +1641,11 @@ func Scrape(url string) error {
 
 ## 📋 Changelog
 
-### Unreleased
+### 0.2.0 (2026-11-15)
+- First stable crates.io release: in-house dependencies normalized to stable versions (minor precision), alchemize switched to the registry (no path/git dependencies), i18n host registration rewritten, release.yml OIDC + token fallback
+- acceptance teardown clippy fix; SDK test I18nBundle two-argument call
 
-**Changed:**
+**Changed (former Unreleased items, shipped along the 0.2.0 line):**
 - ID system fully migrated to NebulaId (`domain::id::Id`, default `uuid_v8` algorithm; the API JSON contract stays UUID strings)
 - `/v1/search` without an `engine` parameter changed from "single bing engine" to smart aggregation (multi-engine fan-out + RRF fusion)
 - auth-off semantics: protected routes reject with 401 by default and require an explicit `allow_unauthenticated_protected()` opt-in; after opt-in a `ApiKeyScope::denied()` restricted anonymous identity (`DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`) is injected, not `full_access()`
@@ -1655,10 +1657,6 @@ func Scrape(url string) error {
 
 **Observability:**
 - 5 new Prometheus metrics: `crawlrs_queue_depth` / `crawlrs_engine_success_total` / `crawlrs_engine_duration_seconds` / `crawlrs_cache_hit_total` / `crawlrs_webhook_delivery_total`
-
-### 0.2.0 (2026-11-15)
-- First stable crates.io release: in-house dependencies normalized to stable versions (minor precision), alchemize switched to the registry (no path/git dependencies), i18n host registration rewritten, release.yml OIDC + token fallback
-- acceptance teardown clippy fix; SDK test I18nBundle two-argument call
 
 ### 0.2.0-rc.4 (2026-11-10)
 - Release pipeline full re-run: CI five-combination / engine-moli / BDD fixes green; CodeQL 18 findings all resolved; security audit exemptions registered at the same source
