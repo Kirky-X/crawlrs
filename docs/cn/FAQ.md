@@ -28,7 +28,7 @@ crawlrs 是一个使用 Rust 构建的自托管企业级网页数据采集平台
 
 ### ❓ 项目采用什么许可证？
 
-[Apache License 2.0](../LICENSE)。Copyright © 2025-2026 Kirky.X🌠。
+[Apache License 2.0](../../LICENSE)。Copyright © 2025-2026 Kirky.X🌠。
 
 ### ❓ 在哪里可以获得帮助？
 
@@ -55,7 +55,7 @@ Rust 1.97.1+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16
 
 ### ❓ 环境变量如何命名？
 
-统一 `CRAWLRS__` 前缀，`__` 分隔嵌套层级（confers 约定），如 `CRAWLRS__DATABASE__URL`、`CRAWLRS__SERVER__PORT`。完整参考见 [.env.example](../.env.example)；配置段速查见用户指南。
+统一 `CRAWLRS__` 前缀，`__` 分隔嵌套层级（confers 约定），如 `CRAWLRS__DATABASE__URL`、`CRAWLRS__SERVER__PORT`。完整参考见 [.env.example](../../.env.example)；配置段速查见用户指南。
 
 ### ❓ 服务监听哪个端口？如何确认启动成功？
 

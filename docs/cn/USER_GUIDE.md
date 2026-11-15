@@ -1812,7 +1812,7 @@ burst_size = 20
 
 ### Getting Help
 
-- 📖 [Documentation](../README.md)
+- 📖 [Documentation](../../README_CN.md)
 - 📚 [API Reference](API_REFERENCE.md)
 - 🏗️ [Architecture](ARCHITECTURE.md)
 - 🐛 [Issue Tracker](https://github.com/Kirky-X/crawlrs/issues)

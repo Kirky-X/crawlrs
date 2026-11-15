@@ -66,7 +66,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 
 每个抓取请求在两处独立校验目标 URL：handler 入队前的前置校验（`src/presentation/helpers/`）与引擎路由执行前的二次校验。覆盖重定向跟随（`ssrf_redirect_test`）与 IP/协议规则（`ssrf_mod_test`），受保护端点签名经 `extract_handler` 泛型注入地理限制仓库（`teams` 特性）。
 
-**kill-switch（危险）**：`CRAWLRS_DISABLE_SSRF_PROTECTION` 一经设置即旁路 SSRF 校验（生效点 `src/infrastructure/services/config_service.rs:222` 的 `ssrf_protection_disabled`；判定逻辑 `src/infrastructure/security/ssrf/mod.rs:345`）。该开关**仅限开发/测试环境调试**；生产环境启动时 `src/bootstrap/config/config_validator.rs` 会输出显著 warn 告警（非阻断，**仅启动时一次**，运行期无持续告警）。生产部署必须删除此环境变量。变量清单与注释见 [.env.example](../.env.example)。
+**kill-switch（危险）**：`CRAWLRS_DISABLE_SSRF_PROTECTION` 一经设置即旁路 SSRF 校验（生效点 `src/infrastructure/services/config_service.rs:222` 的 `ssrf_protection_disabled`；判定逻辑 `src/infrastructure/security/ssrf/mod.rs:345`）。该开关**仅限开发/测试环境调试**；生产环境启动时 `src/bootstrap/config/config_validator.rs` 会输出显著 warn 告警（非阻断，**仅启动时一次**，运行期无持续告警）。生产部署必须删除此环境变量。变量清单与注释见 [.env.example](../../.env.example)。
 
 ### 第三方数据流出面：SearXNG 公共实例
 
