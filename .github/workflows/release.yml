@@ -33,8 +33,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # alchemize path 依赖在解析期读 ../alchemize，须先检出 sibling
-      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: rustfmt, clippy
@@ -44,7 +42,7 @@ jobs:
         with:
           shared-key: release-full-deps
       - name: Rustfmt check
-        # -p 定点本仓两包（--all 波及未激活 path 依赖 vecboost，sibling 不检出；见 ci.yml fmt 注释）
+        # -p 定点本仓两包（= 全部 workspace 成员；见 ci.yml fmt 注释）
         run: cargo fmt -p crawlrs -p crawlrs-examples -- --check
       - name: Clippy (full features)
         run: cargo clippy --features full --lib --tests -- -D warnings
@@ -74,8 +72,6 @@ jobs:
       CRAWLRS_ACCEPTANCE_OFFLINE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # alchemize path 依赖在解析期读 ../alchemize，须先检出 sibling
-      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: rustfmt, clippy
@@ -100,16 +96,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # alchemize path 依赖在解析期读 ../alchemize，须先检出 sibling
-      - uses: ./.github/actions/alchemize-sibling
-      # runner 直跑（Docker action 容器只挂工作区，看不到 ../alchemize symlink）
       - name: Install cargo-deny
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cargo-deny
       - name: Cargo deny check
-        # --features full 与其余门禁一致（full 不含 engine-tls-fingerprint；wreq 5.x 上游全 yank）
-        run: cargo deny check --features full
+        # cargo-deny 0.20 起 check 不接受 --features（全特性图由工具自身解析），
+        # 与 ci.yml deny 作业同口径
+        run: cargo deny check
 
   doc-check:
     name: Doc Check (zero warnings)
@@ -119,8 +113,6 @@ jobs:
       RUSTDOCFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # alchemize path 依赖在解析期读 ../alchemize，须先检出 sibling
-      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -159,7 +151,7 @@ jobs:
             echo "::error::Invalid version format: $VERSION"
             exit 1
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
       - name: Check Cargo.toml version
@@ -197,19 +189,22 @@ jobs:
             echo "::error::No content found for ## [${VERSION}] in docs/CHANGELOG.md"
             exit 1
           fi
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo "$BODY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "body<<EOF"
+            echo "$BODY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
   publish-crates-io:
-    name: Publish to crates.io
+    name: Publish to crates.io (OIDC + token fallback)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: version-consistency
+    permissions:
+      contents: read
+      id-token: write # OIDC trusted publishing 凭证交换
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # alchemize path 依赖在解析期读 ../alchemize，须先检出 sibling
-      - uses: ./.github/actions/alchemize-sibling
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -225,27 +220,41 @@ jobs:
           CODE=$(curl -s -o /dev/null -w "%{http_code}" -H 'User-Agent: crawlrs-release-verify' \
             "https://crates.io/api/v1/crates/crawlrs/${VERSION}")
           echo "crawlrs ${VERSION}: HTTP ${CODE}"
-          echo "exists=$([[ "$CODE" == "200" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "exists=$([[ "$CODE" == "200" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       # crates.io 不接受 git 依赖与无 registry 版本对应的 path 依赖：cargo publish 会以
       # "no matching package found" 失败。检测到任一非 registry 依赖即显式跳过 publish
-      # 并放行 GitHub Release（源码发布）；依赖 registry 化后本守卫自动放行。
+      # 并放行 GitHub Release（源码发布）；0.2.0 起全 registry，本守卫应输出 false。
       - name: Detect non-registry dependencies
         id: gitdeps
         run: |
           if grep -qE '\bgit[[:space:]]*=' Cargo.toml \
             || grep -qE '^[A-Za-z0-9_-]+ *= *\{[^}]*path *= *"' Cargo.toml; then
             echo "non-registry dependencies (git/path) present -> crates.io publish deferred"
-            echo "has=true" >> $GITHUB_OUTPUT
+            echo "has=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has=false" >> $GITHUB_OUTPUT
+            echo "has=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # 家族终态：OIDC trusted publishing 优先。crates.io 未登记本仓 trusted
+      # publisher 时该步失败（continue-on-error），后续 publish 自动退回
+      # CARGO_REGISTRY_TOKEN secret（既有发布通道，注册后可删兜底）。
+      - name: Authenticate to crates.io (OIDC)
+        id: auth
+        if: steps.published.outputs.exists == 'false' && steps.gitdeps.outputs.has == 'false'
+        continue-on-error: true
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish to crates.io
         if: steps.published.outputs.exists == 'false' && steps.gitdeps.outputs.has == 'false'
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [[ -z "${CARGO_REGISTRY_TOKEN}" ]]; then
+            echo "::error::no crates.io credential: OIDC exchange failed and CARGO_REGISTRY_TOKEN secret is empty"
+            exit 1
+          fi
+          cargo publish
 
       - name: Notice skipped crates.io publish
         if: steps.published.outputs.exists == 'false' && steps.gitdeps.outputs.has == 'true'
@@ -258,7 +267,6 @@ jobs:
     timeout-minutes: 10
     # 串行依赖 publish-crates-io（非并行）：确保 crates.io 发布成功后才创建 GitHub Release，
     # 避免 crates.io 失败时 GitHub Release 已存在的半发布不一致状态。
-    # 1-2min 的时间节省不值得牺牲发布完整性。
     needs: [version-consistency, publish-crates-io]
     permissions:
       contents: write
@@ -266,8 +274,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # github-release 的 cargo package 分支同样需要 alchemize sibling
-      - uses: ./.github/actions/alchemize-sibling
 
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install protoc (sdforge build dep)
@@ -282,9 +288,9 @@ jobs:
         run: |
           if grep -qE '\bgit[[:space:]]*=' Cargo.toml \
             || grep -qE '^[A-Za-z0-9_-]+ *= *\{[^}]*path *= *"' Cargo.toml; then
-            echo "has=true" >> $GITHUB_OUTPUT
+            echo "has=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has=false" >> $GITHUB_OUTPUT
+            echo "has=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build source package (.crate)
@@ -297,9 +303,9 @@ jobs:
             exit 1
           fi
           shasum -a 256 "$CRATE_FILE" > "$CRATE_FILE.sha256"
-          echo "CRATE_FILE=$CRATE_FILE" >> $GITHUB_ENV
-          echo "CRATE_SUM=$CRATE_FILE.sha256" >> $GITHUB_ENV
-          echo "Built: $CRATE_FILE"
+          mkdir -p artifacts
+          mv "$CRATE_FILE" "$CRATE_FILE.sha256" artifacts/
+          echo "Built: artifacts/$(basename "$CRATE_FILE")"
 
       - name: Build tagged source archive (non-registry deps present)
         if: steps.gitdeps.outputs.has == 'true'
@@ -308,38 +314,62 @@ jobs:
           ARTIFACT="crawlrs-${VERSION}.tar.gz"
           git archive --format=tar.gz --output="$ARTIFACT" "v${VERSION}"
           shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
-          echo "CRATE_FILE=$ARTIFACT" >> $GITHUB_ENV
-          echo "CRATE_SUM=$ARTIFACT.sha256" >> $GITHUB_ENV
-          echo "Built: $ARTIFACT (tagged source; .crate unavailable while non-registry deps exist)"
+          mkdir -p artifacts
+          mv "$ARTIFACT" "$ARTIFACT.sha256" artifacts/
+          echo "Built: artifacts/${ARTIFACT} (tagged source; .crate unavailable while non-registry deps exist)"
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          tag_name: v${{ needs.version-consistency.outputs.version }}
-          name: Release v${{ needs.version-consistency.outputs.version }}
-          body: ${{ needs.version-consistency.outputs.body }}
-          draft: false
-          # 对齐 vecboost：版本串含 "-" 即 prerelease（覆盖 -rc/-beta/-alpha 及一切预发布段）；rc 不得抢占 Latest
-          prerelease: ${{ contains(needs.version-consistency.outputs.version, '-') }}
-          files: |
-            ${{ env.CRATE_FILE }}
-            ${{ env.CRATE_SUM }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # softprops 对同 tag 已有 release 为 upsert 语义（重跑改写而非新建），
-      # uniqueness 断言钉住恰好 1 个
-      - name: Verify release uniqueness (idempotency guard)
-        run: |
-          TAG="v${{ needs.version-consistency.outputs.version }}"
-          COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq "[.[] | select(.tag_name == \"${TAG}\")] | length")
-          echo "release objects for ${TAG}: ${COUNT}"
-          if [ "${COUNT}" != "1" ]; then
-            echo "::error::expected exactly 1 release for ${TAG}, found ${COUNT}; release state is not idempotent"
-            exit 1
-          fi
+      # gh release 脚本步（替代 action-gh-release，家族终态）：幂等创建（已存在
+      # 则只 --clobber 刷新产物）、prerelease 按 semver 是否含 '-' 判定、body 取
+      # CHANGELOG 对应节。TAG/VERSION 均不经 template 直插 run 块。
+      - name: Create GitHub Release (idempotent)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BODY: ${{ needs.version-consistency.outputs.body }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          fi
+          VERSION="${TAG#v}"
+          printf '%s\n' "$BODY" > release-body.md
+          FILES=$(find artifacts -type f | tr '\n' ' ')
+          if [[ -z "${FILES// /}" ]]; then
+            echo "::error::no release artifacts collected"
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists; skip creation, refresh artifacts only (idempotent)"
+            # shellcheck disable=SC2086
+            gh release upload "$TAG" $FILES --clobber
+            exit 0
+          fi
+          ARGS=(--notes-file release-body.md)
+          if [[ "$VERSION" == *-* ]]; then
+            ARGS+=(--prerelease)
+          fi
+          # shellcheck disable=SC2086
+          gh release create "$TAG" $FILES "${ARGS[@]}"
+
+      # uniqueness 断言（最终一致性窗口轮询 5×3s）：仅对 tag 推送路径生效，
+      # dispatch 跑在分支上无版本 tag 可断言（幂等性由 create 步 view 守卫承担）。
+      - name: Verify release uniqueness (idempotency guard)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          COUNT=0
+          for i in 1 2 3 4 5; do
+            COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq "[.[] | select(.tag_name == \"${TAG}\")] | length")
+            echo "try${i}: release objects for ${TAG}: ${COUNT}"
+            if [ "${COUNT}" = "1" ]; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::expected exactly 1 release for ${TAG}, found ${COUNT} after 5 retries; release state is not idempotent"
+          exit 1
 
   verify-release:
     name: Verify Release
@@ -357,7 +387,7 @@ jobs:
             echo "::error::Invalid version format: $VERSION"
             exit 1
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
       - name: Verify GitHub Release
