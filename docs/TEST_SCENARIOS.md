@@ -181,8 +181,8 @@ cargo clippy --features "full" -- -D warnings
 cargo doc --features "full" --no-deps          # CI doc job（RUSTDOCFLAGS=-D warnings）
 cargo deny check
 
-# 覆盖率门禁：行覆盖率 ≥ 80%
-cargo llvm-cov --features "full" --lib --fail-under-lines 80
+# 覆盖率门禁：行覆盖率 ≥ 90%
+cargo llvm-cov --features "full" --lib --fail-under-lines 90
 ```
 
 CI 的 test / integration-test / coverage job 均以 `postgres:16` service 容器为前提：先执行 `for f in migrations/postgres/*.sql; do psql ... -f "$f"; done` 应用迁移，再运行测试；`DATABASE_URL` / `TEST_DATABASE_URL` 指向 `postgres://postgres:postgres@localhost:5432/crawlrs_test`。test job 的工具链矩阵为 Rust 1.97.1 / stable（见 `ci.yml`）。
@@ -241,7 +241,7 @@ python3 tests/e2e/api_semantics_test.py --base-url http://localhost:8899 \
 | Python 测试套件 | 5 个（`tests/python/`） |
 | BDD 验收场景 | 61 个 / 10 个 feature 文件（`tests/acceptance/features/`；其中 2 个 `@external` 不参与本地执行） |
 | 特性编译矩阵 | CI 7 组合 + E2E 22 组合 |
-| 覆盖率门禁 | 行覆盖率 ≥ 80%（CI coverage job，Codecov 上报） |
+| 覆盖率门禁 | 行覆盖率 ≥ 90%（CI coverage job，Codecov 上报；实测 90.14%） |
 
 > `acceptance` 目标（`tests/acceptance/main.rs`，`harness = false`，`required-features = ["platform"]`）由 CI `acceptance-test` job 驱动（`cargo test --test acceptance --features platform`，排除 `@external`）。
 

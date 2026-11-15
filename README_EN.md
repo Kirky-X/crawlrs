@@ -423,8 +423,8 @@ cargo clippy --features "standard" -- -D warnings
 cargo clippy --features "full" -- -D warnings
 cargo doc --features "full" --no-deps          # CI doc job (RUSTDOCFLAGS=-D warnings)
 
-# Coverage gate: line coverage no lower than 80% (CI coverage job, uploaded to Codecov)
-cargo llvm-cov --features "full" --fail-under-lines 80
+# Coverage gate: line coverage no lower than 90% (CI coverage job, uploaded to Codecov)
+cargo llvm-cov --features "full" --lib --fail-under-lines 90
 
 # Supply-chain check (advisories / licenses / bans / sources)
 cargo deny check
@@ -455,7 +455,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 Test Scale
 
-As of 0.2.0: 6,548 inline test attributes in `src/` (476 source files, 229,992 lines), 994 tests in `tests/` (124 `.rs` files, incl. 71 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
+As of 0.2.0: 6,548 inline test attributes in `src/` (476 source files, 229,992 lines), 994 tests in `tests/` (124 `.rs` files, incl. 71 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 90%, enforced by CI (measured 90.14%). For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
 
 ---
 

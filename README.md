@@ -423,8 +423,8 @@ cargo clippy --features "standard" -- -D warnings
 cargo clippy --features "full" -- -D warnings
 cargo doc --features "full" --no-deps          # CI doc job（RUSTDOCFLAGS=-D warnings）
 
-# 覆盖率门禁：行覆盖率不低于 80%（CI coverage job，结果上传 Codecov）
-cargo llvm-cov --features "full" --lib --fail-under-lines 80
+# 覆盖率门禁：行覆盖率不低于 90%（CI coverage job，结果上传 Codecov）
+cargo llvm-cov --features "full" --lib --fail-under-lines 90
 
 # 供应链检查（advisories / licenses / bans / sources）
 cargo deny check
@@ -455,7 +455,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 测试规模
 
-截至 0.2.0：`src/` 内联测试 6,548 处（476 个源文件、229,992 行），`tests/` 目录 994 个测试（124 个 `.rs` 文件，含 `tests/unit/` 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
+截至 0.2.0：`src/` 内联测试 6,548 处（476 个源文件、229,992 行），`tests/` 目录 994 个测试（124 个 `.rs` 文件，含 `tests/unit/` 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 90%，由 CI 执行（实测 90.14%）。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
 
 ---
 
