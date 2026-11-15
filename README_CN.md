@@ -1,10 +1,10 @@
+[English](README.md) | 中文
+
 <div align="center">
 
 <img src="docs/image/crawlrs.png" alt="Crawlrs Logo" width="240">
 
 [![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97.1+](https://img.shields.io/badge/Rustc-1.97.1+-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![release](https://img.shields.io/github/v/release/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/releases) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![license](https://img.shields.io/github/license/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE)
-
-**中文** | [English](README_EN.md)
 
 **使用 Rust 构建的企业级网页数据采集平台**
 
@@ -35,13 +35,8 @@
 
 ## 📋 目录
 
-<details open>
-<summary>📑 目录</summary>
-
 - [✨ 功能特性](#-功能特性)
 - [🚀 快速开始](#-快速开始)
-- [🎨 特性标志](#-特性标志)
-- [🔌 作为库依赖](#-作为库依赖)
 - [📚 文档](#-文档)
 - [💻 示例](#-示例)
 - [🚢 部署](#-部署)
@@ -56,8 +51,6 @@
 - [🙏 致谢](#-致谢)
 - [📞 联系与支持](#-联系与支持)
 - [⭐ Star 历史](#-star-历史)
-
-</details>
 
 ---
 
@@ -86,7 +79,7 @@
 </tr>
 </table>
 
-除上述核心能力外，crawlrs 还提供站点映射、异步任务队列（Worker 模式）、多层缓存与代理支持等能力；引擎级增强模块（反爬对抗、智能增强等）的设计与代码位置详见 [🏗️ 架构文档](docs/ARCHITECTURE.md)。
+除上述核心能力外，crawlrs 还提供站点映射、异步任务队列（Worker 模式）、多层缓存与代理支持等能力；引擎级增强模块（反爬对抗、智能增强等）的设计与代码位置详见 [🏗️ 架构文档](docs/cn/ARCHITECTURE.md)。
 
 ---
 
@@ -103,21 +96,15 @@ cd crawlrs
 
 # 默认特性构建（platform 全套业务能力 + db-postgres）
 cargo build --release
-
-# 生产推荐：默认 + Playwright 引擎 + 指标 + 内容处理
-cargo build --release --features standard
-
-# 全功能组合（standard + FlareSolverr + 正文提取 + LLM 边界；不含 vision/MLLM）
-cargo build --release --features full
 ```
 
 </details>
 
-要求 Rust 1.97.1 及以上（`Cargo.toml` 的 `rust-version`，最新稳定版即可）；默认数据库后端为 PostgreSQL 16+（`db-postgres`）；Docker 20+ 用于集成测试（testcontainers）与容器化部署。
+要求 Rust 1.97.1 及以上（`Cargo.toml` 的 `rust-version`，最新稳定版即可）；默认数据库后端为 PostgreSQL 16+（`db-postgres`）；Docker 20+ 用于集成测试（testcontainers）与容器化部署。生产推荐 `--features standard`、全功能组合 `--features full`，完整构建预设与特性语义见 [🎨 特性标志 · 用户指南](docs/cn/USER_GUIDE.md#-特性标志)。
 
 ### 💡 最小示例
 
-以下示例改编自 [`config/default.toml`](config/default.toml) 配置模板与 [📖 用户指南](docs/USER_GUIDE.md) 的启动流程：
+以下示例改编自 [`config/default.toml`](config/default.toml) 配置模板与 [📖 用户指南](docs/cn/USER_GUIDE.md) 的启动流程：
 
 <details>
 <summary>📄 代码 · bash</summary>
@@ -155,7 +142,7 @@ curl http://localhost:8899/health
 
 </details>
 
-调用抓取接口（认证与全部端点详见 [📘 API 参考](docs/API_REFERENCE.md)）：
+调用抓取接口（认证与全部端点详见 [📘 API 参考](docs/cn/API_REFERENCE.md)）：
 
 <details>
 <summary>📄 代码 · bash</summary>
@@ -171,180 +158,24 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ### 🧭 核心概念
 
-- **引擎与路由**：`EngineClient` 是抓取操作唯一公开入口，内部 `EngineRouter` 持有 `Vec<Arc<dyn ScraperEngine>>`，按 `SmartHybrid`（默认）/ `RaceMode` / `SequentialFallback` 策略选择引擎。
-- **四种运行形态**：同一二进制按子命令分派（`src/main.rs`）——`crawlrs` 或 `crawlrs api`（默认）启动 API 服务，`crawlrs worker` 以 Worker 模式消费任务队列，`crawlrs bootstrap` 初始化默认团队与 admin API Key，`crawlrs migrate` 按编译启用的数据库特性选择 `migrations/postgres|sqlite|mysql/` 并有序应用。
-- **DDD 四层**：`presentation → application → domain → infrastructure`，DI 由 trait-kit 的各 capability Module（`SettingsModule`/`CacheModule`/`EngineModule` 等）装配。
-- **配置管理**：基于 confers，TOML 文件 + `CRAWLRS__` 前缀环境变量（`__` 分隔嵌套，如 `CRAWLRS__DATABASE__URL`）。
-- **SearXNG 元搜索（opt-in）**：默认 `search.searxng.enabled = false`；启用后从 searx.space 采集公共实例写入 `searxng_instances` 登记簿，周期探活维护进程内热池（目标 3 个可用实例），请求失败自动熔断换实例；同一搜索请求最多换 `max_failover_attempts` 个实例。
-
-<details>
-<summary>📄 代码 · toml</summary>
-
-  ```toml
-  [search.searxng]
-  enabled = true                                # 启用后拉起采集/探活两个周期 worker
-  pool_target = 3
-  seed_urls = ["https://searx.example.org"]     # 数据源不可达时的兜底实例
-  ```
-
-</details>
-
-  **隐私披露**：启用后用户查询明文会发送给第三方公共 SearXNG 实例（非本部署控制）。默认关闭即为缓解；实例治理视图见 `GET /v1/searxng/instances` 与 `GET /v1/searxng/pool`。
-- **特性门控**：业务能力（teams/auth/rate-limit/webhook）关闭时自动注入 Noop 实现，单租户/无认证部署零业务逻辑改动。
-
----
-
-## 🎨 特性标志
-
-### 📦 功能预设
-
-<details>
-<summary>📋 表格</summary>
-
-| 预设 | 构建命令 | 包含内容 | 适用场景 |
-|------|----------|----------|----------|
-| 默认 | `cargo build --release` | `platform`（teams + auth + rate-limit + webhook + metrics + content + sitemap）+ `db-postgres` | 开箱即用的完整平台 |
-| `standard` | `cargo build --release --features standard` | 默认 + `engine-playwright` + `sitemap` | 生产推荐（JS 渲染 + 指标 + 内容处理 + 站点地图） |
-| `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | 全功能组合（不含 vision/MLLM，需另加 `engine-mllm`） |
-| `no-default` | `cargo build --release --no-default-features` | 纯核心抓取栈 | 单租户/无认证部署、嵌入集成 |
-| `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | agent/嵌入式最小库面 |
-
-</details>
-
-### 📋 功能矩阵
-
-下表为 `Cargo.toml` `[features]` 的主要特性子集（完整清单见 `Cargo.toml`），`default = ["platform", "db-postgres"]`；核心抓取栈（oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt）始终编译。
-
-<details>
-<summary>📋 表格</summary>
-
-| 特性 | 说明 | 默认 |
-|------|------|------|
-| `teams` | 多租户隔离（隐含 `auth`）；关闭时归属 `DEFAULT_TEAM_ID` 单租户 | ✅ |
-| `auth` | garrison v0.9 认证（RBAC + JWT + 防暴力破解）；关闭时注入固定身份 | ✅ |
-| `rate-limit` | limiteron 限流熔断；关闭时注入 `NoopRateLimitingService` | ✅ |
-| `webhook` | Webhook 投递；关闭时移除 `/v1/webhooks` 路由并注入 Noop | ✅ |
-| `metrics` | Prometheus 指标导出（含 sysinfo 内存感知） | ✅（platform） |
-| `content` | 反爬检测（aho-corasick）+ HTML→Markdown 转换（alchemize html 引擎为默认；htmd 直通诊断臂） | ✅（platform） |
-| `db-postgres` / `db-sqlite` / `db-mysql` | 数据库驱动三选一（dbnexus 编译期互斥强制） | ✅ postgres |
-| `engine-playwright` | chromiumoxide 浏览器自动化引擎 | ❌ |
-| `engine-flaresolverr` | FlareSolverr 反爬引擎（Full/Cdp/Tls 三模式） | ❌ |
-| `engine-tls-fingerprint` | WreqEngine TLS 指纹伪装（BoringSSL JA3/JA4） | ❌ |
-| `engine-mllm` | MLLM 视觉 LLM 自主导航引擎（隐含 `engine-playwright` + `llm`；视觉面经 fluxweir chat） | ❌ |
-| `engine-moli` | MoliEngine（CDP 控制外部 `moli serve` 的纯 Rust 无头内核）+ 内存水位调度器（sysinfo 三档：Abundant/Tight/Critical 驱动引擎优先级与 Playwright 池门控） | ❌ |
-| `trafilatura` / `dom-smoothie` / `extractors` | 正文提取主路径 / 性能回退 / 全启用 | ❌ |
-| `llm` | LLM 提取边界（trait + 编排；供应商访问由宿主 carrier 注入） | ❌ |
-| `sitemap` | 站点地图生成（`/v1/map` 端点） | ✅（platform/standard） |
-| `rag-local` | 本地 RAG 嵌入与重排（vecboost） | ❌ |
-| `rag` | RAG 组合包（`rag-local` + `gateway`） | ❌ |
-| `openapi` | OpenAPI 3.1 规范生成（`GET /openapi.json`） | ❌ |
-| `test-mocks` | 测试专用 mock 门控（集成测试需显式启用） | ❌ |
-
-</details>
-
-> 特性组合的编译矩阵（22 组合）与验证方式见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)；特性门控的实现模式见 [🏗️ 架构文档 · Feature Gate Architecture](docs/ARCHITECTURE.md)。
-
----
-
-## 🔌 作为库依赖
-
-crawlrs 可作为库被下游项目（如网关类应用）以 **path 依赖**嵌入，获得抓取引擎 / 正文提取 / RAG 能力。受支持的嵌入方式如下。
-
-### 嵌入 feature 组合
-
-以 path 依赖引入 crawlrs 时，按下表声明 feature 组合（引擎默认集随 `default-features` 自动带入 `platform` + `db-postgres`）：
-
-<details>
-<summary>📄 代码 · toml</summary>
-
-```toml
-[dependencies]
-crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"] }
-```
-
-</details>
-
-<details>
-<summary>📋 表格</summary>
-
-| feature | 说明 | 是否 default |
-|---------|------|:-----------:|
-| `db-postgres` | PostgreSQL 后端（嵌入主存储路径） | ✅ default 已含 |
-| `extractors` | 正文提取（`trafilatura` + `dom-smoothie`） | 显式声明 |
-| `llm` | LLM 结构化提取边界（trait + 编排，不含供应商访问；carrier 由宿主注入） | 显式声明 |
-
-</details>
-
-> RAG（`vecboost`，走 `rag-local`+`gateway`）与 TLS 指纹引擎（`wreq`，走 `engine-tls-fingerprint`）**不在**受支持的默认嵌入组合内——它们会引入额外的重构建链（tokenizers 或 BoringSSL），需按各自 feature 单独验证。
-
-### LLM 承载注入模型
-
-crawlrs 不再内置任何 LLM 供应商访问（原 `LLMService` / `provider_adapter` / `llm_provider_strategy` 已删除），`LLMServiceTrait` 是唯一 LLM 边界。宿主经以下任一 pub 装配路径注入自有实现（如 fluxgate 的 `FluxgateLLMCarrier`）：
-
-1. `Services.llm_service` pub 字段直接赋值；
-2. 以自有工厂替换 `init_llm_service`；
-3. 经 `CrawlRsState::from_kit` 的装配面注入。
-
-未注入时默认装配 `ExplicitErrorCarrier`：任何 LLM 调用返回 i18n 双语结构化错误（`domain-error-llm-carrier-not-injected`），不 panic、不静默降级。`prompt_builder` / `chunker`（F8）/ `provenance`（F9）编排模块保留，注入 carrier 可复用。
-
-### 依赖版本统一基线
-
-嵌入方与 crawlrs 共享同一组 nexus 家族依赖，全部为稳定版 minor 精度 requirement（`"0.6"` 形式，patch 由解析面取最新）。crawlrs 的 manifest 最低版本已抬升至下表基线，使「单仓 CI 基线 = 嵌入编译目标」，避免「单仓绿、嵌入红」在上游升级时复发：
-
-<details>
-<summary>📋 表格</summary>
-
-| 依赖 | 统一基线 | 嵌入角色 |
-|------|---------|---------|
-| `dbnexus` | `0.6.1` | 数据库抽象（sea-orm 之上） |
-| `inklog` | `0.3` | 日志（`log::` facade 后端） |
-| `limiteron` | `0.3` | 限流 / 熔断 / 退避 |
-| `confers` | `0.6` | 配置加载 |
-| `trait-kit` | `0.5` | 异步 DI（AsyncKit） |
-| `oxcache` | `0.5` | 多级缓存 |
-| `garrison` | `0.9` | 认证引擎（经 default 的 `auth` 引入） |
-
-</details>
-
-> 嵌入方不得依赖 `[patch.crates-io]` 强制对齐版本——patch 属本地开发态机制，发布面禁用（path 版与 registry 版并存会触发 trait 身份分裂）。抬版本只保证「同一版本下编译与测试等价通过」，不改变运行行为。
-
-### 嵌入探针门禁
-
-`scripts/embed-probe.sh` 在临时目录以 path 依赖复现嵌入编译路径（`cargo new` 探针 crate → `cargo add --path <仓库根> --features "db-postgres,extractors,llm"` → `cargo check`），嵌入破坏在仓内即可发现；CI 的 `embed-probe` job 会串行执行该脚本并阻塞合并。
-
-<details>
-<summary>📄 代码 · bash</summary>
-
-```bash
-scripts/embed-probe.sh              # 自动定位仓库根（由脚本自身位置推导）
-scripts/embed-probe.sh <repo-root>  # 显式指定仓库根（跨机器 / CI）
-```
-
-</details>
-
-退出码 `0` 表示嵌入编译面完好；非零时 stderr 打印失败步骤名（`root` / `new` / `add` / `check`）。探针构建产物落在 `mktemp` 临时目录，不污染仓库工作区，可重复执行。
+引擎与路由、四种运行形态（api / worker / bootstrap / migrate）、DDD 四层、配置管理、SearXNG 元搜索（opt-in）与特性门控等核心概念详见 [📖 用户指南](docs/cn/USER_GUIDE.md) 与 [🏗️ 架构文档](docs/cn/ARCHITECTURE.md)。
 
 ---
 
 ## 📚 文档
 
-<details>
-<summary>📋 表格</summary>
-
 | 文档 | 说明 |
 |------|------|
-| [📖 用户指南](docs/USER_GUIDE.md) | 认证、抓取、爬取、搜索、提取、Webhook、团队等全部功能的完整教程 |
-| [📘 API 参考](docs/API_REFERENCE.md) | 全部 REST 端点、请求/响应格式、错误码与 SDK |
-| [🏗️ 架构文档](docs/ARCHITECTURE.md) | DDD 分层、引擎路由、增强模块、安全模型与部署拓扑 |
-| [⚡ 性能指南](docs/PERFORMANCE.md) | 基准套件、性能观测与调优建议 |
-| [🔒 安全文档](docs/SECURITY.md) | 安全设计、供应链门禁、漏洞报告流程与生产加固清单 |
-| [❓ FAQ](docs/FAQ.md) | 常见问题解答 |
-| [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md) | 测试套件穷举、特性组合矩阵与运行手册 |
-| [🤝 贡献指南](docs/CONTRIBUTING.md) | 环境搭建、开发工作流与提交规范 |
-| [📋 更新日志](docs/CHANGELOG.md) | 每个版本的变更记录 |
+| [📖 用户指南](docs/cn/USER_GUIDE.md) | 认证、抓取、爬取、搜索、提取、Webhook、团队等全部功能的完整教程 |
+| [📘 API 参考](docs/cn/API_REFERENCE.md) | 全部 REST 端点、请求/响应格式、错误码与 SDK |
+| [🏗️ 架构文档](docs/cn/ARCHITECTURE.md) | DDD 分层、引擎路由、增强模块、安全模型与部署拓扑 |
+| [⚡ 性能指南](docs/cn/PERFORMANCE.md) | 基准套件、性能观测与调优建议 |
+| [🔒 安全文档](docs/cn/SECURITY.md) | 安全设计、供应链门禁、漏洞报告流程与生产加固清单 |
+| [❓ FAQ](docs/cn/FAQ.md) | 常见问题解答 |
+| [🧪 测试场景矩阵](docs/cn/TEST_SCENARIOS.md) | 测试套件穷举、特性组合矩阵与运行手册 |
+| [🤝 贡献指南](docs/cn/CONTRIBUTING.md) | 环境搭建、开发工作流与提交规范 |
+| [📋 更新日志](docs/cn/CHANGELOG.md) | 每个版本的变更记录 |
 | [📦 Releases](https://github.com/Kirky-X/crawlrs/releases) | 版本发布页面 |
-
-</details>
 
 ---
 
@@ -358,8 +189,6 @@ scripts/embed-probe.sh <repo-root>  # 显式指定仓库根（跨机器 / CI）
 ```bash
 cd examples
 cargo run --bin basic_scrape          # 基础抓取
-cargo run --bin api_key_auth          # garrison API Key 认证
-cargo run --bin async_batch           # 异步批量抓取
 cargo build                           # 编译全部示例
 ```
 
@@ -373,26 +202,19 @@ cargo build                           # 编译全部示例
 <summary>📄 代码 · bash</summary>
 
 ```bash
-# 构建镜像（主 Dockerfile 位于 docker/ 目录）
-docker build -t crawlrs:latest -f docker/Dockerfile .
-
 # Docker Compose 一键启动（crawlrs + PostgreSQL 16 + FlareSolverr + Chrome + Prometheus）
 docker compose -f docker/docker-compose.yml up -d
 ```
 
 </details>
 
-服务默认监听 `8899`（`CRAWLRS__SERVER__PORT` 可调）；单实例与 Kubernetes 多实例拓扑、Worker 池与外部依赖关系详见 [🏗️ 架构文档 · 部署架构](docs/ARCHITECTURE.md)，生产环境安全加固清单见 [🔒 安全文档 · 生产部署加固](docs/SECURITY.md)。
+服务默认监听 `8899`（`CRAWLRS__SERVER__PORT` 可调）；镜像构建命令与容器化部署详见 [🏗️ 架构文档 · 容器化部署命令](docs/cn/ARCHITECTURE.md#-容器化部署命令)，单实例与 Kubernetes 多实例拓扑、Worker 池与外部依赖关系详见 [🏗️ 架构文档 · 部署架构](docs/cn/ARCHITECTURE.md)，生产环境安全加固清单见 [🔒 安全文档 · 生产部署加固](docs/cn/SECURITY.md)。
 
 ---
 
 ## 🏗️ 架构
 
-crawlrs 遵循领域驱动设计（DDD），采用 `presentation → application → domain → infrastructure` 四层架构：Axum 处理 HTTP 与中间件，Use Case 编排业务逻辑，领域层以 `ScraperEngine` 等 trait 定义能力契约，基础设施层经 dbnexus（Sea-ORM）对接 PostgreSQL、经 oxcache 提供多层缓存。抓取数据通路为：请求经 SSRF 前置校验 → `EngineRouter` 按策略选路（反爬检测可动态改派浏览器引擎）→ Worker 池执行 → 结果落库并触发 Webhook。
-
-自研库矩阵的消费面（同作者共享 rc 链）：garrison 承载认证与健康探针（`auth` 门控）、limiteron 承载限流与引擎熔断状态机（`ManualCircuitBreaker` 薄封装 + `AtomicU8` 同步镜像）、oxcache 承载缓存本体（memory + `serialization` + `metrics`）与 URL 去重布隆过滤器（`bloom` feature，替代自研 MmapBloom）、sdforge 承载 DTO 校验与 HTTP 错误状态码映射（`unified::http_status_for`）。自研库缺口登记见 [🏗️ 架构文档 · 自研库反向需求](docs/ARCHITECTURE.md)。
-
-分层职责、引擎路由细节、全部增强模块、队列/缓存/限流设计与部署拓扑详见 [🏗️ 架构文档](docs/ARCHITECTURE.md)。
+crawlrs 遵循领域驱动设计（DDD），采用 `presentation → application → domain → infrastructure` 四层架构。分层职责、引擎路由细节、全部增强模块、队列/缓存/限流设计与部署拓扑详见 [🏗️ 架构文档](docs/cn/ARCHITECTURE.md)；自研库矩阵的消费面与缺口登记见 [🏗️ 架构文档 · 自研库反向需求](docs/cn/ARCHITECTURE.md)，作为库依赖的嵌入方式见 [🔌 作为库依赖](docs/cn/ARCHITECTURE.md#-作为库依赖)。
 
 ---
 
@@ -400,68 +222,13 @@ crawlrs 遵循领域驱动设计（DDD），采用 `presentation → application
 
 ### 🎯 测试策略
 
-测试体系覆盖七层：`src/` 内联单元测试、`tests/unit/` 按模块组织的单元测试、`tests/main.rs` 表驱动机（mock 注入）、SDK API 测试（`sdk_api_test`）、真实 PostgreSQL 集成测试（`integration_tests`，含 garrison 认证端到端）、Python API/性能测试与 E2E 质量保障套件（`tests/e2e/e2e-suite.sh`：22 组特性编译矩阵 → 静态检查 → 单元/集成测试 → 基准 → 报告）。各层场景穷举与文件映射见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)。
-
-### ▶️ 运行命令
-
-**与 CI 一致**（见 `.github/workflows/ci.yml`）：
-
-<details>
-<summary>📄 代码 · bash</summary>
-
-```bash
-# 单元测试（CI test job：standard / full 各跑一轮；需 PostgreSQL 16，本地由 testcontainers 自动拉起）
-cargo test --features "standard" --lib
-cargo test --features "full" --lib
-
-# 集成 + 全部测试目标（CI integration-test job）
-cargo test --features "full,test-mocks" --tests --no-fail-fast
-
-# Lint、格式与文档门禁（fmt / clippy / doc job）
-cargo fmt -p crawlrs -p crawlrs-examples -- --check
-cargo clippy --features "standard" -- -D warnings
-cargo clippy --features "full" -- -D warnings
-cargo doc --features "full" --no-deps          # CI doc job（RUSTDOCFLAGS=-D warnings）
-
-# 覆盖率门禁：行覆盖率不低于 90%（CI coverage job，结果上传 Codecov）
-cargo llvm-cov --features "full" --lib --fail-under-lines 90
-
-# 供应链检查（advisories / licenses / bans / sources）
-cargo deny check
-```
-
-</details>
-
-**本地附加**（CI 不执行）：
-
-<details>
-<summary>📄 代码 · bash</summary>
-
-```bash
-# 基准测试（Criterion，9 组）
-cargo bench
-
-# E2E 质量保障套件（特性矩阵 + 静态 + 测试 + 集成 + 基准 + 报告）
-./tests/e2e/e2e-suite.sh
-
-# Python API / 性能测试（local 模式跑 3 个套件：api_endpoints / performance / error_handling）
-./scripts/run-tests.sh local
-
-# 提交前完整检查（fmt → clippy → check → build → 私钥扫描）
-scripts/pre-commit-check.sh all
-```
-
-</details>
-
-### 📊 测试规模
-
-截至 0.2.0：`src/` 内联测试 6,548 处（476 个源文件、229,992 行），`tests/` 目录 994 个测试（124 个 `.rs` 文件，含 `tests/unit/` 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 90%，由 CI 执行（实测 90.14%）。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
+测试体系覆盖七层：`src/` 内联单元测试、`tests/unit/` 按模块组织的单元测试、`tests/main.rs` 表驱动机（mock 注入）、SDK API 测试（`sdk_api_test`）、真实 PostgreSQL 集成测试（`integration_tests`，含 garrison 认证端到端）、Python API/性能测试与 E2E 质量保障套件（`tests/e2e/e2e-suite.sh`：22 组特性编译矩阵 → 静态检查 → 单元/集成测试 → 基准 → 报告）。各层场景穷举、与 CI 一致的运行命令及逐项统计见 [🧪 测试场景矩阵](docs/cn/TEST_SCENARIOS.md)；覆盖率门禁为行覆盖率不低于 90%，由 CI 执行（实测 90.14%）。
 
 ---
 
 ## 📊 性能
 
-性能工程内建于架构：AIMD 自适应并发、内存感知调度、TabPool 复用、请求合并（singleflight）、WaitFor 条件等待与 Hedge 副本控制器；可复现的基准为 `benches/benchmark.rs` 的 9 组 Criterion 基准（任务创建/状态迁移、JSON 序列化、URL 解析与校验、SSRF 检测、RegexCache、引擎路由等），E2E 套件 Stage 5 以 `e2e-baseline` 做回归对比。旧版宣传的 Node.js 对比数字未附测量口径，待复测后更新。基准说明与调优建议见 [⚡ 性能指南](docs/PERFORMANCE.md)。
+性能工程内建于架构：AIMD 自适应并发、内存感知调度、TabPool 复用、请求合并（singleflight）、WaitFor 条件等待与 Hedge 副本控制器；可复现的基准为 `benches/benchmark.rs` 的 9 组 Criterion 基准。基准说明与调优建议见 [⚡ 性能指南](docs/cn/PERFORMANCE.md)。
 
 ---
 
@@ -469,98 +236,33 @@ scripts/pre-commit-check.sh all
 
 ### 🛡️ 安全设计
 
-安全设计覆盖请求全链路：SSRF 在 handler 前置与引擎路由双重校验；认证由 garrison 接管（HS256 JWT、RBAC、IP 级防暴力破解、审计落库）；Webhook 经 Standard Webhooks 签名验证（subtle 恒时比较）；JWT secret 以 zeroize 防内存残留；安全响应头与可信代理中间件默认加固。逐项机制详见 [🔒 安全文档](docs/SECURITY.md) 与 [🏗️ 架构文档 · 安全模型](docs/ARCHITECTURE.md)。
+安全设计覆盖请求全链路：SSRF 在 handler 前置与引擎路由双重校验；认证由 garrison 接管（HS256 JWT、RBAC、IP 级防暴力破解、审计落库）；Webhook 经 Standard Webhooks 签名验证（subtle 恒时比较）；JWT secret 以 zeroize 防内存残留；安全响应头与可信代理中间件默认加固。逐项机制详见 [🔒 安全文档](docs/cn/SECURITY.md) 与 [🏗️ 架构文档 · 安全模型](docs/cn/ARCHITECTURE.md)。
 
 ### ⛓️ 供应链与门禁
 
-CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）、CodeQL 静态分析、clippy `-D warnings` 与 RSA 代码路径前提校验；本地 pre-commit 脚本含私钥扫描。完整门禁清单见 [🔒 安全文档 · 供应链与门禁](docs/SECURITY.md)。
+CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）、CodeQL 静态分析、clippy `-D warnings` 与 RSA 代码路径前提校验；本地 pre-commit 脚本含私钥扫描。完整门禁清单见 [🔒 安全文档 · 供应链与门禁](docs/cn/SECURITY.md)。
 
 ### 🚨 报告安全漏洞
 
-请勿通过公开 issue 报告安全漏洞。请优先使用 GitHub [Security Advisories](https://github.com/Kirky-X/crawlrs/security/policy) 私密披露通道提交报告（不可用时再发送邮件至 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)，受理人 Kirky.X）。完整漏洞处理流程见 [SECURITY.md](docs/SECURITY.md)。
+请勿通过公开 issue 报告安全漏洞。请优先使用 GitHub [Security Advisories](https://github.com/Kirky-X/crawlrs/security/policy) 私密披露通道提交报告（不可用时再发送邮件至 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)，受理人 Kirky.X）。完整漏洞处理流程见 [SECURITY.md](docs/cn/SECURITY.md)。
 
 ---
 
 ## 🗺️ 开发路线图
 
-<details>
-<summary>📋 表格</summary>
-
-<table style="width:100%; border-collapse: collapse">
-<tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
-<tr><td align="center">✅</td><td>核心平台（0.1.0）</td><td>搜索/抓取/爬取/提取/映射五大能力 API、DDD 四层、多租户与限流、Webhook 通知</td></tr>
-<tr><td align="center">✅</td><td>稳定版发布（0.2.0）</td><td>自研依赖归一稳定版、alchemize 切 crates.io registry、i18n 宿主注册重写、crates.io + GitHub Release 双通道发布</td></tr>
-<tr><td align="center">✅</td><td>流水线全量补跑（0.2.0-rc.4）</td><td>CI 五组合/engine-moli/BDD 复绿、CodeQL 归零、doctest 与示例修复、覆盖率 90.13%、E2E 六阶段 PASS（report 按设计 SKIPPED）</td></tr>
-<tr><td align="center">✅</td><td>发布前收口（0.2.0-rc.3）</td><td>crawl 终态对账与崩溃恢复、团队域名黑名单全链路执行、SDK 建爬与搜索派生上限、Host 头丢弃等安全加固、web-axum 三驱动矩阵</td></tr>
-<tr><td align="center">✅</td><td>平台加固与智能引擎（0.2.0-rc.2）</td><td>garrison 认证、反爬检测、TLS 指纹与 MLLM 引擎、RAG/KG/DRL 智能增强、Prometheus 可观测性、E2E 质量套件</td></tr>
-<tr><td align="center">✅</td><td>数据库多驱动</td><td><code>db-sqlite</code> / <code>db-mysql</code> 覆盖到运行时 schema 供给：<code>migrations/{postgres,sqlite,mysql}/</code> 三方言建表目录按编译 feature 选择，<code>[database] auto_migrate</code>（缺省 false）接线，三方一致性由测试看护</td></tr>
-<tr><td align="center">✅</td><td>架构演进</td><td>事件驱动内部总线（已交付 <code>tokio::sync::broadcast</code>）、WebSocket 实时任务状态（<code>GET /v1/tasks/{id}/ws</code>）、Redis 共享缓存层（<code>[cache] backend=redis</code>，多实例部署）</td></tr>
-<tr><td align="center">🚧</td><td>forge_api 注册面迁移</td><td><code>forge-full</code>（sdforge inventory 单一注册面）为在途迁移停机坪，与手写 protected/v2 路由互斥；整体切换需三族中间件统一排序裁决</td></tr>
-<tr><td align="center">🚧</td><td>性能看护</td><td>Criterion 基线（e2e-baseline / ci-baseline）回归对比门禁已落地（<code>.github/workflows/bench.yml</code>，手动派发）；权威性能口径复测待进行</td></tr>
-</table>
-
-</details>
+版本方向与在途工作见 [📋 更新日志 · 开发路线图](docs/cn/CHANGELOG.md#️-开发路线图)。
 
 ---
 
 ## 🤝 参与贡献
 
-详细的贡献流程与代码规范请参阅 [🤝 贡献指南](docs/CONTRIBUTING.md)。
-
-### 🛠️ 开发环境
-
-工具链要求见 `Cargo.toml` 的 `rust-version`（1.97.1），构建 sdforge 需要 protoc；提交前运行 `scripts/pre-commit-check.sh all`（fmt → clippy → check → build → 私钥扫描），提交信息遵循 Conventional Commits（`type(scope): subject`）。开发工作流（TDD）、分支与测试要求见 [🤝 贡献指南 · 开发工作流](docs/CONTRIBUTING.md)。
-
-### 💖 贡献方式
-
-<table style="width:100%; border-collapse: collapse">
-<tr>
-<td width="33%" align="center" style="padding: 16px">
-
-### 🐛 报告 Bug
-
-发现问题？<br>
-<a href="https://github.com/Kirky-X/crawlrs/issues/new">创建 Issue</a>
-
-</td>
-<td width="33%" align="center" style="padding: 16px">
-
-### 💡 功能建议
-
-有好想法？<br>
-<a href="https://github.com/Kirky-X/crawlrs/issues/new">发起讨论</a>
-
-</td>
-<td width="33%" align="center" style="padding: 16px">
-
-### 🔧 提交 PR
-
-想贡献代码？<br>
-<a href="https://github.com/Kirky-X/crawlrs/pulls">Fork 并提交 PR</a>
-
-</td>
-</tr>
-</table>
+详细的贡献流程与代码规范请参阅 [🤝 贡献指南](docs/cn/CONTRIBUTING.md)。
 
 ---
 
 ## 📋 更新日志
 
-完整版本历史见 [📋 更新日志](docs/CHANGELOG.md)（遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 格式，语义化版本）。
-
-<details>
-<summary>📋 表格</summary>
-
-| 版本 | 日期 | 要点 |
-|------|------|------|
-| 0.2.0 | 2026-11-15 | **首个 crates.io 稳定版**：自研依赖全部归一稳定版（minor 精度）、alchemize 切 registry（无 path/git 依赖，publish 通道打通）、i18n 体系重写（sdforge 宿主注册，fluent-bundle 退役）、markdown 默认转换器 alchemize、release.yml 迁移 OIDC + token 兜底 |
-| 0.2.0-rc.4 | 2026-11-10 | 发布流水线全量补跑：CI 三族修复复绿、CodeQL 18 条裁决归零、doctest/示例/文档修复、覆盖率 90.13%、E2E 六阶段 PASS（report 按设计 SKIPPED）、依赖补丁升级 |
-| 0.2.0-rc.3 | 2026-11-10 | 终态对账/崩溃恢复重算、团队域名黑名单全链路（归一化+上限+fail-closed+sitemap/proxy 同口径）、SDK 建爬与搜索派生 200 上限/深度 ≤5、Host 头丢弃、web-axum 三驱动矩阵；三维审查三轮 PASS |
-| 0.2.0-rc.2 | 2026-09-21 | TLS 指纹引擎（WreqEngine）、MLLM 视觉导航引擎、RAG 增强提取、知识图谱覆盖感知、DRL 自适应策略、5 个新 Prometheus 指标；功能吸收 F1–F12（AutoThrottle、Session 身份、失败快照、sitemap 请求源、XHR 捕获、提取质量门、LLM 分块与溯源、AIMD 内存联动、软 404、AX 树快照） |
-| 0.2.0-legacy | 2026-07-29 | 历史段（tag 已于 2026-11-15 重制）：garrison RBAC 认证集成、bootstrap admin key、`DELETE /v1/crawl/{id}`、暴力破解防护加固 |
-| 0.1.0 | 2026-07-22 | 首个公开版本：五大能力 API、DDD 四层架构、多租户与限流、统一搜索 |
-
-</details>
+完整版本历史见 [📋 更新日志](docs/cn/CHANGELOG.md)（遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 格式，语义化版本）。
 
 ---
 
@@ -572,56 +274,13 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 ## 🙏 致谢
 
-### 🌟 核心依赖
-
-crawlrs 站在以下优秀开源项目的肩膀上：
-
-<details>
-<summary>📋 表格</summary>
-
-| 依赖 | 用途 |
-|------|------|
-| [tokio](https://crates.io/crates/tokio) | 异步运行时 |
-| [axum](https://crates.io/crates/axum) | Web 框架 |
-| [reqwest](https://crates.io/crates/reqwest) | HTTP 客户端 |
-| [chromiumoxide](https://crates.io/crates/chromiumoxide) | Chrome CDP 浏览器自动化 |
-| [wreq](https://crates.io/crates/wreq) | BoringSSL TLS 指纹伪装 |
-| [scraper](https://crates.io/crates/scraper) | HTML 解析 |
-| [fluxweir](https://crates.io/crates/fluxweir) | LLM/嵌入/重排统一出口（`gateway`；`engine-mllm` 视觉面经 chat 承载） |
-| [htmd](https://crates.io/crates/htmd) | HTML→Markdown 转换（诊断臂直通） |
-| [alchemize](https://github.com/Kirky-X/alchemize) | HTML→Markdown 默认转换器（自研 html 引擎：htmd 基础链 + 自研深链；path 依赖） |
-| [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | 正文提取 |
-| [criterion](https://crates.io/crates/criterion) | 基准测试 |
-| [testcontainers](https://crates.io/crates/testcontainers) | 集成测试基础设施 |
-
-</details>
-
-同作者自研基座组件：dbnexus（数据库抽象）、confers（配置管理）、garrison（认证框架）、limiteron（限流熔断）、oxcache（缓存）、inklog（结构化日志）、sdforge（SDK 生成）、trait-kit（依赖注入）。
-
-### 💝 特别感谢
-
-感谢 Rust 社区与所有[贡献者](https://github.com/Kirky-X/crawlrs/graphs/contributors)。
+crawlrs 站在众多优秀开源项目的肩膀上（核心依赖与用途见 `Cargo.toml` 与 [🏗️ 架构文档](docs/cn/ARCHITECTURE.md)）；同作者自研基座组件：dbnexus（数据库抽象）、confers（配置管理）、garrison（认证框架）、limiteron（限流熔断）、oxcache（缓存）、inklog（结构化日志）、sdforge（SDK 生成）、trait-kit（依赖注入）。感谢 Rust 社区与所有[贡献者](https://github.com/Kirky-X/crawlrs/graphs/contributors)。
 
 ---
 
 ## 📞 联系与支持
 
-<table style="width:100%; max-width: 600px">
-<tr>
-<td align="center" width="33%">
-<a href="https://github.com/Kirky-X/crawlrs/issues"><b style="color:#991B1B">Issues</b></a><br>
-<span style="color:#64748B">报告问题和 Bug</span>
-</td>
-<td align="center" width="33%">
-<a href="mailto:Kirky-X@outlook.com"><b style="color:#1E40AF">邮箱</b></a><br>
-<span style="color:#64748B">Kirky-X@outlook.com</span>
-</td>
-<td align="center" width="33%">
-<a href="https://github.com/Kirky-X/crawlrs"><b style="color:#1E293B">GitHub</b></a><br>
-<span style="color:#64748B">查看源代码</span>
-</td>
-</tr>
-</table>
+Issues（[报告问题和 Bug](https://github.com/Kirky-X/crawlrs/issues)）· 邮箱（[Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)）· GitHub（[查看源代码](https://github.com/Kirky-X/crawlrs)）
 
 ---
 
