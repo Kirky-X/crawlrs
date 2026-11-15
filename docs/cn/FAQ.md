@@ -24,7 +24,7 @@ crawlrs 是一个使用 Rust 构建的自托管企业级网页数据采集平台
 
 ### ❓ 可以用于生产环境吗？
 
-可以。项目具备企业级配套：garrison 认证（RBAC + JWT + 防暴力破解）、limiteron 限流熔断、审计日志、Prometheus 指标、覆盖率门禁 ≥ 80% 的 CI、22 组合特性矩阵与 E2E 质量套件。上线前请过一遍 [🔒 安全文档 · 生产部署加固清单](SECURITY.md)。
+可以。项目具备企业级配套：garrison 认证（RBAC + JWT + 防暴力破解）、limiteron 限流熔断、审计日志、Prometheus 指标、覆盖率门禁 ≥ 90% 的 CI、22 组合特性矩阵与 E2E 质量套件。上线前请过一遍 [🔒 安全文档 · 生产部署加固清单](SECURITY.md)。
 
 ### ❓ 项目采用什么许可证？
 
@@ -138,7 +138,7 @@ Rust 1.97.1+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16
 | Criterion 基准组 | 9 组（`benches/benchmark.rs`） |
 | Python 测试套件 | 5 个（`tests/python/`） |
 | BDD 验收 | `tests/acceptance/` 61 个场景 / 10 个 feature 文件（其中 2 个 `@external` 不参与本地执行） |
-| CI 行覆盖率门禁 | 80% |
+| CI 行覆盖率门禁 | 90% |
 
 详见 [🧪 测试场景矩阵 · 统计汇总](TEST_SCENARIOS.md#-统计汇总)。
 

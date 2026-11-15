@@ -101,7 +101,7 @@ cargo test --features "full,test-mocks" --tests --no-fail-fast
 
 # 5. 供应链与覆盖率
 cargo deny check
-cargo llvm-cov --features "full" --fail-under-lines 80
+cargo llvm-cov --features "full" --fail-under-lines 90
 ```
 
 一键脚本：`scripts/pre-commit-check.sh all`；全量质量套件：`./tests/e2e/e2e-suite.sh`（特性矩阵 + 静态 + 测试 + 集成 + 基准 + 报告）。场景与命令的完整清单见 [🧪 测试场景矩阵](TEST_SCENARIOS.md)。
@@ -122,7 +122,7 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 | 8 | `deny` | `cargo deny check` |
 | 9 | `integration-test` | `cargo test --features "full,test-mocks" --tests`（PostgreSQL 16 service 容器） |
 | 10 | `acceptance-test` | BDD 验收：`cargo test --test acceptance --features platform`（排除 `@external` 标签） |
-| 11 | `coverage` | `cargo llvm-cov`，行覆盖 ≥ 80% |
+| 11 | `coverage` | `cargo llvm-cov`，行覆盖 ≥ 90% |
 
 ---
 
