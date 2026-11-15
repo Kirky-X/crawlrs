@@ -230,7 +230,7 @@ python3 tests/e2e/api_semantics_test.py --base-url http://localhost:8899 \
 
 ## 📊 统计汇总
 
-截至 0.2.0-rc.4（以 `grep -rE '^\s*#\[(tokio::)?test\]'` 口径统计）：
+截至 0.2.0（以 `grep -rE '^\s*#\[(tokio::)?test\]'` 口径统计）：
 
 | 指标 | 数量 |
 |---|---|

@@ -6,7 +6,7 @@
 ![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs?label=version&style=for-the-badge)
 ![License](https://img.shields.io/github/license/Kirky-X/crawlrs?label=license&style=for-the-badge)
 
-**Version:** 0.2.0-rc.4 | **Last Updated:** 2026-11-10 | **Author:** Kirky.X
+**Version:** 0.2.0 | **Last Updated:** 2026-11-15 | **Author:** Kirky.X
 
 </div>
 
@@ -55,12 +55,12 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 | ORM | Sea-ORM (via dbnexus) | 2.0.4 |
 | HTTP Client | Reqwest | 0.13 |
 | Database | PostgreSQL | 16+ |
-| Cache | oxcache (in-memory) | 0.5.0-rc.12 |
-| Rate Limiting | limiteron | 0.3.0-rc.10 |
-| DI Framework | trait-kit | 0.5.0-rc.12 |
-| Config | confers | 0.6.0-rc.13 |
-| SDK Generator | sdforge | 0.5.0-rc.10 |
-| Logging | inklog | 0.3.0-rc.12 |
+| Cache | oxcache (in-memory) | 0.5 |
+| Rate Limiting | limiteron | 0.3 |
+| DI Framework | trait-kit | 0.5 |
+| Config | confers | 0.6 |
+| SDK Generator | sdforge | 0.5 |
+| Logging | inklog | 0.3 |
 | Browser Engine | chromiumoxide | 0.9 |
 | HTML Parser | scraper | 0.29 |
 
@@ -174,8 +174,8 @@ flowchart TD
     end
 
     subgraph Infra [Infrastructure Layer]
-        DB[(Postgres Database<br/>dbnexus 0.6.0-rc.11)]
-        RC[(oxcache 0.5.0-rc.12<br/>in-memory)]
+        DB[(Postgres Database<br/>dbnexus 0.6.1)]
+        RC[(oxcache 0.5<br/>in-memory)]
         EXT[External APIs]
         MON[inklog / Prometheus]
         SEC[SSRF / Geolocation / DNS]
@@ -380,7 +380,7 @@ pub async fn extract<GR>(
 1. **Authentication Middleware** - API key validation, Bearer token, team ID extraction
 2. **Security Headers Middleware** - CSP, X-Content-Type-Options, X-Frame-Options
 3. **CORS** - Configurable origins via `tower-http`
-4. **Rate Limiting** - 单一中间件 `rate_limit_middleware.rs`：实现本身只做 429 + `Retry-After` 判定与头部设置，实际速率判断与配额扣减经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3.0-rc.10，PostgreSQL 后端）。全仓无 Redis 依赖
+4. **Rate Limiting** - 单一中间件 `rate_limit_middleware.rs`：实现本身只做 429 + `Retry-After` 判定与头部设置，实际速率判断与配额扣减经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3，PostgreSQL 后端）。全仓无 Redis 依赖
 5. **Team Semaphore Middleware** - Per-team concurrency control
 6. **Scope Validation** - API key permission scope checking（未挂载生产路由）
 
@@ -681,7 +681,7 @@ infrastructure/
 
 **Database Layer:**
 
-**Technology:** dbnexus 0.6.0-rc.11 (builds on Sea-ORM 2.0.4)
+**Technology:** dbnexus 0.6.1 (builds on Sea-ORM 2.0.4)
 
 dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access. Three database backends are supported: PostgreSQL (default), SQLite, and MySQL — selectable via `db-postgres` / `db-sqlite` / `db-mysql` features.
 
@@ -705,7 +705,7 @@ dbnexus provides connection pooling, permission control, migration framework, me
 
 **Cache Layer:**
 
-**Technology:** oxcache 0.5.0-rc.12 (in-memory, no Redis backend)
+**Technology:** oxcache 0.5 (in-memory, no Redis backend)
 
 ```rust
 // Cache types
@@ -854,9 +854,9 @@ bootstrap/                 # Application bootstrap
 
 ## 🧩 Core Components
 
-### Dependency Injection (trait-kit 0.5.0-rc.12)
+### Dependency Injection (trait-kit 0.5)
 
-DI uses **trait-kit 0.5.0-rc.12** with async module builders. `src/main.rs:389-405` registers **9 个 Module** 到 `AsyncKit`：
+DI uses **trait-kit 0.5** with async module builders. `src/main.rs:389-405` registers **9 个 Module** 到 `AsyncKit`：
 
 | # | Module | 提供 |
 |---|--------|------|
@@ -970,7 +970,7 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **6 featu
 | Feature | Default | Depends On | Off-mode Behavior |
 |---------|---------|------------|-------------------|
 | `teams` | on | `auth` | `/v1/teams/*` routes not registered; `extract_handler` loses GR generic + geo-restriction block; `CrawlRsState.{team_service, geo_location_service, geo_restriction_repo}` not compiled; `team_id` falls back to `DEFAULT_TEAM_ID` |
-| `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9.0-rc.2 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::denied()}`，无 DB 查询、无暴力破解防护；受保护路由默认 401，放行须经 `allow_unauthenticated_protected()` 显式 opt-in（放行后仍是 denied 受限身份） |
+| `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::denied()}`，无 DB 查询、无暴力破解防护；受保护路由默认 401，放行须经 `allow_unauthenticated_protected()` 显式 opt-in（放行后仍是 denied 受限身份） |
 | `rate-limit` | on | —（空数组） | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `rate-limit` 只门控装配选择，`limiteron` crate 因 `utils/backoff` 无条件依赖其 retry 原语而始终编译，`rate_limit_middleware` 始终挂载（内部 trait 调用 no-op 实现） |
 | `webhook` | on | — | `WebhookServiceImpl`/`WebhookManagementServiceImpl`/`webhook_sender`/`webhook_handler`/`webhook_worker` modules not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn blocks skipped; `WebhookService` trait preserved and assembled with `NoopWebhookService` (all ops return `Ok(())`) |
 | `web-axum` | off | `rate-limit`, `webhook`, `metrics`, `content`, `dbnexus`, `axum` | auth-off Web 中间件构建面（platform 隐含 auth 导致原矩阵中该路径不可构建）；`--no-default-features --features web-axum,db-postgres --lib` 构建/测试 auth-off 语义 |
@@ -985,7 +985,7 @@ default = ["platform", "db-postgres"]
 platform = ["teams", "auth", "rate-limit", "webhook", "metrics", "content", "sitemap",
             "dep:dbnexus", "dep:axum", "http"]
 teams   = ["auth"]
-auth    = ["dep:garrison", "dep:inventory"]   # 0.2.0: garrison v0.9.0-rc.2 接管认证引擎
+auth    = ["dep:garrison", "dep:inventory"]   # 0.2.0: garrison v0.9 接管认证引擎
 rate-limit = []            # 空数组：只门控装配选择，limiteron crate 始终编译
 webhook = []
 full    = ["standard", "engine-flaresolverr", "extractors", "llm"]
@@ -1067,7 +1067,7 @@ When a feature is off, the corresponding endpoints return **404** (not 401/403) 
 
 ### Configuration Hierarchy
 
-**Location:** `config/default.toml` (confers 0.6.0-rc.13)
+**Location:** `config/default.toml` (confers 0.6)
 
 ```toml
 [database]              # Connection pool, timeouts, prepare-cache
@@ -1564,10 +1564,9 @@ HTML（静态抓取或浏览器渲染产物）
 - 兜底语义：alchemize 内建（htmd 基础链 + 自研深链；空输出防呆、双失败诚实报错、
   math `$TeX$` 保真路由）；旧 `ConverterChain`（moli 主 + htmd 兜底）与其
   `crawlrs_md_converter_fallback_total` 指标已随 moli-html2md 退役移除
-- 依赖：`alchemize`（自研 html 引擎仓，`html` 特性）为 path 依赖；cargo 解析期
-  即读取 `../alchemize` 清单，CI 各 cargo 作业经 `.github/actions/alchemize-sibling`
-  检出同级仓后 symlink（仅 alchemize——其 audio 特性才需的 `../vecboost` 不可
-  激活，未激活的可选 path 依赖不参与解析，不检出）
+- 依赖：`alchemize`（自研 html 引擎仓，`html` 特性）为 crates.io registry 依赖
+  （0.1 稳定版，minor 精度）；同仓 `audio` 特性才需的 vecboost 由本仓按需独立引入
+  （`rag-local`），干净 checkout 即可解析，无需 sibling 检出
 - `ScrapeResponse.markdown: Option<String>`；`scrape_worker` 经
   `MarkdownPostProcessor` 在 formats 含 `"markdown"` 时生成
 
@@ -1751,7 +1750,7 @@ Worker lifecycle:
 
 ### Architecture
 
-Caching uses **oxcache 0.5.0-rc.12** with a single in-memory backend (moka). There is no Redis or multi-tier cache.
+Caching uses **oxcache 0.5** with a single in-memory backend (moka). There is no Redis or multi-tier cache.
 
 ```mermaid
 flowchart TD
@@ -1815,9 +1814,9 @@ pub trait CacheService: Send + Sync {
 
 ## ⏱️ Rate Limiting
 
-**Technology:** limiteron 0.3.0-rc.10 (PostgreSQL-backed)
+**Technology:** limiteron 0.3 (PostgreSQL-backed)
 
-Rate limiting is implemented using **limiteron 0.3.0-rc.10**, which provides PostgreSQL-backed token bucket rate limiting with the following features:
+Rate limiting is implemented using **limiteron 0.3**, which provides PostgreSQL-backed token bucket rate limiting with the following features:
 
 | Feature | Purpose |
 |---------|---------|
@@ -1831,7 +1830,7 @@ Rate limiting is implemented using **limiteron 0.3.0-rc.10**, which provides Pos
 
 ### Middleware 实现
 
-`src/presentation/middleware/rate_limit_middleware.rs` 是**唯一的**限流中间件。历史上曾并存另外两个平行方案（`src/presentation/middleware/mod.rs:21-24` 的历史注释记录了它们因无路由挂载点、零调用方而被移除的事实），现已不在代码中。该中间件本身只负责 429 判定与 `Retry-After` 响应头，实际速率判断经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3.0-rc.10，PostgreSQL 后端）：
+`src/presentation/middleware/rate_limit_middleware.rs` 是**唯一的**限流中间件。历史上曾并存另外两个平行方案（`src/presentation/middleware/mod.rs:21-24` 的历史注释记录了它们因无路由挂载点、零调用方而被移除的事实），现已不在代码中。该中间件本身只负责 429 判定与 `Retry-After` 响应头，实际速率判断经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3，PostgreSQL 后端）：
 
 ```text
 HTTP request → rate_limit_middleware (429 + Retry-After)
@@ -1927,7 +1926,7 @@ Configured with rules for:
 
 ### Authentication
 
-> **0.2.0 变更（`garrison-auth-migration`）：** 认证引擎由 garrison v0.9.0-rc.2 接管。旧的手写 SHA-256 `api_key_hash` 查表、`AuthRateLimiter`、`AuthScopeService` 已被删除；`api_keys.key_hash` / `scopes` 表标记为弃用（`deprecated_at` 列）。
+> **0.2.0 变更（`garrison-auth-migration`）：** 认证引擎由 garrison v0.9 接管。旧的手写 SHA-256 `api_key_hash` 查表、`AuthRateLimiter`、`AuthScopeService` 已被删除；`api_keys.key_hash` / `scopes` 表标记为弃用（`deprecated_at` 列）。
 
 **Garrison 接管的认证流程：**
 
@@ -1953,7 +1952,7 @@ pub struct AuthState {
 
 ### Garrison 认证引擎
 
-garrison v0.9.0-rc.2 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖：
+garrison v0.9 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖：
 
 | 组件 | 职责 | crawlrs 集成方式 |
 |------|------|------------------|

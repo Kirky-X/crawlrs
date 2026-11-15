@@ -150,7 +150,7 @@ cargo run --bin crawlrs
 ```bash
 # 4. Verify the installation
 curl http://localhost:8899/health
-# {"status":"healthy","version":"0.2.0-rc.4"}
+# {"status":"healthy","version":"0.2.0"}
 ```
 
 </details>
@@ -288,20 +288,20 @@ Without injection the default assembly is `ExplicitErrorCarrier`: every LLM call
 
 ### Unified dependency version baseline
 
-The embedding side and crawlrs share the same nexus-family dependencies; cargo unifies an `x.y.z-rc.N` requirement to the highest rc within the same minor. crawlrs has raised its manifest minimum versions to the baseline below, making "single-repo CI baseline = embedding compile target" and preventing "green in one repo, red when embedded" from recurring on upstream upgrades:
+The embedding side and crawlrs share the same nexus-family dependencies, all declared with stable minor-precision requirements (the `"0.6"` form; patches resolve to the latest within the minor). crawlrs has raised its manifest minimum versions to the baseline below, making "single-repo CI baseline = embedding compile target" and preventing "green in one repo, red when embedded" from recurring on upstream upgrades:
 
 <details>
 <summary>📋 Table</summary>
 
 | Dependency | Unified baseline | Embedding role |
 |-----------|-----------------|---------------|
-| `dbnexus` | `0.6.0-rc.11` | Database abstraction (over sea-orm) |
-| `inklog` | `0.3.0-rc.12` | Logging (`log::` facade backend) |
-| `limiteron` | `0.3.0-rc.10` | Rate limiting / circuit breaking / backoff |
-| `confers` | `0.6.0-rc.13` | Configuration loading |
-| `trait-kit` | `0.5.0-rc.12` | Async DI (AsyncKit) |
-| `oxcache` | `0.5.0-rc.12` | Multi-tier caching |
-| `garrison` | `0.9.0-rc.5` | Authentication engine (pulled via default's `auth`) |
+| `dbnexus` | `0.6.1` | Database abstraction (over sea-orm) |
+| `inklog` | `0.3` | Logging (`log::` facade backend) |
+| `limiteron` | `0.3` | Rate limiting / circuit breaking / backoff |
+| `confers` | `0.6` | Configuration loading |
+| `trait-kit` | `0.5` | Async DI (AsyncKit) |
+| `oxcache` | `0.5` | Multi-tier caching |
+| `garrison` | `0.9` | Authentication engine (pulled via default's `auth`) |
 
 </details>
 
@@ -455,7 +455,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 Test Scale
 
-As of 0.2.0-rc.4: 6,548 inline test attributes in `src/` (476 source files, 229,992 lines), 994 tests in `tests/` (124 `.rs` files, incl. 71 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
+As of 0.2.0: 6,548 inline test attributes in `src/` (476 source files, 229,992 lines), 994 tests in `tests/` (124 `.rs` files, incl. 71 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
 
 ---
 
@@ -489,6 +489,7 @@ Please do not report security vulnerabilities through public issues — use the 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
 <tr><td align="center">✅</td><td>Core platform (0.1.0)</td><td>Five-capability APIs (search/scrape/crawl/extract/map), DDD four layers, multi-tenancy & rate limiting, webhook notifications</td></tr>
+<tr><td align="center">✅</td><td>Stable release (0.2.0)</td><td>In-house dependencies normalized to stable, alchemize switched to crates.io registry, i18n host-registry rewrite, dual-channel release (crates.io + GitHub Release)</td></tr>
 <tr><td align="center">✅</td><td>Full pipeline rerun (0.2.0-rc.4)</td><td>CI feature combos/engine-moli/BDD green, CodeQL alerts adjudicated to zero, doctest & examples fixes, 90.13% line coverage, E2E 6 stages PASS (report SKIPPED by design)</td></tr>
 <tr><td align="center">✅</td><td>Pre-release hardening (0.2.0-rc.3)</td><td>crawl terminal reconciliation & crash recovery, end-to-end team domain blacklist enforcement, SDK crawl creation & search-derived caps, Host-header drop and other security hardening, web-axum tri-driver matrix</td></tr>
 <tr><td align="center">✅</td><td>Platform hardening & smart engines (0.2.0-rc.2)</td><td>garrison authentication, anti-bot detection, TLS-fingerprint & MLLM engines, RAG/KG/DRL intelligent enhancements, Prometheus observability, E2E quality suite</td></tr>
@@ -552,11 +553,11 @@ For the full version history see the [📋 Changelog](docs/CHANGELOG.md) (follow
 
 | Version | Date | Highlights |
 |------|------|------|
+| 0.2.0 | 2026-11-15 | **First crates.io stable release**: all in-house dependencies normalized to stable (minor precision), alchemize switched to crates.io registry (no path/git dependencies, publish channel unblocked), i18n rewritten on sdforge host registry (fluent-bundle retired), alchemize as default markdown converter, release.yml migrated to OIDC + token fallback |
 | 0.2.0-rc.4 | 2026-11-10 | Full pipeline rerun: CI repairs green, 18 CodeQL alerts adjudicated to zero, doctest/example/doc fixes, 90.13% line coverage, E2E 6 stages PASS (report SKIPPED by design), dependency patch bumps |
 | 0.2.0-rc.3 | 2026-11-10 | Terminal reconciliation & crash-recovery recompute, end-to-end team domain blacklist (normalization + caps + fail-closed + sitemap/proxy parity), SDK crawl & search-derived 200-cap/depth ≤5, Host-header drop, web-axum tri-driver matrix; three three-dimensional review rounds PASS |
 | 0.2.0-rc.2 | 2026-09-21 | TLS fingerprint engine (WreqEngine), MLLM vision-navigation engine, RAG-augmented extraction, knowledge-graph coverage awareness, DRL adaptive policy, 5 new Prometheus metrics; feature absorption F1–F12 (AutoThrottle, session identity, failure snapshots, sitemap request source, XHR capture, extraction quality gate, LLM chunking & provenance, AIMD memory coupling, soft 404, AX-tree snapshot) |
-| Unreleased | - | auth-off protected routes restore default 401, `web-axum` build surface restored, `crawlrs migrate` subcommand, production route for `POST /v1/scrape/{id}/_cancel`, ScrapeOptionsDto exposing `block_ads`/`block_media`/`needs_mllm`, forge-full staging feature, i18n/Fluent integration, etc. — full list in the [📋 Changelog](docs/CHANGELOG.md) |
-| 0.2.0 | 2026-07-29 | garrison RBAC authentication integration, bootstrap admin key, `DELETE /v1/crawl/{id}`, brute-force protection hardening |
+| 0.2.0-legacy | 2026-07-29 | Historical (tag re-created on 2026-11-15): garrison RBAC authentication integration, bootstrap admin key, `DELETE /v1/crawl/{id}`, brute-force protection hardening |
 | 0.1.0 | 2026-07-22 | First public release: five-capability APIs, DDD four-layer architecture, multi-tenancy & rate limiting, unified search |
 
 </details>

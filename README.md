@@ -150,7 +150,7 @@ cargo run --bin crawlrs
 ```bash
 # 4. 验证安装
 curl http://localhost:8899/health
-# {"status":"healthy","version":"0.2.0-rc.4"}
+# {"status":"healthy","version":"0.2.0"}
 ```
 
 </details>
@@ -289,20 +289,20 @@ crawlrs 不再内置任何 LLM 供应商访问（原 `LLMService` / `provider_ad
 
 ### 依赖版本统一基线
 
-嵌入方与 crawlrs 共享同一组 nexus 家族依赖，cargo 会将 `x.y.z-rc.N`  requirement 统一到同 minor 内的最高 rc。crawlrs 的 manifest 最低版本已抬升至下表基线，使「单仓 CI 基线 = 嵌入编译目标」，避免「单仓绿、嵌入红」在上游升级时复发：
+嵌入方与 crawlrs 共享同一组 nexus 家族依赖，全部为稳定版 minor 精度 requirement（`"0.6"` 形式，patch 由解析面取最新）。crawlrs 的 manifest 最低版本已抬升至下表基线，使「单仓 CI 基线 = 嵌入编译目标」，避免「单仓绿、嵌入红」在上游升级时复发：
 
 <details>
 <summary>📋 表格</summary>
 
 | 依赖 | 统一基线 | 嵌入角色 |
 |------|---------|---------|
-| `dbnexus` | `0.6.0-rc.11` | 数据库抽象（sea-orm 之上） |
-| `inklog` | `0.3.0-rc.12` | 日志（`log::` facade 后端） |
-| `limiteron` | `0.3.0-rc.10` | 限流 / 熔断 / 退避 |
-| `confers` | `0.6.0-rc.13` | 配置加载 |
-| `trait-kit` | `0.5.0-rc.14` | 异步 DI（AsyncKit） |
-| `oxcache` | `0.5.0-rc.12` | 多级缓存 |
-| `garrison` | `0.9.0-rc.5` | 认证引擎（经 default 的 `auth` 引入） |
+| `dbnexus` | `0.6.1` | 数据库抽象（sea-orm 之上） |
+| `inklog` | `0.3` | 日志（`log::` facade 后端） |
+| `limiteron` | `0.3` | 限流 / 熔断 / 退避 |
+| `confers` | `0.6` | 配置加载 |
+| `trait-kit` | `0.5` | 异步 DI（AsyncKit） |
+| `oxcache` | `0.5` | 多级缓存 |
+| `garrison` | `0.9` | 认证引擎（经 default 的 `auth` 引入） |
 
 </details>
 
@@ -455,7 +455,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 测试规模
 
-截至 0.2.0-rc.4：`src/` 内联测试 6,548 处（476 个源文件、229,992 行），`tests/` 目录 994 个测试（124 个 `.rs` 文件，含 `tests/unit/` 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
+截至 0.2.0：`src/` 内联测试 6,548 处（476 个源文件、229,992 行），`tests/` 目录 994 个测试（124 个 `.rs` 文件，含 `tests/unit/` 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
 
 ---
 
@@ -489,6 +489,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
 <tr><td align="center">✅</td><td>核心平台（0.1.0）</td><td>搜索/抓取/爬取/提取/映射五大能力 API、DDD 四层、多租户与限流、Webhook 通知</td></tr>
+<tr><td align="center">✅</td><td>稳定版发布（0.2.0）</td><td>自研依赖归一稳定版、alchemize 切 crates.io registry、i18n 宿主注册重写、crates.io + GitHub Release 双通道发布</td></tr>
 <tr><td align="center">✅</td><td>流水线全量补跑（0.2.0-rc.4）</td><td>CI 五组合/engine-moli/BDD 复绿、CodeQL 归零、doctest 与示例修复、覆盖率 90.13%、E2E 六阶段 PASS（report 按设计 SKIPPED）</td></tr>
 <tr><td align="center">✅</td><td>发布前收口（0.2.0-rc.3）</td><td>crawl 终态对账与崩溃恢复、团队域名黑名单全链路执行、SDK 建爬与搜索派生上限、Host 头丢弃等安全加固、web-axum 三驱动矩阵</td></tr>
 <tr><td align="center">✅</td><td>平台加固与智能引擎（0.2.0-rc.2）</td><td>garrison 认证、反爬检测、TLS 指纹与 MLLM 引擎、RAG/KG/DRL 智能增强、Prometheus 可观测性、E2E 质量套件</td></tr>
@@ -552,11 +553,11 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| 0.2.0 | 2026-11-15 | **首个 crates.io 稳定版**：自研依赖全部归一稳定版（minor 精度）、alchemize 切 registry（无 path/git 依赖，publish 通道打通）、i18n 体系重写（sdforge 宿主注册，fluent-bundle 退役）、markdown 默认转换器 alchemize、release.yml 迁移 OIDC + token 兜底 |
 | 0.2.0-rc.4 | 2026-11-10 | 发布流水线全量补跑：CI 三族修复复绿、CodeQL 18 条裁决归零、doctest/示例/文档修复、覆盖率 90.13%、E2E 六阶段 PASS（report 按设计 SKIPPED）、依赖补丁升级 |
 | 0.2.0-rc.3 | 2026-11-10 | 终态对账/崩溃恢复重算、团队域名黑名单全链路（归一化+上限+fail-closed+sitemap/proxy 同口径）、SDK 建爬与搜索派生 200 上限/深度 ≤5、Host 头丢弃、web-axum 三驱动矩阵；三维审查三轮 PASS |
 | 0.2.0-rc.2 | 2026-09-21 | TLS 指纹引擎（WreqEngine）、MLLM 视觉导航引擎、RAG 增强提取、知识图谱覆盖感知、DRL 自适应策略、5 个新 Prometheus 指标；功能吸收 F1–F12（AutoThrottle、Session 身份、失败快照、sitemap 请求源、XHR 捕获、提取质量门、LLM 分块与溯源、AIMD 内存联动、软 404、AX 树快照） |
-| Unreleased | - | auth-off 恢复默认 401、`web-axum` 构建面恢复、`crawlrs migrate` 子命令、`POST /v1/scrape/{id}/_cancel` 生产路由、ScrapeOptionsDto 暴露 `block_ads`/`block_media`/`needs_mllm`、forge-full 停机坪、i18n/Fluent 接入等，完整清单见 [📋 更新日志](docs/CHANGELOG.md) |
-| 0.2.0 | 2026-07-29 | garrison RBAC 认证集成、bootstrap admin key、`DELETE /v1/crawl/{id}`、暴力破解防护加固 |
+| 0.2.0-legacy | 2026-07-29 | 历史段（tag 已于 2026-11-15 重制）：garrison RBAC 认证集成、bootstrap admin key、`DELETE /v1/crawl/{id}`、暴力破解防护加固 |
 | 0.1.0 | 2026-07-22 | 首个公开版本：五大能力 API、DDD 四层架构、多租户与限流、统一搜索 |
 
 </details>

@@ -7,7 +7,7 @@
 ![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green?style=for-the-badge)
 ![License](https://img.shields.io/github/license/Kirky-X/crawlrs?label=license&style=for-the-badge)
 
-**Version:** 0.2.0-rc.4 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-11-10
+**Version:** 0.2.0 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-11-15
 
 </div>
 
@@ -53,7 +53,7 @@ All protected endpoints require authentication using an API key in the `Authoriz
 Authorization: Bearer YOUR_API_KEY
 ```
 
-> **0.2.0 起（`garrison-auth-migration`）：** Bearer token 由 **garrison v0.9.0-rc.2** 校验，格式为 `garrison_key_id.garrison_secret`（明文 key 仅在签发时返回一次）。旧的 SHA-256 `api_key_hash` 已作废，需经 garrison 重新领取。
+> **0.2.0 起（`garrison-auth-migration`）：** Bearer token 由 **garrison v0.9** 校验，格式为 `garrison_key_id.garrison_secret`（明文 key 仅在签发时返回一次）。旧的 SHA-256 `api_key_hash` 已作废，需经 garrison 重新领取。
 
 ### Garrison 认证
 
@@ -285,7 +285,7 @@ Check if the API process is running. Always returns 200 when the process is aliv
 ```json
 {
   "status": "healthy",
-  "version": "0.2.0-rc.4"
+  "version": "0.2.0"
 }
 ```
 
@@ -304,7 +304,7 @@ Kubernetes readiness probe: probes PostgreSQL (`SELECT 1`, 3s timeout) and the c
     "cache": { "status": "up" },
     "database_pool": { "status": "ok" }
   },
-  "version": "0.2.0-rc.4"
+  "version": "0.2.0"
 }
 ```
 
@@ -317,7 +317,7 @@ Kubernetes readiness probe: probes PostgreSQL (`SELECT 1`, 3s timeout) and the c
     "cache": { "status": "up" },
     "database_pool": { "status": "ok" }
   },
-  "version": "0.2.0-rc.4"
+  "version": "0.2.0"
 }
 ```
 
@@ -346,7 +346,7 @@ Get the current API version.
 
 **Response:**
 ```text
-0.2.0-rc.4
+0.2.0
 ```
 
 ### Get Metrics
@@ -1656,6 +1656,10 @@ func Scrape(url string) error {
 **Observability:**
 - 5 个新 Prometheus 指标：`crawlrs_queue_depth` / `crawlrs_engine_success_total` / `crawlrs_engine_duration_seconds` / `crawlrs_cache_hit_total` / `crawlrs_webhook_delivery_total`
 
+### 0.2.0 (2026-11-15)
+- 首个 crates.io 稳定版：自研依赖归一稳定版（minor 精度）、alchemize 切 registry（无 path/git 依赖）、i18n 宿主注册重写、release.yml OIDC + token 兜底
+- acceptance teardown clippy 修复；SDK 测试 I18nBundle 两参调用
+
 ### 0.2.0-rc.4 (2026-11-10)
 - 发布流水线全量补跑：CI 五组合/engine-moli/BDD 修复复绿；CodeQL 18 条裁决归零；security 审计豁免同源登记
 - doctest/示例/文档一致性修复；依赖 html-escape 0.3.1 / toml 1.2.1 / uuid 1.29.2
@@ -1672,7 +1676,7 @@ func Scrape(url string) error {
 ### 0.2.0-rc.1 (2026-08-25)
 - auth-off 安全语义收紧：protected routes 默认 401，`allow_unauthenticated_protected()` 显式 opt-in（该收紧为现行语义，见上方 Auth Disabled Behavior 节）
 
-### 0.2.0 (2026-07-29)
+### 0.2.0-legacy (2026-07-29)
 - **`garrison-auth-migration`：** 认证引擎由 garrison 接管，Bearer token 格式改为 `garrison_key_id.garrison_secret`
 - 新增 `POST /v1/admin/api-keys` 端点：管理员为指定 team 签发 garrison API Key
 - 401/429 触发逻辑由 garrison `firewall-bruteforce` 接管（5 次/60 秒/300 秒锁定）

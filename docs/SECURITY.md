@@ -53,7 +53,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 
 ### 认证与授权（garrison 接管）
 
-0.2.0 起认证引擎由 **garrison v0.9.0-rc.2** 提供（`auth` 特性，隐含 `dep:garrison`）：
+0.2.0 起认证引擎由 **garrison v0.9** 提供（`auth` 特性，隐含 `dep:garrison`）：
 
 - Bearer token 格式 `garrison_key_id.garrison_secret`，明文 key 仅在签发响应中返回一次。
 - JWT 以 `CRAWLRS__AUTH__JWT_SECRET`（HS256，≥32 字节）签发；secret 经 zeroize 包装，Drop 时清零内存（CWE-316 防护）。弱密钥（空或 <32 字节）在**生产环境拒绝启动**（`config_validator.rs` 的安全规则仅 `is_production` 时返回 `Err` 阻断），非生产环境仅告警不阻断；但空 secret 恒被 `build_garrison_config` 拒绝（`garrison_config.rs` `EmptySecret`）。

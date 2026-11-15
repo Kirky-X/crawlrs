@@ -42,7 +42,7 @@ cargo build            # 默认特性（platform + db-postgres）
 cargo build --features full   # 全部引擎与能力
 ```
 
-> 注意：自研基座依赖均以 registry 引入（fluxweir 0.1.1、vecboost 0.3.0-rc.3、nebulaid 0.3.0-rc.4 等均已上 registry）。唯一例外是 alchemize（`content` 特性）为 path 依赖 `../alchemize`——干净 checkout 需携带同级 `alchemize` 仓，CI 经 `.github/actions/alchemize-sibling` 自动检出（仅 alchemize：其 `audio` 特性才需的 vecboost 不可激活、不检出）。
+> 注意：自研基座依赖均以 registry 引入（fluxweir 0.1、vecboost 0.3、nebulaid 0.3、alchemize 0.1 等均已上 registry），本仓无 path/git 依赖，干净 checkout 可直接解析与构建。
 
 ### 验证环境就绪
 

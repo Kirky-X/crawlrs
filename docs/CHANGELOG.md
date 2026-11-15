@@ -1,42 +1,59 @@
 # 📋 Crawlrs 更新日志
 
-当前版本：0.2.0-rc.4（与 `Cargo.toml` `version` 一致）。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/spec/v2.0.0.html)。
+当前版本：0.2.0（与 `Cargo.toml` `version` 一致）。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/spec/v2.0.0.html)。
 
 ## 📋 目录
 
-- [Unreleased](#unreleased)
+- [0.2.0 - 2026-11-15](#020---2026-11-15)
 - [0.2.0-rc.4 - 2026-11-10](#020-rc4---2026-11-10)
 - [0.2.0-rc.3 - 2026-11-10](#020-rc3---2026-11-10)
 - [0.2.0-rc.2 - 2026-09-22](#020-rc2---2026-09-22)
 - [0.2.0-rc.1 - 2026-08-26](#020-rc1---2026-08-26)
-- [0.2.0 - 2026-07-29](#020---2026-07-29)
+- [0.2.0-legacy - 2026-07-29](#020-legacy---2026-07-29)
 - [0.1.0 - 2026-07-22](#010---2026-07-22)
 
 ---
 
-## [Unreleased]
+## [0.2.0] - 2026-11-15
 
-### Dependencies
+首个 crates.io 稳定版。自研依赖全部归一稳定版（minor 精度），`alchemize` 切 crates.io registry，本仓无任何 path/git 依赖，`cargo publish` 通道打通。本节并入原 `[Unreleased]` 段。
 
-- fluxweir 0.1.0（git rev 2d559ad）→ registry 0.1.1（已含此前缺失的嵌入式单池共享 `build_app_with_pool`）；`gateway` 组合本地实测 check/clippy/test 全绿；deny allow-git 白名单同步移除该源
+### Added
+
+- **i18n 体系重写**：消息层切换 `sdforge::i18n` 宿主注册表，`locales/*.ftl` 编译期内嵌（`src/i18n/catalog.rs`，`include_str!` + 启动期行解析 `register_translation`），部署产物不再携带磁盘 `locales/` 目录；键位守卫升级为内嵌清单 ↔ 磁盘目录双向一致（`tests/unit/i18n`）；`t_with_args`/`tr_log_args` 参数简化为 `&[(&str, String)]`（`{ $name }` 按名替换）
+- **crates.io 发布通道**：全依赖 registry 化后 `cargo publish` 解除阻塞；`release.yml` 迁移家族终态（OIDC trusted publishing 优先 + `CARGO_REGISTRY_TOKEN` 兜底，`gh release` 脚本步幂等创建）
 
 ### Changed
 
-- **Markdown 转换器默认切换为 alchemize**：`[markdown].converter` 默认值 `moli` → `alchemize`（自研 html 引擎：htmd 基础链 + 自研深链，内建空输出防呆/诚实降级/math `$TeX$` 保真路由）；`content` 特性收编 alchemize，`htmd` 保留直通诊断臂。等价性实测：13 用例（5 真实页 + 8 合成）10/13 字节等价（仅尾换行），math 页由泄漏 MathML 改善为 `$TeX$`，2 处导航件启发式差异（无内容丢失）；吞吐 wiki 1.06MB×20：moli 105.6 vs alchemize 96.8 MB/s（-8%）；装配链输出与 alchemize 原生 5 真实页逐字节一致，fidelity 8/8、markdown 域单测 38/38
+- **Markdown 转换器默认切换为 alchemize**：`[markdown].converter` 默认值 `moli` → `alchemize`（自研 html 引擎：htmd 基础链 + 自研深链，内建空输出防呆/诚实降级/math `$TeX$` 保真路由）；`content` 特性收编 alchemize，`htmd` 保留直通诊断臂。等价性实测：13 用例（5 真实页 + 8 合成）10/13 字节等价（仅尾换行），math 页由泄漏 MathML 改善为 `$TeX$`，2 处导航件启发式差异（无内容丢失）；吞吐 wiki 1.06MB×20：moli 105.6 vs alchemize 96.8 MB/s（-8%）；装配链输出与 alchemize 原生 5 真实页逐字节一致
 - **MSRV 1.97 → 1.97.1**：对齐 alchemize 的 `rust-version`；CI 工具链矩阵、README/FAQ/CONTRIBUTING 文案同步
-- **覆盖率作业缩围 `--lib`**：alchemize 入树后全 target 冷构建 >75m 连续超时（cancelled 不回写缓存）；lib-only 实测 90.12%（集成测试增益 <0.01pp），门禁 80% 不变，CI 超时 45→75→60（含冷构建余量）
-- **i18n 消息层切换 `sdforge::i18n` 宿主注册表**：自研 `OnceLock<FluentBundle>` 目录删除，fluent-bundle 依赖退役；`locales/*.ftl` 保留为消息真源并编译期内嵌（`src/i18n/catalog.rs`，`include_str!` + 启动期行解析 `register_translation`，部署产物不再携带磁盘 `locales/` 目录）；`t_with_args`/`tr_log_args` 参数简化为 `&[(&str, String)]`（`{ $name }` 按名替换，不再注入 Fluent Unicode 隔离标记）；`i18n.locales_dir` 配置项移除（内嵌目录无运行时路径）；键位守卫升级为内嵌清单 ↔ 磁盘目录双向一致（`tests/unit/i18n`，47 用例全绿）；格式化层（数字/日期/复数/排序）无消费场景，trait-kit `i18n` feature 不引入（申报"格式化无场景"）
+- **覆盖率作业缩围 `--lib`**：alchemize 入树后全 target 冷构建 >75m 连续超时（cancelled 不回写缓存）；lib-only 实测 90.12%（集成测试增益 <0.01pp），门禁 80% 不变
+- **CI 门禁口径**：fmt 改 `-p crawlrs -p crawlrs-examples` 定点两包；覆盖率/集成/BDD 作业超时按实测上调（30→45→75/25→40/30 分钟）
+
+### Dependencies
+
+- **自研依赖全部归一稳定版（minor 精度）**：confers `0.6`、dbnexus `0.6.1`、garrison `0.9`、inklog `0.3`、limiteron `0.3`、nebulaid `0.3`、oxcache `0.5`、sdforge `0.5`、trait-kit `0.5`、vecboost `0.3`、fluxweir `0.1`（解析 0.1.2）、alchemize `0.1`；直接依赖 rc 钉版清零
+- **alchemize 切 crates.io registry**：移除 `path = "../alchemize"`，`cargo publish`/`cargo package` 不再被 path 依赖拒绝；CI 的 `.github/actions/alchemize-sibling` 检出链删除（干净 checkout 可直接解析）
+- **fluxweir 回归 registry**：0.1.1 起提供 `with_pool`/`build_app_with_pool`/`TrustedIdentity`，撤掉钉 rev 的 git 依赖，deny `allow-git` 清空
 
 ### Removed
 
-- **moli-html2md 依赖与转换链退役**：删除 `moli_adapter.rs` / `moli_converter.rs` / `converter_chain.rs`（moli 主 + htmd 兜底链），`content` 特性移除 `dep:moli-html2md` 与 `dep:ego-tree`；deny `allow-git` 清空（项目已无 git 源依赖）；`crawlrs_md_converter_fallback_total` 指标随链移除（alchemize 内建兜底不再单独计数）
-- **fluent-bundle 依赖退役**：随 i18n 消息层切换 `sdforge::i18n` 宿主注册表（见 Changed）；`I18nSettings.locales_dir` 字段同步移除（`CRAWLRS__I18N__LOCALES_DIR` 环境变量不再被读取，设与不设行为一致）
+- **moli-html2md 依赖与转换链退役**：删除 `moli_adapter.rs` / `moli_converter.rs` / `converter_chain.rs`（moli 主 + htmd 兜底链），`content` 特性移除 `dep:moli-html2md` 与 `dep:ego-tree`；`crawlrs_md_converter_fallback_total` 指标随链移除（alchemize 内建兜底不再单独计数）
+- **fluent-bundle 依赖退役**：消息面统一 `sdforge::i18n` 宿主注册后零引用点；`I18nSettings.locales_dir` 字段同步移除（`CRAWLRS__I18N__LOCALES_DIR` 环境变量不再被读取）
 - **迁移说明**：`CRAWLRS__MARKDOWN__CONVERTER=moli`（旧默认值）在配置校验期被拒（启动失败），须改为 `alchemize`（默认）或 `htmd`
-- **注意**：alchemize 为 path 依赖（`../alchemize`，cargo 解析期即读取其清单；其可选 `audio` 特性才需 `../vecboost`，crawlrs 固定 `features=["html"]` 不可激活）——干净 checkout 需携带同级 `../alchemize`，CI 各 cargo 作业经 `.github/actions/alchemize-sibling` 自动检出（vecboost 不检出：audio 不可达，实测缺席解析通过）
 
 ### Fixed
 
-- **rag-local 运行时 DOA**：vecboost 依赖 `default-features=false` 剥掉了 `onnx` 主引擎，而 provider 钉死 `EngineType::Candle`——vecboost 0.3.0-rc 工厂对未编译引擎 fail-fast（禁止静默落入 candle 降级），`rag.enabled=true` + `embedding_provider="local"` 启动即败。修复：依赖显式 `features=["onnx"]`（ort/load-dynamic，运行时加载 libonnxruntime，无重静态链接），provider 改钉 `EngineType::Onnx`（对齐 vecboost onnx-primary 定案），provider 单测断言同步
+- **rag-local 运行时 DOA**：vecboost 依赖 `default-features=false` 剥掉了 `onnx` 主引擎，而 provider 钉死 `EngineType::Candle`——vecboost 工厂对未编译引擎 fail-fast，`rag.enabled=true` + `embedding_provider="local"` 启动即败。修复：依赖显式 `features=["onnx"]`，provider 改钉 `EngineType::Onnx`
+- **nightly clippy `needless_bool` 两处**：sitemap 种子守卫改直返 feed 结果、cache_mode POST 判定改非匹配表达式
+- **SDK 集成测试 E0061**：`sdk_api_test` 的 `I18nBundle::load` 改两参调用（sdforge 宿主注册切换后漏更的 stale 测试）
+- **acceptance teardown `single_match`**：`tests/acceptance/teardown.rs` 的 logger 关停改 `if let`（release 工作流 `clippy --tests` 会拦截）
+- **BDD 基础设施**：日志吞 warn、Ryuk 容器泄漏两处伴生缺陷收口
+
+### Security
+
+- **security workflow 权限**：补 `checks: write`——rustsec/audit-check 回写 check-run 需要该权限（R-17：Resource not accessible by integration）
+- **CodeQL 告警裁决工作流**：误报裁决幂等化（跳过已裁决告警）、裁决 reason 枚举对齐 API 字面值、改用 PATCH（现行 REST 端点方法）
 
 ## [0.2.0-rc.4] - 2026-11-10
 
@@ -367,7 +384,9 @@
 ### Breaking
 - auth-off 下 protected routes 默认 401（曾依赖未鉴权全开的嵌入方需显式 opt-in；注：rc.2 装配重构期间该收紧一度丢失，已于 Unreleased 恢复，见 Unreleased → Breaking）
 
-## [0.2.0] - 2026-07-29
+## [0.2.0-legacy] - 2026-07-29
+
+> 历史段：该版本仅发布过 GitHub Release（tag 已于 2026-11-15 重制指向正式版），从未上 crates.io。以下为当时记录，保留供追溯。
 
 ### Added
 
@@ -422,3 +441,5 @@
 - Proxy URL SSRF validation in search and crawl paths
 - IDOR protection on audit logs endpoint (CWE-862)
 - IP-based brute-force lockout (5 failures → 15min lockout)
+
+[0.2.0]: https://github.com/Kirky-X/crawlrs/releases/tag/v0.2.0

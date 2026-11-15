@@ -59,7 +59,7 @@ Rust 1.97.1+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16
 
 ### ❓ 服务监听哪个端口？如何确认启动成功？
 
-默认 `8899`（`CRAWLRS__SERVER__PORT` 可调）。`curl http://localhost:8899/health` 返回 `{"status":"healthy","version":"0.2.0-rc.4"}` 即成功。
+默认 `8899`（`CRAWLRS__SERVER__PORT` 可调）。`curl http://localhost:8899/health` 返回 `{"status":"healthy","version":"0.2.0"}` 即成功。
 
 ---
 
@@ -129,7 +129,7 @@ Rust 1.97.1+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16
 
 ### ❓ 测试规模有多大？
 
-截至 0.2.0-rc.4（口径：`grep -rE '^\s*#\[(tokio::)?test\]'` 统计内联测试属性）：
+截至 0.2.0（口径：`grep -rE '^\s*#\[(tokio::)?test\]'` 统计内联测试属性）：
 
 | 项 | 数量 |
 |---|---|
