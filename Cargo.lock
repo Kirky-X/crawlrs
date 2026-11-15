@@ -105,6 +105,8 @@ dependencies = [
 [[package]]
 name = "alchemize"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07f7736623a53c1606f62ad16e7f3f9bdce5b25faa41e002aeb1fe95c58c46fc"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1644,9 +1646,9 @@ dependencies = [
 
 [[package]]
 name = "confers"
-version = "0.6.0-rc.13"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05847095392cf83d9fbcdfe4e0bd9166c85175d0cdf33b3c1783dd174050a4e6"
+checksum = "7573e2254a3eab010cf5fdfa74e5c95713dfc578a784995b1675b918d35af959"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1686,9 +1688,9 @@ dependencies = [
 
 [[package]]
 name = "confers-macros"
-version = "0.6.0-rc.13"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2563affa595319211c8cbea52095f8b808e57c27e002598dcede1545501c3ef1"
+checksum = "d62230325dc8ccac86a1e8b5248db613bdf2bef9248c8bab3c6b73970e0b7c5f"
 dependencies = [
  "darling 0.24.1",
  "proc-macro2",
@@ -1888,7 +1890,7 @@ dependencies = [
 
 [[package]]
 name = "crawlrs"
-version = "0.2.0-rc.4"
+version = "0.2.0"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1970,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "crawlrs-examples"
-version = "0.2.0-rc.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2468,9 +2470,9 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "dbnexus"
-version = "0.6.0-rc.11"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4b142440ae73e9bc622ac33932592b619886c4fc702ad812f649fb33c7284c9"
+checksum = "f65b46213f941e84ae964a0bf140daacdbfe05f3509d871724e0b36ee19f35cf"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2479,9 +2481,7 @@ dependencies = [
  "dashmap",
  "dbnexus-limiter-port",
  "dbnexus-macros",
- "fluent-bundle",
  "futures",
- "icu",
  "log",
  "oxcache",
  "parking_lot 0.13.0",
@@ -2498,27 +2498,25 @@ dependencies = [
  "time",
  "tokio",
  "trait-kit",
- "unic-langid",
  "unicode-normalization",
  "url",
  "uuid",
- "writeable",
 ]
 
 [[package]]
 name = "dbnexus-limiter-port"
-version = "0.6.0-rc.11"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "075dbfb44e1d05e8ebe7bd0877d2e0f1026ca3d4bea031c3233061eb4dedfeae"
+checksum = "afe5538f165fe893236917e17fdd36703be4c4aaf9294b43b8e60e5afcd753d5"
 dependencies = [
  "async-trait",
 ]
 
 [[package]]
 name = "dbnexus-macros"
-version = "0.6.0-rc.11"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed200ae2c79e48d0e00f66a87d1c27bddd1153e003e956098e871709760f42f2"
+checksum = "1e562dd96987a8c8bc8a48849f0b69fe0dfbe8e20e74024ab9c06965233c7c42"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3240,16 +3238,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluent"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8137a6d5a2c50d6b0ebfcb9aaa91a28154e0a70605f112d30cb0cd4a78670477"
-dependencies = [
- "fluent-bundle",
- "unic-langid",
-]
-
-[[package]]
 name = "fluent-bundle"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3297,9 +3285,9 @@ dependencies = [
 
 [[package]]
 name = "fluxweir"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e26a9e1669715c490cf321439c79e5d37e68d0616fdd9cd3ad332b717f3ee3fc"
+checksum = "de610f839710a6b0976c9c70f49af4b4a442a4972d9a071b049ced314dc0a51e"
 dependencies = [
  "async-channel",
  "async-stream",
@@ -3312,7 +3300,6 @@ dependencies = [
  "dashmap",
  "dbnexus",
  "eventsource-stream",
- "fluent-bundle",
  "futures",
  "hex",
  "inklog",
@@ -3570,9 +3557,9 @@ dependencies = [
 
 [[package]]
 name = "garrison"
-version = "0.9.0-rc.5"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e94c8266ca18cb9a1f0b451185e07918aff70c48657f62e03b515faef3ff1a70"
+checksum = "8ee6a96f9e9bbe7163a2bd731f82e1a7f8e811450c53fbf754499977681daeb5"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3583,7 +3570,6 @@ dependencies = [
  "dashmap",
  "dbnexus",
  "ed25519-dalek",
- "fluent",
  "futures",
  "getrandom 0.4.3",
  "hex",
@@ -3602,6 +3588,7 @@ dependencies = [
  "pkcs1",
  "pkcs8",
  "regex",
+ "sdforge",
  "sec1",
  "serde",
  "serde_json",
@@ -3614,7 +3601,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trait-kit",
- "unic-langid",
  "unicode-normalization",
  "uuid",
  "zeroize",
@@ -4443,29 +4429,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "icu"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "399a42bd0e3f8171bfaa58545d0cfa60b09af031e979e277555c6a080668a054"
-dependencies = [
- "icu_calendar",
- "icu_casemap",
- "icu_collator",
- "icu_collections",
- "icu_datetime",
- "icu_decimal",
- "icu_experimental",
- "icu_list",
- "icu_locale",
- "icu_normalizer",
- "icu_plurals",
- "icu_properties",
- "icu_provider",
- "icu_segmenter",
- "icu_time",
-]
-
-[[package]]
 name = "icu_calendar"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4477,7 +4440,6 @@ dependencies = [
  "icu_locale_core",
  "icu_locale_fallback",
  "icu_provider",
- "serde",
  "tinystr",
  "zerovec",
 ]
@@ -4487,28 +4449,6 @@ name = "icu_calendar_data"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "514da54e79efa36b5976232d5b3d1d8ee1b47b19ab658f1b1ebe39221696c2d8"
-
-[[package]]
-name = "icu_casemap"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a6f143e9349267b80ae071a6ec25d4797c45756d8b2671a8b24b7b25b81ab94"
-dependencies = [
- "icu_casemap_data",
- "icu_collections",
- "icu_locale_core",
- "icu_properties",
- "icu_provider",
- "potential_utf",
- "writeable",
- "zerovec",
-]
-
-[[package]]
-name = "icu_casemap_data"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71a5c321208537711696af55bc2ab5dad939e4f6e0aef92dd6a2555deceedf3a"
 
 [[package]]
 name = "icu_collator"
@@ -4543,7 +4483,6 @@ checksum = "fe090a42a0d3140fed8c63263ed1fecc02422cb2f4bfe55cd8de2de1b8e105dd"
 dependencies = [
  "displaydoc",
  "potential_utf",
- "serde",
  "utf8_iter",
  "yoke",
  "zerofrom",
@@ -4590,10 +4529,8 @@ dependencies = [
  "icu_decimal_data",
  "icu_locale_core",
  "icu_locale_fallback",
- "icu_pattern",
  "icu_plurals",
  "icu_provider",
- "serde",
  "writeable",
  "zerovec",
 ]
@@ -4603,67 +4540,6 @@ name = "icu_decimal_data"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5595ab78370d48abd24a062f3db115d5108dd0b65634352036cae532aebb0df8"
-
-[[package]]
-name = "icu_experimental"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64423d9f65806f0a864c4d1f156a46b910cba98b6cf6a764f3297f671423b7ec"
-dependencies = [
- "displaydoc",
- "either",
- "fixed_decimal",
- "icu_casemap",
- "icu_collections",
- "icu_decimal",
- "icu_experimental_data",
- "icu_list",
- "icu_locale",
- "icu_locale_core",
- "icu_locale_fallback",
- "icu_normalizer",
- "icu_pattern",
- "icu_plurals",
- "icu_properties",
- "icu_provider",
- "litemap",
- "num-bigint 0.4.8",
- "num-rational",
- "num-traits",
- "potential_utf",
- "smallvec",
- "tinystr",
- "writeable",
- "zerotrie",
- "zerovec",
-]
-
-[[package]]
-name = "icu_experimental_data"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3028e254d20c6c04d2ff4f59f13cce34e3f147dfcc3a80b82441256c22181722"
-
-[[package]]
-name = "icu_list"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61b7401916042e00e2ff603d4a1dd4767772ec361d341a03e549ed2879b56591"
-dependencies = [
- "icu_list_data",
- "icu_locale_fallback",
- "icu_provider",
- "regex-automata",
- "serde",
- "writeable",
- "zerovec",
-]
-
-[[package]]
-name = "icu_list_data"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22b55746bcc43fb7397bc6590980c78a4981d62c04bd7a0db1e3cbc1d2d63457"
 
 [[package]]
 name = "icu_locale"
@@ -4753,7 +4629,6 @@ dependencies = [
  "either",
  "serde",
  "writeable",
- "yoke",
  "zerovec",
 ]
 
@@ -4787,7 +4662,6 @@ dependencies = [
  "icu_locale_core",
  "icu_properties_data",
  "icu_provider",
- "serde",
  "zerotrie",
  "zerovec",
 ]
@@ -4968,9 +4842,9 @@ checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
 
 [[package]]
 name = "inklog"
-version = "0.3.0-rc.12"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33ceea52d72792b9b2c81e37ba25da3aabf5e5d8f341d5f5b9c4f47e34677271"
+checksum = "e83a4a46eb5533a4a0bcd65f8d19e9010579af502b8114a0084c57bbbfa67d9a"
 dependencies = [
  "aes-gcm 0.11.1",
  "anyhow",
@@ -5461,9 +5335,9 @@ dependencies = [
 
 [[package]]
 name = "limiteron"
-version = "0.3.0-rc.10"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "149b04315444f7a9abdc1e6bad624f666350c892fcbd167d80f40513cb3213c7"
+checksum = "a3629990eb6d85551e0124b56c60000d9be681bbe2c7a4121fb0a328eb71088c"
 dependencies = [
  "ahash",
  "async-trait",
@@ -5471,7 +5345,6 @@ dependencies = [
  "confers",
  "dashmap",
  "dbnexus",
- "fluent-bundle",
  "futures",
  "hex",
  "hmac 0.13.0",
@@ -5480,7 +5353,7 @@ dependencies = [
  "limiteron-macros",
  "log",
  "oxcache",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "prometheus",
  "rustls-webpki",
  "scopeguard",
@@ -5506,9 +5379,9 @@ dependencies = [
 
 [[package]]
 name = "limiteron-macros"
-version = "0.3.0-rc.10"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76ab0797107527bbe1a4f6ce2aca2d504eb4bb1d85d450374335d5b77e6566c9"
+checksum = "4a8becccf1308d156d4bbd38f5dcd4a9a9096e3f8dabd2964c347663689fffb6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5924,9 +5797,9 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "nebulaid"
-version = "0.3.0-rc.4"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cd6aa417c1f0a21bd508484fec286ba48e897606e8ef038f7e4f841d453de02"
+checksum = "902fb99af69f6fd093effd6d1a9367066d4a9250ef4714ad1e6291838ffdb8e8"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -6399,18 +6272,16 @@ checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
 
 [[package]]
 name = "oxcache"
-version = "0.5.0-rc.12"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41f58d435b2d2848ba0e04cb31be9c7c00fd33cc60d6b60fb52083d57dc646de"
+checksum = "e7dbef6926e9daeadd531b9375da4ba4bcf40558e1d7a4247f9c2b76c290d23f"
 dependencies = [
  "async-trait",
  "bloomfilter",
  "chrono",
  "dashmap",
  "flate2",
- "fluent-bundle",
  "futures",
- "icu",
  "moka",
  "once_cell",
  "oxcache_macros",
@@ -6424,15 +6295,14 @@ dependencies = [
  "trait-kit",
  "unic-langid",
  "uuid",
- "writeable",
  "zstd",
 ]
 
 [[package]]
 name = "oxcache_macros"
-version = "0.5.0-rc.12"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01ff8ed981bf68a57bd389ace955b4bf25080a17ec966fad5cfddb1bb94b1ab0"
+checksum = "42e54e4d9ab4b1d75c74e71793e2a841e5b0a36f1a4b56a5d66290a95aff2eef"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7932,9 +7802,9 @@ dependencies = [
 
 [[package]]
 name = "sdforge"
-version = "0.5.0-rc.11"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f432e54ec9aabe6168af38f7e3be498edfee3045217115ba16270c953b559f8"
+checksum = "bb48d0845207d2f03faffc5fde72655284af3a4b30eb912968227c8ada6a92f8"
 dependencies = [
  "async-trait",
  "axum",
@@ -7975,9 +7845,9 @@ dependencies = [
 
 [[package]]
 name = "sdforge-macros"
-version = "0.5.0-rc.10"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3f951765518c454435a8af4a8ba1902852409f699dede4631967f9597692bbb"
+checksum = "05a04c5e1357b4e98eff1bceee7fd1355581cd0d16c078857488073be5d24633"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9879,9 +9749,9 @@ dependencies = [
 
 [[package]]
 name = "trait-kit"
-version = "0.5.0-rc.14"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb67168334999a77008eae80a9fc4241e2a2c7f8bd9e05bc4d4c989fdcfe9ba5"
+checksum = "2ddf58471deb795d5ac3fe61d84841068209142aa67a5b7c2889c1b68e01a1cf"
 dependencies = [
  "aho-corasick",
  "confers",
@@ -10330,9 +10200,9 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vecboost"
-version = "0.3.0-rc.3"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9a537602119429b687de2f216311a83fce6afa816a1aee08d647aa77f3bf5bf"
+checksum = "c60f9464a41a5c82c2322cf04238ce1a6c7730149898e362a81fa91b53fc6963"
 dependencies = [
  "anyhow",
  "argon2",
@@ -10340,12 +10210,10 @@ dependencies = [
  "character_converter",
  "chrono",
  "confers",
- "fluent-bundle",
  "futures",
  "garde",
  "hex",
  "hf-hub 1.0.0",
- "icu",
  "inklog",
  "limiteron",
  "log",
@@ -10367,9 +10235,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "trait-kit",
- "unic-langid",
  "whatlang",
- "writeable",
  "xxhash-rust",
  "zeroize",
 ]

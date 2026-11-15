@@ -3,7 +3,7 @@
 
 [package]
 name = "crawlrs"
-version = "0.2.0-rc.4"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.97.1"
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
@@ -75,8 +75,7 @@ rag = ["rag-local", "gateway"]
 # gateway：fluxweir 统一 LLM/嵌入/重排出口（嵌入式网关 + SDK）。fluxweir 以
 # default-features=false 引入：其 default 携带 db-sqlite，会与 db-postgres 触发
 # dbnexus embedded×server-side 互斥 compile_error；db-postgres 对齐 crawlrs 持久化面。
-# path 依赖：T015/T016/T019 的 with_pool/build_app_with_pool/TrustedIdentity 为本地
-# checkout 交付，registry 0.1.0 不含（nebulaid/vecboost 已转 registry，本项是唯一例外）。
+# 依赖取 registry 0.1（0.1.1 起提供 with_pool/build_app_with_pool/TrustedIdentity）。
 gateway = ["dep:fluxweir", "dep:axum"]
 
 # --- 引擎特性 ---
@@ -91,17 +90,13 @@ engine-tls-fingerprint = ["dep:wreq"]
 engine-mllm = ["engine-playwright", "llm", "gateway"]
 
 # 内容处理：aho-corasick 多模式匹配；alchemize html 引擎（htmd 基础链+自研深链）为
-# 默认转换器；htmd 保留直通诊断臂（moli-html2md 链已退役，见 CHANGELOG Unreleased）
+# 默认转换器；htmd 保留直通诊断臂（moli-html2md 链已退役，见 CHANGELOG 0.2.0）
 content = ["dep:aho-corasick", "dep:htmd", "alchemize"]
 
-# alchemize：HTML→Markdown 默认转换器（自研 html 引擎，path 依赖；content 收编）。
-# 上游特性形态（212d1f6/d7bb68d 后）：每个格式一个 feature、依赖全 optional；
+# alchemize：HTML→Markdown 默认转换器（自研 html 引擎，registry 依赖；content 收编）。
+# 上游特性形态：每个格式一个 feature、依赖全 optional；
 # `html` 特性自含 htmd 基础链 + 自研深链（原 html-deep，引擎名未变）。
-# 注意：① 上游 rust-version = 1.97.1——本仓 MSRV 已对齐到 1.97.1；
-# ② path 依赖在 cargo 解析期即读取 ../alchemize 清单——sibling 缺失或上游
-# feature 名与本处声明失配时，全部 cargo 命令解析失败；上游改名须先落库
-# 并推送（CI sibling 检出取远端 main，仅检 alchemize：audio 特性才需的
-# ../vecboost 不可激活，未激活的可选 path 依赖不参与解析）。
+# 注意：alchemize 与 crawlrs 的 MSRV 均为 1.97.1；
 # default-features=false 仅剥离 cli/text（sdforge/inklog 等），html 链完整保留。
 alchemize = ["dep:alchemize"]
 
@@ -182,8 +177,8 @@ dirs = { version = "7.0", default-features = false }
 
 # Logging and observability
 log.workspace = true
-# inklog rc.12 嵌入基线（与 fluxgate 同链）；仅 cli 特性，不引 fast-masking（曾有 panic 实证）
-inklog = { version = "0.3.0-rc.12", default-features = false, features = ["cli"] }
+# inklog 0.3 嵌入基线（与 fluxgate 同链）；仅 cli 特性，不引 fast-masking（曾有 panic 实证）
+inklog = { version = "0.3", default-features = false, features = ["cli"] }
 # sdforge 非可选：DTO 层 Validate impl 未做 feature 门控
 sdforge.workspace = true
 metrics = { version = "0.24", default-features = false, optional = true }
@@ -203,8 +198,8 @@ aho-corasick = { version = "1.1", default-features = false, features = ["std", "
 # htmd：HTML→Markdown 直通诊断臂（alchemize 内建同一兜底；此处保留独立转换器）
 htmd = { version = "0.5", default-features = false, optional = true }
 # alchemize：自研 HTML→Markdown 引擎仓（`html` 特性=htmd 基础链+自研深链），默认转换器；
-# path 供本地/monorepo 解析，version 为打包/发布面声明（deny bans 禁 wildcard 依赖）
-alchemize = { path = "../alchemize", version = "0.1.0", optional = true, default-features = false, features = ["html"] }
+# registry 依赖（0.1 稳定版已发布；deny bans 禁 wildcard 依赖）
+alchemize = { version = "0.1", optional = true, default-features = false, features = ["html"] }
 
 # rs-trafilatura：正文提取主路径（正文 + 元数据）
 rs-trafilatura = { version = "0.2", default-features = false, optional = true }
@@ -237,7 +232,7 @@ ipnetwork = { version = "0.21", default-features = false }
 hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
 
 # Rate limiting and circuit breaking — gated by `rate-limit` feature
-limiteron = { version = "0.3.0-rc.10", default-features = false, features = [
+limiteron = { version = "0.3", default-features = false, features = [
     # postgres 驱动由 crawlrs db-* 特性组透传 limiteron?/postgres
     "ban-manager",
     "quota-control",
@@ -249,8 +244,8 @@ limiteron = { version = "0.3.0-rc.10", default-features = false, features = [
     "retry",
 ] }
 
-# garrison 认证引擎（auth feature）；rc.5 与自研 rc 链对齐，事件枚举已在 listener 适配
-garrison = { version = "0.9.0-rc.5", default-features = false, features = ["backend-embedded", "web-axum", "cache-memory", "protocol-apikey", "protocol-jwt", "core-advanced", "authorize-api", "listener", "audit-log", "audit-inklog", "firewall", "firewall-bruteforce", "tenant-isolation", "tracing-log", "three-tier-cache", "protocol-zeroize", "db-retry"], optional = true }
+# garrison 认证引擎（auth feature）；0.9 稳定版与 crawlrs 事件枚举已对齐
+garrison = { version = "0.9", default-features = false, features = ["backend-embedded", "web-axum", "cache-memory", "protocol-apikey", "protocol-jwt", "core-advanced", "authorize-api", "listener", "audit-log", "audit-inklog", "firewall", "firewall-bruteforce", "tenant-isolation", "tracing-log", "three-tier-cache", "protocol-zeroize", "db-retry"], optional = true }
 
 # Concurrency and synchronization
 parking_lot = { version = "0.13", default-features = false }
@@ -269,14 +264,14 @@ toml = { version = "1.2", default-features = false, features = ["std", "parse", 
 # onnx 主引擎必须显式启用——default-features=false 剥掉 default=["http","onnx"]，
 # 不启用时 provider 钉死的 EngineType::Onnx 在 vecboost 工厂处 fail-fast（禁止静默
 # 落入 candle 降级），rag-local 运行时即败（三维审查发现的 DOA，已修）
-vecboost = { version = "0.3.0-rc.3", optional = true, default-features = false, features = ["onnx"] }
+vecboost = { version = "0.3", optional = true, default-features = false, features = ["onnx"] }
 
 # Dependency Injection
-trait-kit = { version = "0.5.0-rc.14", default-features = false, features = ["async", "confers", "shutdown"] }
-# NebulaId registry 依赖（rc.4 已发布，与本地 checkout 源码一致）；仅 sdk 特性
-nebulaid = { version = "0.3.0-rc.4", default-features = false, features = ["sdk", "uuid-v8"] }
+trait-kit = { version = "0.5", default-features = false, features = ["async", "confers", "shutdown"] }
+# NebulaId registry 依赖（0.3 稳定版）；仅 sdk 特性
+nebulaid = { version = "0.3", default-features = false, features = ["sdk", "uuid-v8"] }
 # oxcache 特性裁剪：memory + serialization + metrics + bloom（macros/batch 零使用）
-oxcache = { version = "0.5.0-rc.12", default-features = false, features = ["memory", "serialization", "metrics", "bloom"] }
+oxcache = { version = "0.5", default-features = false, features = ["memory", "serialization", "metrics", "bloom"] }
 ahash = { version = "0.8", default-features = false, features = ["std", "runtime-rng"] }
 
 # Internationalization (i18n) — 消息注册/查询统一走 sdforge::i18n 宿主注册
@@ -285,17 +280,17 @@ unic-langid = { version = "0.9", default-features = false }
 # 系统语言检测（unify-rust-i18n 检测链末端：env 链之后探测 OS locale）
 sys-locale = { version = "0.3", default-features = false }
 
-# utoipa 6.0：与 sdforge 0.5.0-rc.10 的 re-export 同版（sdforge rc.9 起依赖 ^6.0；
+# utoipa 6.0：与 sdforge 0.5 的 re-export 同版（sdforge rc.9 起依赖 ^6.0；
 # 回退到 rc.6 及更早需同步退回 5.5，否则双版本共存触发 E0659）
 utoipa = { version = "6.0", optional = true, default-features = false, features = ["macros"] }
 
-# fluxweir LLM 网关（gateway 特性）：registry 0.1.1（已含嵌入式单池共享
-# build_app_with_pool 与可信代理身份桥，此前 0.1.0 缺该 API 故暂用 git rev 2d559ad，
-# 0.1.1 发布后回归 registry）。
+# fluxweir LLM 网关（gateway 特性）：registry 0.1（0.1.1 起含嵌入式单池共享
+# build_app_with_pool 与可信代理身份桥；0.1.0 缺该 API）。本仓按 minor 精度取
+# 最新 patch。
 # default-features=false 剥离其 db-sqlite 默认后端（dbnexus embedded×server-side 互斥守卫），
 # db-postgres 对齐共享池。feature 统一附带效应：inklog/trait-kit/confers/oxcache/sdforge/
-# limiteron 随 fluxweir 版本需求解析上移，回归验证见 fluxweir-llm-gateway T021。
-fluxweir = { version = "0.1.1", optional = true, default-features = false, features = ["full", "db-postgres"] }
+# limiteron 随 fluxweir 版本需求解析上移。
+fluxweir = { version = "0.1", optional = true, default-features = false, features = ["full", "db-postgres"] }
 
 [dev-dependencies]
 # dbnexus 恒可用：test_helpers 经 dbnexus::sea_orm re-export，任意 feature 组合可编译
@@ -384,7 +379,7 @@ debug = true
 members = ["examples"]
 
 [workspace.package]
-version = "0.2.0-rc.4"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.97.1"
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
@@ -398,7 +393,7 @@ tokio = { version = "1.54", default-features = false, features = ["rt-multi-thre
 serde = { version = "1.0", default-features = false, features = ["std", "derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 # Configuration
-confers = { version = "0.6.0-rc.13", default-features = false, features = ["validation", "toml", "env", "security-rules"] }
+confers = { version = "0.6", default-features = false, features = ["validation", "toml", "env", "security-rules"] }
 # Error handling
 anyhow = { version = "1.0", default-features = false, features = ["std"] }
 # Logging
@@ -413,10 +408,10 @@ regex = { version = "1.13", default-features = false, features = ["std", "perf",
 # Encoding（simd-unsafe 为上游默认携带的非对齐读 SIMD，产物裁剪时一并剥离）
 base64 = { version = "0.23", default-features = false, features = ["std"] }
 # 驱动/runtime 特性不在此声明，由 db-postgres/db-sqlite/db-mysql 特性组选择
-dbnexus = { version = "0.6.0-rc.11", default-features = false, features = ["cache", "macros", "migration", "auto-migrate", "config-env", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
+dbnexus = { version = "0.6.1", default-features = false, features = ["cache", "macros", "migration", "auto-migrate", "config-env", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
 sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
-sdforge = { version = "0.5.0-rc.11", default-features = false, features = ["http"] }
+sdforge = { version = "0.5", default-features = false, features = ["http"] }
 # Web framework（form/matched-path/original-uri/tower-log/tracing 全仓零引用，裁掉）
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
 
