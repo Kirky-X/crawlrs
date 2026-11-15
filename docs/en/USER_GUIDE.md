@@ -1836,4 +1836,48 @@ Submit feature requests via:
 
 ---
 
+## 🎨 Feature Flags
+
+> This section was archived from the README: this is the authoritative reference for build presets and feature semantics.
+
+### 📦 Build Presets
+
+| Preset | Build command | Includes | Use case |
+|------|----------|----------|----------|
+| default | `cargo build --release` | `platform` (teams + auth + rate-limit + webhook + metrics + content + sitemap) + `db-postgres` | the complete platform out of the box |
+| `standard` | `cargo build --release --features standard` | default + `engine-playwright` + `sitemap` | production recommended (JS rendering + metrics + content processing + sitemap) |
+| `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | full-feature combination (no vision/MLLM; add `engine-mllm` separately) |
+| `no-default` | `cargo build --release --no-default-features` | pure core scraping stack | single-tenant/no-auth deployments, embedding |
+| `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | the minimal agent/embedded library surface |
+
+### 📋 Feature Matrix
+
+The table below is the main feature subset of `Cargo.toml`'s `[features]` (the full list lives in `Cargo.toml`), with `default = ["platform", "db-postgres"]`; the core scraping stack (oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt) is always compiled.
+
+| Feature | Description | Default |
+|------|------|------|
+| `teams` | multi-tenant isolation (implies `auth`); when off, everything belongs to the single-tenant `DEFAULT_TEAM_ID` | ✅ |
+| `auth` | garrison v0.9 authentication (RBAC + JWT + brute-force protection); when off, a fixed identity is injected | ✅ |
+| `rate-limit` | limiteron rate limiting and circuit breaking; when off, `NoopRateLimitingService` is injected | ✅ |
+| `webhook` | webhook delivery; when off, the `/v1/webhooks` routes are removed and a Noop is injected | ✅ |
+| `metrics` | Prometheus metrics export (with sysinfo memory awareness) | ✅ (platform) |
+| `content` | anti-bot detection (aho-corasick) + HTML→Markdown conversion (the alchemize html engine is the default; htmd is the pass-through diagnostic arm) | ✅ (platform) |
+| `db-postgres` / `db-sqlite` / `db-mysql` | pick exactly one database driver (compile-time mutual exclusion enforced by dbnexus) | ✅ postgres |
+| `engine-playwright` | chromiumoxide browser automation engine | ❌ |
+| `engine-flaresolverr` | FlareSolverr anti-bot engine (Full/Cdp/Tls three modes) | ❌ |
+| `engine-tls-fingerprint` | WreqEngine TLS fingerprint spoofing (BoringSSL JA3/JA4) | ❌ |
+| `engine-mllm` | MLLM vision-LLM autonomous navigation engine (implies `engine-playwright` + `llm`; the vision surface goes through fluxweir chat) | ❌ |
+| `engine-moli` | MoliEngine (a pure-Rust headless kernel controlled via CDP as an external `moli serve`) + memory-watermark scheduler (sysinfo's three levels — Abundant/Tight/Critical — drive engine priority and Playwright pool gating) | ❌ |
+| `trafilatura` / `dom-smoothie` / `extractors` | main content-extraction path / performance fallback / all enabled | ❌ |
+| `llm` | the LLM extraction boundary (trait + orchestration; vendor access is injected by a host carrier) | ❌ |
+| `sitemap` | sitemap generation (the `/v1/map` endpoint) | ✅ (platform/standard) |
+| `rag-local` | local RAG embedding and rerank (vecboost) | ❌ |
+| `rag` | the RAG bundle (`rag-local` + `gateway`) | ❌ |
+| `openapi` | OpenAPI 3.1 spec generation (`GET /openapi.json`) | ❌ |
+| `test-mocks` | test-only mock gate (integration tests need it enabled explicitly) | ❌ |
+
+> For the compile matrix of feature combinations (22 combinations) and how they are verified, see [🧪 Test Scenario Matrix](TEST_SCENARIOS.md); for the feature-gating implementation pattern, see [🏗️ Architecture · Feature Gate Architecture](ARCHITECTURE.md).
+
+---
+
 **Happy Scraping! 🚀**

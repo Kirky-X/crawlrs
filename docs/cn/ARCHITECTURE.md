@@ -2176,6 +2176,84 @@ flowchart TD
 
 ---
 
+## 🚢 容器化部署命令
+
+> 本节自 README 归档。拓扑与多实例部署见上方「Deployment Architecture」。
+
+```bash
+# 构建镜像（主 Dockerfile 位于 docker/ 目录）
+docker build -t crawlrs:latest -f docker/Dockerfile .
+
+# Docker Compose 一键启动（crawlrs + PostgreSQL 16 + FlareSolverr + Chrome + Prometheus）
+docker compose -f docker/docker-compose.yml up -d
+```
+
+服务默认监听 `8899`（`CRAWLRS__SERVER__PORT` 可调）；生产环境安全加固清单见 [SECURITY.md](SECURITY.md)。
+
+---
+
+## 🔌 作为库依赖
+
+> 本节自 README 归档：嵌入方式、LLM 承载注入模型、依赖版本基线与嵌入探针门禁以本节为准。
+
+crawlrs 可作为库被下游项目（如网关类应用）以 **path 依赖**嵌入，获得抓取引擎 / 正文提取 / RAG 能力。受支持的嵌入方式如下。
+
+### 嵌入 feature 组合
+
+以 path 依赖引入 crawlrs 时，按下表声明 feature 组合（引擎默认集随 `default-features` 自动带入 `platform` + `db-postgres`）：
+
+```toml
+[dependencies]
+crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"] }
+```
+
+| feature | 说明 | 是否 default |
+|---------|------|:-----------:|
+| `db-postgres` | PostgreSQL 后端（嵌入主存储路径） | ✅ default 已含 |
+| `extractors` | 正文提取（`trafilatura` + `dom-smoothie`） | 显式声明 |
+| `llm` | LLM 结构化提取边界（trait + 编排，不含供应商访问；carrier 由宿主注入） | 显式声明 |
+
+> RAG（`vecboost`，走 `rag-local`+`gateway`）与 TLS 指纹引擎（`wreq`，走 `engine-tls-fingerprint`）**不在**受支持的默认嵌入组合内——它们会引入额外的重构建链（tokenizers 或 BoringSSL），需按各自 feature 单独验证。
+
+### LLM 承载注入模型
+
+crawlrs 不再内置任何 LLM 供应商访问（原 `LLMService` / `provider_adapter` / `llm_provider_strategy` 已删除），`LLMServiceTrait` 是唯一 LLM 边界。宿主经以下任一 pub 装配路径注入自有实现（如 fluxgate 的 `FluxgateLLMCarrier`）：
+
+1. `Services.llm_service` pub 字段直接赋值；
+2. 以自有工厂替换 `init_llm_service`；
+3. 经 `CrawlRsState::from_kit` 的装配面注入。
+
+未注入时默认装配 `ExplicitErrorCarrier`：任何 LLM 调用返回 i18n 双语结构化错误（`domain-error-llm-carrier-not-injected`），不 panic、不静默降级。`prompt_builder` / `chunker`（F8）/ `provenance`（F9）编排模块保留，注入 carrier 可复用。
+
+### 依赖版本统一基线
+
+嵌入方与 crawlrs 共享同一组 nexus 家族依赖，全部为稳定版 minor 精度 requirement（`"0.6"` 形式，patch 由解析面取最新）。crawlrs 的 manifest 最低版本已抬升至下表基线，使「单仓 CI 基线 = 嵌入编译目标」，避免「单仓绿、嵌入红」在上游升级时复发：
+
+| 依赖 | 统一基线 | 嵌入角色 |
+|------|---------|---------|
+| `dbnexus` | `0.6.1` | 数据库抽象（sea-orm 之上） |
+| `inklog` | `0.3` | 日志（`log::` facade 后端） |
+| `limiteron` | `0.3` | 限流 / 熔断 / 退避 |
+| `confers` | `0.6` | 配置加载 |
+| `trait-kit` | `0.5` | 异步 DI（AsyncKit） |
+| `oxcache` | `0.5` | 多级缓存 |
+| `garrison` | `0.9` | 认证引擎（经 default 的 `auth` 引入） |
+
+> 嵌入方不得依赖 `[patch.crates-io]` 强制对齐版本——patch 属本地开发态机制，发布面禁用（path 版与 registry 版并存会触发 trait 身份分裂）。抬版本只保证「同一版本下编译与测试等价通过」，不改变运行行为。
+
+### 嵌入探针门禁
+
+`scripts/embed-probe.sh` 在临时目录以 path 依赖复现嵌入编译路径（`cargo new` 探针 crate → `cargo add --path <仓库根> --features "db-postgres,extractors,llm"` → `cargo check`），嵌入破坏在仓内即可发现；CI 的 `embed-probe` job 会串行执行该脚本并阻塞合并。
+
+```bash
+scripts/embed-probe.sh              # 自动定位仓库根（由脚本自身位置推导）
+scripts/embed-probe.sh <repo-root>  # 显式指定仓库根（跨机器 / CI）
+```
+
+退出码 `0` 表示嵌入编译面完好；非零时 stderr 打印失败步骤名（`root` / `new` / `add` / `check`）。探针构建产物落在 `mktemp` 临时目录，不污染仓库工作区，可重复执行。
+
+---
+
 ## 📚 Documentation
 
 - [API Reference](API_REFERENCE.md)

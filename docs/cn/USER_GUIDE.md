@@ -1836,4 +1836,48 @@ Submit feature requests via:
 
 ---
 
+## 🎨 特性标志
+
+> 本节自 README 归档：完整构建预设与特性语义以本节为准。
+
+### 📦 功能预设
+
+| 预设 | 构建命令 | 包含内容 | 适用场景 |
+|------|----------|----------|----------|
+| 默认 | `cargo build --release` | `platform`（teams + auth + rate-limit + webhook + metrics + content + sitemap）+ `db-postgres` | 开箱即用的完整平台 |
+| `standard` | `cargo build --release --features standard` | 默认 + `engine-playwright` + `sitemap` | 生产推荐（JS 渲染 + 指标 + 内容处理 + 站点地图） |
+| `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | 全功能组合（不含 vision/MLLM，需另加 `engine-mllm`） |
+| `no-default` | `cargo build --release --no-default-features` | 纯核心抓取栈 | 单租户/无认证部署、嵌入集成 |
+| `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | agent/嵌入式最小库面 |
+
+### 📋 功能矩阵
+
+下表为 `Cargo.toml` `[features]` 的主要特性子集（完整清单见 `Cargo.toml`），`default = ["platform", "db-postgres"]`；核心抓取栈（oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt）始终编译。
+
+| 特性 | 说明 | 默认 |
+|------|------|------|
+| `teams` | 多租户隔离（隐含 `auth`）；关闭时归属 `DEFAULT_TEAM_ID` 单租户 | ✅ |
+| `auth` | garrison v0.9 认证（RBAC + JWT + 防暴力破解）；关闭时注入固定身份 | ✅ |
+| `rate-limit` | limiteron 限流熔断；关闭时注入 `NoopRateLimitingService` | ✅ |
+| `webhook` | Webhook 投递；关闭时移除 `/v1/webhooks` 路由并注入 Noop | ✅ |
+| `metrics` | Prometheus 指标导出（含 sysinfo 内存感知） | ✅（platform） |
+| `content` | 反爬检测（aho-corasick）+ HTML→Markdown 转换（alchemize html 引擎为默认；htmd 直通诊断臂） | ✅（platform） |
+| `db-postgres` / `db-sqlite` / `db-mysql` | 数据库驱动三选一（dbnexus 编译期互斥强制） | ✅ postgres |
+| `engine-playwright` | chromiumoxide 浏览器自动化引擎 | ❌ |
+| `engine-flaresolverr` | FlareSolverr 反爬引擎（Full/Cdp/Tls 三模式） | ❌ |
+| `engine-tls-fingerprint` | WreqEngine TLS 指纹伪装（BoringSSL JA3/JA4） | ❌ |
+| `engine-mllm` | MLLM 视觉 LLM 自主导航引擎（隐含 `engine-playwright` + `llm`；视觉面经 fluxweir chat） | ❌ |
+| `engine-moli` | MoliEngine（CDP 控制外部 `moli serve` 的纯 Rust 无头内核）+ 内存水位调度器（sysinfo 三档：Abundant/Tight/Critical 驱动引擎优先级与 Playwright 池门控） | ❌ |
+| `trafilatura` / `dom-smoothie` / `extractors` | 正文提取主路径 / 性能回退 / 全启用 | ❌ |
+| `llm` | LLM 提取边界（trait + 编排；供应商访问由宿主 carrier 注入） | ❌ |
+| `sitemap` | 站点地图生成（`/v1/map` 端点） | ✅（platform/standard） |
+| `rag-local` | 本地 RAG 嵌入与重排（vecboost） | ❌ |
+| `rag` | RAG 组合包（`rag-local` + `gateway`） | ❌ |
+| `openapi` | OpenAPI 3.1 规范生成（`GET /openapi.json`） | ❌ |
+| `test-mocks` | 测试专用 mock 门控（集成测试需显式启用） | ❌ |
+
+> 特性组合的编译矩阵（22 组合）与验证方式见 [🧪 测试场景矩阵](TEST_SCENARIOS.md)；特性门控的实现模式见 [🏗️ 架构文档 · Feature Gate Architecture](ARCHITECTURE.md)。
+
+---
+
 **Happy Scraping! 🚀**

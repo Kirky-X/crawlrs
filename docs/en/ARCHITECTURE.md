@@ -2179,6 +2179,84 @@ flowchart TD
 
 ---
 
+## 🚢 Containerized Deployment Commands
+
+> This section was archived from the README. For topology and multi-instance deployment see "Deployment Architecture" above.
+
+```bash
+# Build the image (the main Dockerfile lives in the docker/ directory)
+docker build -t crawlrs:latest -f docker/Dockerfile .
+
+# Start everything with Docker Compose (crawlrs + PostgreSQL 16 + FlareSolverr + Chrome + Prometheus)
+docker compose -f docker/docker-compose.yml up -d
+```
+
+The service listens on `8899` by default (adjustable via `CRAWLRS__SERVER__PORT`); for the production hardening checklist see [SECURITY.md](SECURITY.md).
+
+---
+
+## 🔌 Embedding as a Library Dependency
+
+> This section was archived from the README: this is the authoritative reference for embedding methods, the LLM carrier injection model, the dependency version baseline, and the embedding probe gate.
+
+crawlrs can be embedded by downstream projects (such as gateway-style applications) as a **path dependency**, gaining scraping engines / content extraction / RAG capabilities. The supported embedding methods are as follows.
+
+### Embedding feature combinations
+
+When pulling in crawlrs as a path dependency, declare the feature combination per the table below (the default engine set arrives automatically with `default-features` as `platform` + `db-postgres`):
+
+```toml
+[dependencies]
+crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"] }
+```
+
+| feature | Description | Default? |
+|---------|------|:-----------:|
+| `db-postgres` | PostgreSQL backend (the main embedded storage path) | ✅ already in default |
+| `extractors` | content extraction (`trafilatura` + `dom-smoothie`) | declare explicitly |
+| `llm` | the LLM structured-extraction boundary (trait + orchestration, no vendor access; the carrier is injected by the host) | declare explicitly |
+
+> RAG (`vecboost`, via `rag-local`+`gateway`) and the TLS fingerprint engine (`wreq`, via `engine-tls-fingerprint`) are **not** part of the supported default embedding combination — they introduce additional rebuild chains (tokenizers or BoringSSL) and need separate validation per feature.
+
+### LLM carrier injection model
+
+crawlrs no longer ships any LLM vendor access itself (the original `LLMService` / `provider_adapter` / `llm_provider_strategy` were deleted); `LLMServiceTrait` is the only LLM boundary. The host injects its own implementation (such as fluxgate's `FluxgateLLMCarrier`) through any of these pub assembly paths:
+
+1. Assign the `Services.llm_service` pub field directly;
+2. Replace the `init_llm_service` factory with your own;
+3. Inject through the `CrawlRsState::from_kit` assembly surface.
+
+Without injection, the default assembly is `ExplicitErrorCarrier`: any LLM call returns an i18n bilingual structured error (`domain-error-llm-carrier-not-injected`) — no panic, no silent degradation. The `prompt_builder` / `chunker` (F8) / `provenance` (F9) orchestration modules are retained and reusable by an injected carrier.
+
+### Unified dependency version baseline
+
+Embedders and crawlrs share one set of nexus-family dependencies, all stable-version minor-precision requirements (in the `"0.6"` form; patches resolve to the latest). crawlrs's manifest minimums have been raised to the baseline in the table below so that "the single-repo CI baseline = the embedding compile target", preventing "single-repo green, embedding red" from recurring on upstream upgrades:
+
+| Dependency | Unified baseline | Embedding role |
+|------|---------|---------|
+| `dbnexus` | `0.6.1` | database abstraction (on top of sea-orm) |
+| `inklog` | `0.3` | logging (the `log::` facade backend) |
+| `limiteron` | `0.3` | rate limiting / circuit breaking / backoff |
+| `confers` | `0.6` | config loading |
+| `trait-kit` | `0.5` | async DI (AsyncKit) |
+| `oxcache` | `0.5` | multi-level cache |
+| `garrison` | `0.9` | authentication engine (pulled in via default's `auth`) |
+
+> Embedders must not rely on `[patch.crates-io]` to force version alignment — patches are a local-development mechanism and are forbidden on the release surface (a path version coexisting with a registry version triggers trait identity splitting). Raising versions only guarantees "compiles and tests pass equivalently at the same version"; it does not change runtime behavior.
+
+### Embedding probe gate
+
+`scripts/embed-probe.sh` reproduces the embedding compile path with a path dependency in a temp directory (`cargo new` probe crate → `cargo add --path <repo root> --features "db-postgres,extractors,llm"` → `cargo check`), so embedding breakage is discovered inside the repo; CI's `embed-probe` job runs the script serially and blocks merging.
+
+```bash
+scripts/embed-probe.sh              # locate the repo root automatically (derived from the script's own location)
+scripts/embed-probe.sh <repo-root>  # specify the repo root explicitly (cross-machine / CI)
+```
+
+Exit code `0` means the embedding compile surface is intact; on non-zero, stderr prints the failed step name (`root` / `new` / `add` / `check`). Probe build artifacts land in an `mktemp` temp directory, never polluting the repo workspace, and the probe is repeatable.
+
+---
+
 ## 📚 Documentation
 
 - [API Reference](API_REFERENCE.md)

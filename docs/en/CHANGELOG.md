@@ -443,3 +443,22 @@ Content processing / browser engine:
 - IP-based brute-force lockout (5 failures → 15min lockout)
 
 [0.2.0]: https://github.com/Kirky-X/crawlrs/releases/tag/v0.2.0
+
+---
+
+## 🗺️ Development Roadmap
+
+> This section was archived from the README: the table below is the authoritative reference for version direction and in-flight work.
+
+<table style="width:100%; border-collapse: collapse">
+<tr><th style="text-align:center">Status</th><th style="text-align:left">Direction</th><th style="text-align:left">Items</th></tr>
+<tr><td align="center">✅</td><td>Core platform (0.1.0)</td><td>APIs for the five capabilities (search/scrape/crawl/extract/map), the DDD four layers, multi-tenancy and rate limiting, webhook notifications</td></tr>
+<tr><td align="center">✅</td><td>Stable release (0.2.0)</td><td>in-house dependencies normalized to stable versions, alchemize switched to the crates.io registry, i18n host registration rewritten, dual-channel release to crates.io + GitHub Release</td></tr>
+<tr><td align="center">✅</td><td>Pipeline full re-run (0.2.0-rc.4)</td><td>CI five-combination / engine-moli / BDD re-green, CodeQL zeroed out, doctest and example fixes, coverage 90.13%, E2E six stages PASS (report SKIPPED by design)</td></tr>
+<tr><td align="center">✅</td><td>Pre-release closure (0.2.0-rc.3)</td><td>crawl terminal-state reconciliation and crash recovery, team domain blacklist enforced end-to-end, SDK crawl creation and search-derived caps, security hardening such as Host header dropping, the web-axum three-driver matrix</td></tr>
+<tr><td align="center">✅</td><td>Platform hardening and smart engines (0.2.0-rc.2)</td><td>garrison authentication, anti-bot detection, TLS fingerprint and MLLM engines, RAG/KG/DRL intelligence enhancements, Prometheus observability, the E2E quality suite</td></tr>
+<tr><td align="center">✅</td><td>Multi-dialect databases</td><td><code>db-sqlite</code> / <code>db-mysql</code> coverage up to runtime schema provisioning: the <code>migrations/{postgres,sqlite,mysql}/</code> three-dialect DDL directories are selected by compiled feature, <code>[database] auto_migrate</code> (default false) wired in, and three-way consistency guarded by tests</td></tr>
+<tr><td align="center">✅</td><td>Architecture evolution</td><td>event-driven internal bus (delivered via <code>tokio::sync::broadcast</code>), WebSocket real-time task status (<code>GET /v1/tasks/{id}/ws</code>), the Redis shared cache layer (<code>[cache] backend=redis</code>, multi-instance deployments)</td></tr>
+<tr><td align="center">🚧</td><td>forge_api registration-surface migration</td><td><code>forge-full</code> (the single sdforge inventory registration surface) is the in-flight migration parking lot, mutually exclusive with the hand-written protected/v2 routes; the full switch requires a unified ordering decision across the three middleware families</td></tr>
+<tr><td align="center">🚧</td><td>Performance guarding</td><td>the Criterion baseline (e2e-baseline / ci-baseline) regression-comparison gate has landed (<code>.github/workflows/bench.yml</code>, manually dispatched); the authoritative performance re-measurement is pending</td></tr>
+</table>
