@@ -30,6 +30,9 @@ unmaintained = "all"
 #   无运行时攻击面。cargo-deny 仅在 --all-features 图触达，CI action 默认即 --all-features）
 # - RUSTSEC-2025-0119: number_prefix（可选 rag-local → vecboost → tokenizers → hf-hub →
 #   indicatif 传递；仅进度条数字格式化）
+# - RUSTSEC-2025-0141: bincode 1.3.3 停止维护（unmaintained，2025-12-16）。唯一路径
+#   rag-local → vecboost 0.3 → character_converter → bincode；仅字符集转换的
+#   serde 序列化，无攻击面。vecboost 换 character_converter 上游或 bincode 2.x 后移除。
 # 2026-11-06 依赖全量升级后 RUSTSEC-2024-0449（unsafe-libyaml）宿主已退出依赖树，ignore 已移除。
 #
 # 注：RUSTSEC-2026-0367/0368/0369（zip 8.6.0）不靠 ignore 处理——已整体移除死依赖
@@ -47,7 +50,7 @@ unmaintained = "all"
 # 换 tar-codec 后移除本豁免（tracking: testcontainers-rs 上游 changelog）。
 # 注意：cargo-deny 默认图不含 dev-deps，会打 "no crate matched" note（无害）；
 # cargo-audit 的图含 dev-deps，此豁免对 audit 是必需的（两处须同源保留）。
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2026-0387", "RUSTSEC-2026-0440", "RUSTSEC-2026-0459"]
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2025-0141", "RUSTSEC-2026-0387", "RUSTSEC-2026-0440", "RUSTSEC-2026-0459"]
 
 [licenses]
 allow = [
