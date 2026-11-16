@@ -6,6 +6,12 @@ name: CI
 on:
   push:
     branches: [main, develop, "release/*"]
+    # 纯文档/元数据变更不触发 CI（2026-11-17 降本：push 触发面收窄）
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
+      - "LICENSE*"
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
