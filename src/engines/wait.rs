@@ -323,7 +323,7 @@ impl WaitFor {
     /// ResponseBody：等待某响应体包含指定文本（吸收 moli --wait-response-body 语义）
     ///
     /// 逐响应取体做子串匹配；单响应体匹配检查上限 [`WAIT_BODY_MAX_BYTES`]
-    ///（对齐默认 max_response_body_bytes），超出跳过不做全量缓冲；
+    /// （对齐默认 max_response_body_bytes），超出跳过不做全量缓冲；
     /// base64 编码的响应体解码失败按不匹配处理（二进制体无子串语义）。
     async fn wait_response_body(
         page: &Page,

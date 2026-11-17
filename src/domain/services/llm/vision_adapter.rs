@@ -6,8 +6,7 @@
 //! 经 fluxweir SDK（`FluxweirClient::chat`）承载多模态调用：base64 截图
 //! 编码为 `data:image/jpeg;base64,` URL 块 + 文本 prompt 构造 multipart
 //! 消息（OpenAI wire `image_url` 语义），发送给视觉模型并返回文本响应
-//!（变更 `fluxweir-llm-gateway` design D6）。
-
+//! （变更 `fluxweir-llm-gateway`）。
 use anyhow::Result;
 use async_trait::async_trait;
 #[cfg(feature = "gateway")]

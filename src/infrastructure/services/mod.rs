@@ -6,11 +6,11 @@
 /// 提供基础设施层的服务实现
 /// 包括限流服务等核心功能
 pub mod config_service;
-/// fluxweir 承载的 LLM carrier（变更 fluxweir-llm-gateway D4：
+/// fluxweir 承载的 LLM carrier（
 /// 经 SDK 经嵌入式网关/外部实例发出提取请求，gateway feature 门控）
 #[cfg(feature = "gateway")]
 pub mod fluxweir_llm_carrier;
-/// fluxweir 承载的嵌入/重排 provider（变更 fluxweir-llm-gateway D5：
+/// fluxweir 承载的嵌入/重排 provider（
 /// RAG 降级链 secondary，gateway feature 门控）
 #[cfg(feature = "gateway")]
 pub mod fluxweir_providers;

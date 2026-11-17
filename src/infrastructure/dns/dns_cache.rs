@@ -6,7 +6,7 @@
 //! 解析编排（miss→解析→写回）的 single-flight 由 oxcache `Cache::get_or_with_ttl`
 //! 内建承载（进程级 leader/follower：同 key 并发只放行一个真实解析，follower 等
 //! leader 写回后读缓存），不再自维在飞表。per-entry TTL 取解析器记录剩余有效期
-//!（`valid_until`，以 `default_ttl` 为上限），无记录 TTL 时回落 `default_ttl`；
+//! （`valid_until`，以 `default_ttl` 为上限），无记录 TTL 时回落 `default_ttl`；
 //! 写回经库 `apply_jitter` 抖动。leader 的原始解析错误经 `OxCacheError::IoError`
 //! 无损回转；follower 拿到的是库的 L1Error（leader 未写回），统一映射为 io 错误。
 
@@ -598,7 +598,7 @@ mod tests {
 
     // lookup_host：per-entry TTL 记录驱动 + 失败不缓存
 
-    /// R-dns-resolve-002：oxcache 条目 TTL（get_or_with_ttl 写入的 per-entry TTL）
+    /// oxcache 条目 TTL（get_or_with_ttl 写入的 per-entry TTL）
     /// 过期后再次查询必须重新走真实解析，不返回过期条目。
     #[tokio::test]
     async fn test_lookup_host_after_entry_ttl_expiry_re_resolves() {

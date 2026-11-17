@@ -5,7 +5,7 @@
 
 //! Management 域路由的 sdforge 直注注册（audit / admin / teams / webhook / extract）。
 //!
-//! 全部走 `RouteRegistration` 直注（design D1′）：带 Query DTO 或 JSON body 的
+//! 全部走 `RouteRegistration` 直注：带 Query DTO 或 JSON body 的
 //! 端点保持原提取器原样组装；同路径多方法资源以单条 MethodRouter 链式组合，
 //! 规避上游 build 按路径去重的覆盖丢失问题。feature 门控与迁移前的
 //! register_*_routes 完全对应。
@@ -56,7 +56,7 @@ submit!(RouteRegistration::new(
     audit_denied_metadata,
 ));
 
-/// R-key-lifecycle-001：admin api-keys（auth feature 门控，整段随 feature 编译）。
+/// admin api-keys（auth feature 门控，整段随 feature 编译）。
 #[cfg(feature = "auth")]
 mod admin {
     use super::{route_metadata, HttpRoute, RouteRegistration};
@@ -86,7 +86,7 @@ mod admin {
     ));
 }
 
-/// R-teams-002：teams 路由（teams feature 门控）。
+/// teams 路由（teams feature 门控）。
 #[cfg(feature = "teams")]
 mod teams {
     use axum::{response::Response, Extension};
@@ -176,7 +176,7 @@ mod teams {
     ));
 }
 
-/// R-wh-001：webhook 路由（webhook feature 门控）。
+/// webhook 路由（webhook feature 门控）。
 #[cfg(feature = "webhook")]
 mod webhook {
     use super::{route_metadata, ApiMetadata, HttpRoute, RouteRegistration};
@@ -208,7 +208,7 @@ mod webhook {
     ));
 }
 
-/// R-teams-003：extract 路由（teams feature 分裂，两变体 cfg 互斥保证唯一注册）。
+/// extract 路由（teams feature 分裂，两变体 cfg 互斥保证唯一注册）。
 #[cfg(feature = "teams")]
 mod extract_teams_on {
     use super::{route_metadata, ApiMetadata, HttpRoute, RouteRegistration};

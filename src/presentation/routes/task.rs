@@ -32,7 +32,7 @@ use crate::presentation::middleware::auth_middleware::AuthState;
 ///
 /// - POST /v1/tasks/_query - 复杂查询使用 POST + _query 后缀
 /// - POST /v1/tasks/_cancel - 批量取消操作使用 POST + _cancel 后缀
-/// - GET /v1/tasks/{id}/ws - 任务状态实时推送（R-ws-task-status-001）
+/// - GET /v1/tasks/{id}/ws - 任务状态实时推送
 pub fn task_routes() -> Router {
     Router::new()
         .route(
@@ -46,7 +46,7 @@ pub fn task_routes() -> Router {
         .route("/v1/tasks/{id}/ws", get(task_status_ws))
 }
 
-/// WS 连接治理守卫（R-ws-task-status-003）。
+/// WS 连接治理守卫。
 ///
 /// 计数当前活跃连接并在超过 `max_connections` 时拒绝新连接；
 /// `idle_timeout` 是服务端在无可推送事件时保持连接的窗口。
@@ -114,12 +114,12 @@ impl Drop for WsSlot {
 
 /// GET /v1/tasks/{id}/ws —— 任务状态实时推送。
 ///
-/// 鉴权/租户语义（R-ws-task-status-002）：
+/// 鉴权/租户语义：
 /// - 无 `AuthState` 扩展（未携带凭据）→ 401；
 /// - task 不存在或属于其他 team → 404（不泄露存在性）；
 /// - 连接成功后先推 `subscribed` 确认帧，再按 task/team 过滤推送状态帧。
 ///
-/// 资源治理（R-ws-task-status-003）：连接数超限 → 429；空闲超时 → 服务端
+/// 资源治理：连接数超限 → 429；空闲超时 → 服务端
 /// 主动关闭。`TaskWsGuard` 扩展缺省时使用进程级缺省守卫（100 连接 / 300s）。
 async fn task_status_ws(
     Extension(repo): Extension<Arc<TaskRepositoryImpl>>,
@@ -230,7 +230,7 @@ async fn task_ws_session(
             }
             // 总线关闭（进程退出路径）→ 结束会话。
             Ok(Err(broadcast::error::RecvError::Closed)) => break,
-            // 空闲超时：窗口内无可推送事件 → 主动关闭（R-ws-task-status-003）。
+            // 空闲超时：窗口内无可推送事件 → 主动关闭。
             Err(_elapsed) => {
                 log::debug!("ws idle timeout, closing connection for task {task_id}");
                 break;
@@ -292,7 +292,7 @@ mod tests {
         drop(clone);
     }
 
-    /// R-ws-task-status-003：守卫在达到上限时拒绝新连接，释放后恢复。
+    /// 守卫在达到上限时拒绝新连接，释放后恢复。
     #[test]
     fn ws_guard_rejects_over_limit_and_recovers() {
         let guard = Arc::new(TaskWsGuard::new(2, Duration::from_secs(1)));

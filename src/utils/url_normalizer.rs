@@ -72,7 +72,7 @@ impl UrlNormalizer {
     /// assert_eq!(
     ///     n.normalize("HTTPS://Example.COM/Path/?b=2&a=1#frag").unwrap(),
     ///     "https://example.com/Path?a=1&b=2"
-    ///);
+    /// );
     /// ```
     pub fn normalize(&self, url: &str) -> Result<String, UrlError> {
         // 空串防御

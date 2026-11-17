@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Migration dialect consistency tests (spec: R-multidb-schema-001).
+//! Migration dialect consistency tests.
 //!
 //! `migrations/{postgres,sqlite,mysql}/` must cover the same set of tables and
 //! columns — they differ only in dialect syntax. The parser below reconstructs
@@ -336,7 +336,7 @@ fn all_three_dialect_dirs_are_present() {
     }
 }
 
-/// R-multidb-schema-001: the three dialects must cover the same tables and
+/// the three dialects must cover the same tables and
 /// columns after applying the full migration sequence.
 /// Columns that exist in one dialect only because of a physical storage
 /// constraint, not a logical schema difference. Every entry must exist in
@@ -408,7 +408,7 @@ fn three_dialects_cover_same_tables_and_columns() {
     }
 }
 
-/// R-multidb-schema-001: SQLite/MySQL DDL must not contain PostgreSQL-only
+/// SQLite/MySQL DDL must not contain PostgreSQL-only
 /// syntax (SERIAL/JSONB/TIMESTAMPTZ per spec; plus the PG-only identifiers
 /// that would silently no-op or error on the other engines).
 #[test]

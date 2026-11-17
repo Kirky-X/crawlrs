@@ -27,7 +27,7 @@ pub struct OxcacheService {
     cache_type: &'static str,
     /// 构建期默认 TTL：`set` 的 `ttl_seconds=0` 落到该值，使 memory
     /// （moka per-entry TTL）与 redis（`SET PX`）两后端 get/set/ttl
-    /// 语义一致（R-redis-shared-cache-002）。`Duration::ZERO` 表示未配置
+    /// 语义一致。`Duration::ZERO` 表示未配置
     /// 默认（[`Self::new`] 路径），0 交还后端自身语义。
     default_ttl: Duration,
 }
@@ -93,8 +93,7 @@ impl OxcacheService {
         })
     }
 
-    /// 按 `[cache] backend` 配置构建 memory/redis 缓存实例
-    /// （R-redis-shared-cache-002）。
+    ///。
     ///
     /// - `memory`（或空串）：进程内 moka 后端，行为与 [`Self::build`] 一致；
     /// - `redis`：[`oxcache::backend::RedisBackend`]，多实例共享；
@@ -223,7 +222,8 @@ impl CacheService for OxcacheService {
             // 逐键 TTL：`ttl_seconds=0` 落到构建期 default_ttl（未配置时
             // 传 None 交还后端自身语义），否则按秒生效。memory（moka
             // per-entry TTL）与 redis（`SET PX`）经同一换算保持 get/set/ttl
-            // 语义一致（R-redis-shared-cache-002）。
+            // 语义一致。
+
             let ttl = if ttl_seconds == 0 {
                 (!self.default_ttl.is_zero()).then_some(self.default_ttl)
             } else {
@@ -383,7 +383,7 @@ mod tests {
         assert!(svc.get("c").await.unwrap().is_some());
     }
 
-    /// 双后端共享语义场景（R-redis-shared-cache-002）：get/set/ttl 行为
+    /// 双后端共享语义场景：get/set/ttl 行为
     /// 在 memory 与 redis 后端下一致。键名带随机后缀，可对共享 redis 实例
     /// 重复运行。
     async fn assert_backend_semantics(svc: OxcacheService) {
@@ -514,7 +514,7 @@ mod tests {
     }
 
     /// 已编译 cache-redis：redis 不可达时构建拒绝（固定语义：不降级
-    /// memory，R-redis-shared-cache-002）。端口 1 恒为 connection refused，
+    /// memory）。端口 1 恒为 connection refused，
     /// 不依赖外部服务。
     #[cfg(feature = "cache-redis")]
     #[tokio::test]

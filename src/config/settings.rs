@@ -137,7 +137,7 @@ pub struct Settings {
     /// 缓存配置
     pub cache: CacheSettings,
 
-    /// WebSocket 连接治理配置（R-ws-task-status-003）
+    /// WebSocket 连接治理配置
     ///
     /// `serde(default)` 兼容旧 config 文件缺 `[websocket]` 节
     /// （同 `sitemap` 节先例）。
@@ -951,7 +951,7 @@ fn default_cache_backend() -> String {
 }
 
 impl CacheSettings {
-    /// 启动期 fail-closed 校验（R-redis-shared-cache-001）。
+    /// 启动期 fail-closed 校验。
     ///
     /// - `backend=redis` 且 `cache-redis` feature 未编译 → 配置错误；
     /// - `backend=redis` 且 `redis_url` 缺失 → 配置错误；

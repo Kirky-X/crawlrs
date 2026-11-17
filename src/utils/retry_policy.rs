@@ -139,7 +139,8 @@ pub fn is_retryable_error(error: &anyhow::Error) -> bool {
         "broken pipe",
         "too many connections",
         "rate limit",
-        // D10 修复：reqwest 0.13 / hyper 的错误串形态此前不在模式表内，
+        // 修复：reqwest 0.13 / hyper 的错误串形态此前不在模式表内，
+
         // 实盘 404/超时被误判为非重试（E2E F2：UT 用合成串命中、实盘脱节）。
         // webhook 投递 404 属永久性失败不重试（正确），以下仅补可恢复类。
         "error sending request",
@@ -257,7 +258,7 @@ mod tests {
         assert!(!policy.should_retry(6));
     }
 
-    /// D10：reqwest 0.13 / hyper 实际错误串必须命中重试表；永久性失败不重试。
+    /// reqwest 0.13 / hyper 实际错误串必须命中重试表；永久性失败不重试。
     #[test]
     fn test_is_retryable_error_reqwest_hyper_patterns() {
         for msg in [
@@ -275,7 +276,7 @@ mod tests {
         assert!(!is_retryable_error(&permanent));
     }
 
-    /// D10：max_retries 必须来自策略值（webhook worker 由
+    /// max_retries 必须来自策略值（webhook worker 由
     /// settings.webhook.max_retries 构造），而非常量。
     #[test]
     fn test_should_retry_with_error_respects_max_retries() {

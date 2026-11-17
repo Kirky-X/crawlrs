@@ -5,7 +5,7 @@
 //!
 //! crawlrs 经嵌入式或外部 fluxweir 网关统一 LLM/嵌入/重排出站访问。
 //! 嵌入式形态共享 crawlrs 的 dbnexus 连接池（单池共享，见变更
-//! `fluxweir-llm-gateway` design D3/D9/D10）；外部形态经 SDK 直连 base_url。
+//! `fluxweir-llm-gateway`）；外部形态经 SDK 直连 base_url。
 //!
 //! 消费方：`bootstrap::fluxweir_gateway`（生命周期）、`init_llm_service`（carrier
 //! 装配）、`init_rag_components`（嵌入/重排降级链）。`trusted_proxy` 为保留
@@ -68,7 +68,7 @@ pub struct FluxweirSettings {
     /// 可信代理开关（保留机制，缺省 false）：开启时网关接受宿主经 request
     /// extensions 注入的 TrustedIdentity（is_admin 位收窄 /admin/*）。当前
     /// SDK 回环形态下 crawlrs 不注入身份、保持 false 即可——数据面经 SDK
-    /// 透传客户端 key 鉴权，与缩围裁决（变更 r3 T020）一致
+    /// 透传客户端 key 鉴权，与缩围裁决一致
     #[config(default = false)]
     pub trusted_proxy: bool,
 

@@ -73,7 +73,7 @@ pub enum MarkdownPostProcessorError {
 /// let processor = MarkdownPostProcessor::new(
 ///     Arc::new(HtmdMarkdownService::new()),
 ///     Some(Arc::new(ContentExtractionFacade::new(None))),
-///);
+/// );
 /// let req: ScrapeRequestDto = serde_json::from_value(json!({
 ///     "url": "https://example.com",
 ///     "formats": ["markdown"]

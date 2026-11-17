@@ -732,7 +732,7 @@ mod tests {
         serde_json::json!({ "results": [] })
     }
 
-    // ========== 采集（T006/T007 回归） ==========
+    // ========== 采集 ==========
 
     #[tokio::test]
     async fn test_collect_counts_match_registry() {
@@ -956,7 +956,7 @@ mod tests {
         assert_eq!(svc.settings().pool_target, 3);
     }
 
-    // ========== 健康口径（T010） ==========
+    // ========== 健康口径 ==========
 
     #[test]
     fn test_health_is_degraded_before_bootstrap_completes() {
@@ -990,7 +990,7 @@ mod tests {
         assert!(!EngineHealth::Unhealthy.is_available());
     }
 
-    // ========== 熔断与晋升（T010） ==========
+    // ========== 熔断与晋升 ==========
 
     #[tokio::test]
     async fn test_repeated_failures_evict_member_and_promote_candidate() {
@@ -1160,7 +1160,7 @@ mod tests {
         assert_eq!(svc.pool_len(), 0);
     }
 
-    // ========== 探活轮次（T010） ==========
+    // ========== 探活轮次 ==========
 
     #[tokio::test]
     async fn test_health_cycle_promotes_candidates_and_respects_target() {
@@ -1285,7 +1285,7 @@ mod tests {
         assert_eq!(svc.pool_len(), 1);
     }
 
-    // ========== 启动期重建与 seed 引导（T011） ==========
+    // ========== 启动期重建与 seed 引导 ==========
 
     #[tokio::test]
     async fn test_bootstrap_promotes_seed_that_passes_probe() {

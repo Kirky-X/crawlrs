@@ -6,7 +6,7 @@
 //! 两条 provider 链路，独立选择、可单独启用：
 //! - 嵌入：`local`（vecboost 进程内推理，需 `rag-local` feature）；
 //!   远端兜底经 gateway（fluxweir embed）在装配期叠加，不再有 rig 直连
-//!   provider（fluxweir-llm-gateway T011 退役 rag-remote）
+//!   provider（退役 rag-remote）
 //! - 重排：`local`（vecboost，需 `rag-local`）或 `http`（通用 /rerank REST
 //!   适配，兼容 Cohere/Jina/自建端点，仅 reqwest，无需 feature）
 //!

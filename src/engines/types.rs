@@ -776,7 +776,7 @@ fn convert_screenshot_config(config: &ScreenshotConfig) -> InternalScreenshotCon
 ///
 /// `to_internal` 二次校验 session_id
 /// 防用户绕过 builder 直接构造 ScrapeOptions 注入非法 session_id
-///（超长字符串 DoS / 控制字符日志注入 CWE-117）。
+/// （超长字符串 DoS / 控制字符日志注入 CWE-117）。
 fn resolve_session_id(session_id: &Option<String>) -> Option<String> {
     match session_id {
         Some(sid) if validate_session_id(sid) => Some(sid.clone()),

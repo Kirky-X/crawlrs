@@ -194,7 +194,7 @@ impl ContentExtractionFacade {
     /// LLM 回退提取：将原文送 LLM 结构化提取，输出 `text` 字段
     ///
     /// 调用 `LLMServiceTrait::extract_data_chunked(text, schema, "json")`
-    ///（长文按 `[llm.chunking]` 分块并行提取，关闭时等价单发 extract_data），
+    /// （长文按 `[llm.chunking]` 分块并行提取，关闭时等价单发 extract_data），
     /// schema 要求返回 `{"text": string, "title": string?, "author": string?}`。
     ///
     /// 返回 `ExtractedContent` confidence=0.8（高可信度）。

@@ -406,7 +406,8 @@ impl ScraperEngine for MoliEngine {
         }
         // 响应级等待变体：moli 的 CDP Network 事件面实测不可达（Network.enable
         // 被接受但 0 事件，scripts/poc/moli/network-probe-output.txt）——按
-        // R-wait-signals-002 返回 Unsupported，不静默吞变体。任何 I/O 前早退。
+        // 返回 Unsupported，不静默吞变体。任何 I/O 前早退。
+
         if matches!(
             request.wait_for,
             Some(WaitFor::ResponseUrl(_)) | Some(WaitFor::ResponseBody(_))
@@ -423,7 +424,7 @@ impl ScraperEngine for MoliEngine {
         // 会话任务独立 spawn（owned 输入）：外层超时/调用方丢弃 future 时，任务仍按
         // 内部分段超时走完收尾（全路径 page.close），杜绝错误/取消路径泄漏 page
         // target——chromiumoxide 的 Page 无 Drop，泄漏的 tab 会在 moli serve 进程
-        // 存活至重启（三维审查 P2-1）。
+        // 存活至重启。
         let session = tokio::spawn(MoliEngine::scrape_session(
             self.config.clone(),
             self.http_client.clone(),
@@ -586,7 +587,7 @@ mod tests {
         }
     }
 
-    /// 响应级等待变体在 moli 侧显式 Unsupported（R-wait-signals-002/R-engines-moli-005）：
+    /// 响应级等待变体在 moli 侧显式 Unsupported：
     /// 早退发生在任何 CDP I/O 之前——用不可达端点验证返回的是 Unsupported 而非连接错误
     #[tokio::test]
     async fn response_wait_variants_unsupported_before_io() {

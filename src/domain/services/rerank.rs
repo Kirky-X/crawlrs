@@ -51,7 +51,7 @@ pub trait RerankProvider: Send + Sync {
     fn name(&self) -> &str;
 }
 
-/// 复合重排 provider（fluxweir-llm-gateway D5 降级链）
+/// 复合重排 provider（fluxweir-llm-gateway 降级链）
 ///
 /// primary 成功直用；primary 出错 **单次** 切换 secondary（log warn 显性记录，
 /// 无内嵌重试防风暴）；双失败时交由 [`SearchReranker`] 的 fail-open 语义

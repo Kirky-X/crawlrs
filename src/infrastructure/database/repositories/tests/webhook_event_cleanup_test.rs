@@ -44,7 +44,7 @@ fn make_event(
     )
 }
 
-/// R-retention-004：`cleanup_terminal(30)` 清理 30 天前的 delivered/dead 终态事件，
+/// `cleanup_terminal(30)` 清理 30 天前的 delivered/dead 终态事件，
 /// 保留 pending/failed 活事件。
 #[tokio::test]
 async fn cleanup_terminal_removes_old_terminal_keeps_active() {
@@ -115,7 +115,7 @@ async fn cleanup_terminal_removes_old_terminal_keeps_active() {
     );
 }
 
-/// R-retention-004：新的 delivered 事件（1 天前投递）不因 30 天保留期被删。
+/// 新的 delivered 事件（1 天前投递）不因 30 天保留期被删。
 #[tokio::test]
 async fn cleanup_terminal_keeps_recent_delivered() {
     let _guard = webhook_lock().lock().await;
@@ -137,7 +137,7 @@ async fn cleanup_terminal_keeps_recent_delivered() {
     );
 }
 
-/// R-retention-004：delivered/dead 过期行数 > batch_size 时循环分批删净，活事件不受影响。
+/// delivered/dead 过期行数 > batch_size 时循环分批删净，活事件不受影响。
 #[tokio::test]
 async fn cleanup_terminal_batches_until_drained() {
     let _guard = webhook_lock().lock().await;
@@ -185,7 +185,7 @@ async fn cleanup_terminal_batches_until_drained() {
     );
 }
 
-/// R-retention-004：删除总数达到 `max_rows_per_cycle` 即封顶停止。
+/// 删除总数达到 `max_rows_per_cycle` 即封顶停止。
 #[tokio::test]
 async fn cleanup_terminal_caps_at_max_rows_per_cycle() {
     let _guard = webhook_lock().lock().await;

@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! fluxweir 网关生命周期（变更 `fluxweir-llm-gateway`，design D2/D3）
+//! fluxweir 网关生命周期（变更 `fluxweir-llm-gateway`）
 //!
 //! - `embedded`：进程内起服（`build_app_with_pool` 单池共享 crawlrs 的
 //!   dbnexus 连接池），readyz 探活 fail-fast，停机 flush 完成才退出
@@ -44,7 +44,7 @@ impl FluxweirGatewayHandle {
     }
 
     /// 优雅停机：embedded 形态先等 fluxweir flush 完成（pre-aggregator 最终
-    /// flush + 配额账本 flush_now），再放行宿主侧池关闭（design D2 顺序钉死，
+    /// flush + 配额账本 flush_now），再放行宿主侧池关闭（顺序钉死，
     /// 顺序颠倒会截断最终 flush）；external/disabled 形态为 no-op。
     pub async fn shutdown(&self) {
         #[cfg(feature = "gateway")]
@@ -98,7 +98,7 @@ pub async fn init_fluxweir_gateway(
 
 /// external 形态：不起服，仅承载 SDK 直连 base_url。
 ///
-/// 外部实例可用性不阻塞装配（spec R-gateway-lifecycle-001：external 不起服、
+/// 外部实例可用性不阻塞装配（external 不起服、
 /// SDK 直连；连通性由首次请求的熔断/重试承载）。
 #[cfg(feature = "gateway")]
 fn external_gateway_handle(
@@ -277,7 +277,7 @@ fn sha256_hex(input: &str) -> String {
 }
 
 /// readyz 探活：指数退避（200ms 起步、2s 封顶），总上限
-/// [`GATEWAY_READYZ_TIMEOUT`]，超时即结构化失败（spec R-gateway-lifecycle-001）
+/// [`GATEWAY_READYZ_TIMEOUT`]，超时即结构化失败
 #[cfg(feature = "gateway")]
 async fn wait_for_ready(base_url: &str) -> Result<()> {
     let client = reqwest::Client::new();

@@ -5,7 +5,7 @@
 
 //! Scrape 路由的 sdforge 注册。
 //!
-//! - `POST /v1/scrape`：直注（design D1′，带 JSON body，handler 原样组装）
+//! - `POST /v1/scrape`：直注（带 JSON body，handler 原样组装）
 //! - `GET /v1/scrape/{id}`：`#[forge]` stream 透传 wrapper（无 body，Path+State
 //!   参数模型与宏匹配；Ok/Err 两臂各做一次 into_response，响应零改写）
 

@@ -77,7 +77,7 @@ pub struct DatabaseSettings {
     ///
     /// 缺省 false：不执行迁移也不报错（既有语义）。true 时 `create_pool`
     /// 装配 `migrations_dir` + `auto_migrate`；未编译任何 db dialect
-    /// feature 时启动显性报错（R-multidb-schema-002/003）。
+    /// feature 时启动显性报错。
     ///
     /// `serde(default)` 兼容旧 config 文件缺键（同 `fail_closed` 字段先例）。
     #[serde(default)]
@@ -139,7 +139,7 @@ pub struct ServerSettings {
     pub enable_port_detection: bool,
 }
 
-/// WebSocket 连接治理配置（R-ws-task-status-003）
+/// WebSocket 连接治理配置
 ///
 /// `/v1/tasks/{id}/ws` 的连接资源上限：超限新连接被拒（429），
 /// 空闲超时（无事件可推送）后服务端主动关闭连接。

@@ -30,7 +30,7 @@ fn sample_result_with_age(days_ago: i64) -> ScrapeResult {
     }
 }
 
-/// R-retention-002：`cleanup_expired(30)` 删除 created_at 超过 30 天的行，
+/// `cleanup_expired(30)` 删除 created_at 超过 30 天的行，
 /// 保留新行，返回值为删除行数。
 ///
 /// 注意：testcontainers 容器在进程内由 OnceLock 共享（test_helpers），
@@ -70,7 +70,7 @@ async fn cleanup_expired_deletes_old_keeps_recent() {
     assert!(found.is_some(), "1-day-old row should be kept");
 }
 
-/// R-retention-002：retention_days=0 时所有历史行都过期；新插入行立即清理不报错。
+/// retention_days=0 时所有历史行都过期；新插入行立即清理不报错。
 #[tokio::test]
 async fn cleanup_expired_with_zero_retention_removes_fresh_rows() {
     let _guard = retention_lock().lock().await;
@@ -95,7 +95,7 @@ async fn cleanup_expired_with_zero_retention_removes_fresh_rows() {
     );
 }
 
-/// R-retention-002：过期行数 > batch_size 时循环分批删净，返回总数 = 过期行数，新行保留。
+/// 过期行数 > batch_size 时循环分批删净，返回总数 = 过期行数，新行保留。
 #[tokio::test]
 async fn cleanup_expired_batches_until_drained() {
     let _guard = retention_lock().lock().await;
@@ -139,7 +139,7 @@ async fn cleanup_expired_batches_until_drained() {
     );
 }
 
-/// R-retention-002：删除总数达到 `max_rows_per_cycle` 即封顶停止，超出部分留给下一周期。
+/// 删除总数达到 `max_rows_per_cycle` 即封顶停止，超出部分留给下一周期。
 #[tokio::test]
 async fn cleanup_expired_caps_at_max_rows_per_cycle() {
     let _guard = retention_lock().lock().await;

@@ -1170,7 +1170,6 @@ fn mask_token(token: &str) -> String {
 }
 
 // 编译期监听器注册（inventory）
-// ============================================================================
 
 /// `inventory` factory 函数：返回 `Arc<dyn GarrisonListener>` 实例。
 ///
@@ -1188,7 +1187,6 @@ inventory::submit! {
 }
 
 // 测试
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -1209,7 +1207,6 @@ mod tests {
     }
 
     // mask_token 测试
-    // ============================================================
 
     #[test]
     fn test_mask_token_truncates_to_8_chars_with_ellipsis() {
@@ -1250,7 +1247,6 @@ mod tests {
     }
 
     // event_to_audit_entry 测试（覆盖关键变体）
-    // ============================================================
 
     #[test]
     fn test_login_event_converts_to_allow_entry() {
@@ -1555,7 +1551,6 @@ mod tests {
     }
 
     // metadata 字段截断测试
-    // ============================================================
 
     #[test]
     fn test_permission_check_event_truncates_long_permission_metadata() {
@@ -1654,7 +1649,6 @@ mod tests {
     }
 
     // IP 解析失败记录原始字符串测试
-    // ============================================================
 
     #[test]
     fn test_request_context_invalid_ip_records_raw_string_to_metadata() {
@@ -1737,7 +1731,6 @@ mod tests {
     }
 
     // truncate_string UTF-8 边界测试
-    // ============================================================
 
     #[test]
     fn test_truncate_string_short_string_returned_as_is() {
@@ -1784,7 +1777,6 @@ mod tests {
     }
 
     // Mock AuditServiceTrait — 捕获 log() 调用用于验证
-    // ============================================================
 
     /// 测试用 mock audit service，捕获 `log()` 调用以验证 on_event 行为。
     ///
@@ -1894,7 +1886,6 @@ mod tests {
     }
 
     // set_audit_service 测试
-    // ============================================================
 
     #[tokio::test]
     async fn test_set_audit_service_succeeds_when_none() {
@@ -1938,7 +1929,6 @@ mod tests {
     }
 
     // CrawlrsAuditListener::on_event 测试（真实集成路径）
-    // ============================================================
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_on_event_persists_entry_via_audit_service() {
@@ -2097,7 +2087,6 @@ mod tests {
     }
 
     // factory 函数测试
-    // ============================================================
 
     #[test]
     fn test_crawlrs_audit_listener_factory_returns_arc() {

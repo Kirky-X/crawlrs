@@ -386,7 +386,7 @@ impl PlaywrightBrowserManagerComponent {
 
     /// 下载浏览器（如果需要）
     ///
-    /// D9 修复：此前自动下载为死功能（`do_fetcher_download` 恒 Err stub，
+    /// 修复：此前自动下载为死功能（`do_fetcher_download` 恒 Err stub，
     /// fetcher 依赖因 RUSTSEC 移除），失败后静默回落 `Ok(None)` → chromiumoxide
     /// 自行探测报出误导性的 "Could not auto detect a chrome executable"。
     /// 现支持显式路径环境变量，并在无浏览器时返回可操作的显式错误。
@@ -417,7 +417,7 @@ impl PlaywrightBrowserManagerComponent {
                 Ok(Some(path))
             }
             Err(e) => {
-                // D9 修复：显式失败，不再静默回落触发误导性下游错误。
+                // 修复：显式失败，不再静默回落触发误导性下游错误。
                 Err(EngineError::Unsupported(format!(
                     "playwright 引擎不可用：未找到系统 Chrome/Chromium，内置自动下载不可用（{e}）。                     处置：安装 Chrome/Chromium，或设置环境变量                      CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH 指向浏览器可执行文件。"
                 )))

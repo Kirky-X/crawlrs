@@ -33,7 +33,7 @@ use std::collections::HashMap;
 ///         url: &str,
 ///         payload: &Value,
 ///         headers: Option<&HashMap<String, String>>,
-///) -> Result<> {
+/// ) -> Result<> {
 ///         // 实现发送逻辑
 ///     }
 /// }

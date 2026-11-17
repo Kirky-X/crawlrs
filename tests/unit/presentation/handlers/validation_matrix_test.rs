@@ -13,9 +13,7 @@ use sdforge::validator::Validate;
 use crawlrs::application::dto::extract_request::ExtractRequestDto;
 use crawlrs::application::dto::scrape_request::ScrapeRequestDto;
 
-// ---------------------------------------------------------------------------
 // extract：urls 数量界（DTO: length(min=1, max=100)）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn tc_extract_urls_empty_fails_validation() {
@@ -73,9 +71,7 @@ fn tc_extract_sync_wait_over_max_30001_fails_validation() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // scrape：include/exclude 标签数（DTO: length(max=50)）
-// ---------------------------------------------------------------------------
 
 fn scrape_request_with_tags(tag_key: &str, count: usize) -> ScrapeRequestDto {
     let tags: Vec<String> = (0..count).map(|i| format!("tag{i}")).collect();
@@ -110,9 +106,7 @@ fn tc_scrape_exclude_tags_over_max_51_fails_validation() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // scrape：actions 数量（DTO: length(max=20)）
-// ---------------------------------------------------------------------------
 
 fn scrape_request_with_actions(count: usize) -> ScrapeRequestDto {
     let actions: Vec<serde_json::Value> = (0..count)
@@ -137,9 +131,7 @@ fn tc_scrape_actions_over_max_21_fails_validation() {
     assert!(dto.validate().is_err(), "21 actions must fail validation");
 }
 
-// ---------------------------------------------------------------------------
 // scrape：metadata 嵌套深度（MAX_METADATA_DEPTH = 5）
-// ---------------------------------------------------------------------------
 
 fn metadata_at_depth(depth: usize) -> serde_json::Value {
     let mut value = serde_json::json!(1);
@@ -173,9 +165,7 @@ fn tc_scrape_metadata_over_max_depth_6_fails_validation() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // scrape：options 嵌套校验（wait_for ≤ 60000ms / timeout ≤ 300s）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn tc_scrape_options_wait_for_over_60s_fails_validation() {

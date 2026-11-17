@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! fluxweir 承载的 LLM carrier（变更 `fluxweir-llm-gateway` design D4）
+//! fluxweir 承载的 LLM carrier（变更 `fluxweir-llm-gateway`）
 //!
 //! [`FluxweirLlmCarrier`] 经 fluxweir SDK（嵌入式回环或外部实例）发出提取
 //! 请求：`prompt_builder` 构造 prompt → SDK `chat` → JSON 解析 → usage 映射。

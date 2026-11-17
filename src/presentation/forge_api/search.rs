@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Search 路由的 sdforge 直注注册（design D1′）。
+//! Search 路由的 sdforge 直注注册。
 //!
 //! handler 原样提交：URL、方法、提取器与迁移前的手写
 //! `.route("/v1/search", post(search_handler::search))` 逐字节等价。

@@ -82,7 +82,7 @@ const BROWSER_ENGINES: [&str; 5] = [
 /// - Abundant：不改分（原策略不变）；
 /// - Tight：moli +[`TIGHT_MOLI_BOOST`]（封顶 255），其余引擎不改分（Playwright 不加分）；
 /// - Critical：浏览器系引擎（除 moli）归 0——仅 moli 保留分数承担 JS；静态引擎不改分
-///   （Critical 的静态回退由 router 层 D4 语义处理，不经此函数）。
+///   （Critical 的静态回退由 router 层语义处理，不经此函数）。
 pub fn apply_memory_policy(score: u8, engine_name: &str, level: MemoryLevel, needs_js: bool) -> u8 {
     if !needs_js || level == MemoryLevel::Abundant {
         return score;

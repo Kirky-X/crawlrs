@@ -3,9 +3,9 @@
 
 //! WebSocket task status endpoint tests (spec: ws-task-status).
 //!
-//! R-ws-task-status-001: `GET /v1/tasks/{id}/ws` upgrades (101) and pushes a
+//! `GET /v1/tasks/{id}/ws` upgrades (101) and pushes a
 //! status frame per matching event from the existing `event_bus`.
-//! R-ws-task-status-002: unauthenticated connections are rejected and
+//! unauthenticated connections are rejected and
 //! cross-tenant task ids are not subscribable.
 //!
 //! Tests are docker/db-gated: without a test database they return early.
@@ -227,7 +227,7 @@ async fn make_fixture() -> Option<WsFixture> {
     })
 }
 
-/// R-ws-task-status-001：101 升级后，同一 team 的任务状态事件以帧送达。
+/// 101 升级后，同一 team 的任务状态事件以帧送达。
 #[tokio::test]
 async fn ws_upgrade_receives_task_status_frame() {
     let Some(fx) = make_fixture().await else {
@@ -271,7 +271,7 @@ async fn ws_upgrade_receives_task_status_frame() {
     );
 }
 
-/// R-ws-task-status-001：不存在的 task id 返回明确错误（404）而非挂起。
+/// 不存在的 task id 返回明确错误（404）而非挂起。
 #[tokio::test]
 async fn ws_missing_task_returns_404() {
     let Some(fx) = make_fixture().await else {
@@ -283,7 +283,7 @@ async fn ws_missing_task_returns_404() {
     assert_eq!(res.status_code(), StatusCode::NOT_FOUND);
 }
 
-/// R-ws-task-status-002：未携带凭据（无 AuthState 扩展）的连接被拒（401，非 101）。
+/// 未携带凭据（无 AuthState 扩展）的连接被拒（401，非 101）。
 #[tokio::test]
 async fn ws_unauthenticated_connection_rejected() {
     let Some(fx) = make_fixture().await else {
@@ -294,7 +294,7 @@ async fn ws_unauthenticated_connection_rejected() {
     assert_eq!(res.status_code(), StatusCode::UNAUTHORIZED);
 }
 
-/// R-ws-task-status-002：跨租户 task id 不可订阅——team B 对 team A 的任务
+/// 跨租户 task id 不可订阅——team B 对 team A 的任务
 /// 发起连接被 404 拒绝（不泄露存在性），而同队连接能建立并收到事件。
 #[tokio::test]
 async fn ws_cross_tenant_task_not_subscribable() {
@@ -341,7 +341,7 @@ async fn ws_cross_tenant_task_not_subscribable() {
     );
 }
 
-/// R-ws-task-status-003：连接数超限的新连接被拒（429），且名额真实占用。
+/// 连接数超限的新连接被拒（429），且名额真实占用。
 #[tokio::test]
 async fn ws_connection_cap_rejects_over_limit() {
     let Some(fx) = make_fixture().await else {
@@ -376,7 +376,7 @@ async fn ws_connection_cap_rejects_over_limit() {
     assert_eq!(res.status_code(), StatusCode::TOO_MANY_REQUESTS);
 }
 
-/// R-ws-task-status-003：空闲超时后服务端关闭连接并释放名额——
+/// 空闲超时后服务端关闭连接并释放名额——
 /// 同一请求从 429（占用中）变为 426（可获名额但非升级请求）。
 #[tokio::test]
 async fn ws_idle_timeout_closes_and_frees_slot() {

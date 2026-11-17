@@ -455,9 +455,7 @@ async fn bootstrap_admin_key(pool: Arc<dbnexus::DbPool>) -> anyhow::Result<Strin
     anyhow::bail!("acceptance suite requires the `auth` feature (platform implies auth)");
 }
 
-// ---------------------------------------------------------------------------
 // World
-// ---------------------------------------------------------------------------
 
 #[derive(cucumber::World, Default)]
 #[world(init = Self::new)]
@@ -472,7 +470,7 @@ pub struct AcceptanceWorld {
     pub last_status: Option<u16>,
     /// response 被消费后的响应体遗留
     pub last_body: Option<String>,
-    /// 最近一次捕获的 webhook 投递（R-whv-001/002）
+    /// 最近一次捕获的 webhook 投递
     pub last_delivery: Option<CapturedDelivery>,
 }
 
@@ -497,9 +495,7 @@ impl AcceptanceWorld {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 通用步骤
-// ---------------------------------------------------------------------------
 
 #[given("an admin API key")]
 async fn given_admin_key(w: &mut AcceptanceWorld) {
@@ -512,7 +508,7 @@ async fn given_no_key(w: &mut AcceptanceWorld) {
     w.auth_key = None;
 }
 
-/// 经 admin 端点签发普通 key（R-acceptance-003：签发→使用完整链路）。
+/// 经 admin 端点签发普通 key（签发→使用完整链路）。
 #[given("a regular API key signed via admin endpoint")]
 async fn given_regular_key(w: &mut AcceptanceWorld) {
     let harness = w.get_harness().await;
@@ -1089,9 +1085,7 @@ async fn then_json_field_nonempty_string_or_number(w: &mut AcceptanceWorld, fiel
     );
 }
 
-// ---------------------------------------------------------------------------
 // 任务终态轮询（scrape/crawl 生命周期场景共用）
-// ---------------------------------------------------------------------------
 
 /// 轮询任务至终态（completed/failed/cancelled），返回最后状态。
 async fn poll_task_to_terminal(
@@ -1326,7 +1320,6 @@ async fn when_delete_template(w: &mut AcceptanceWorld, template: String) {
 
 // 测试数据库解析（等价 src/common/test_helpers.rs，但该模块是 lib-test 门控，
 // 验收二进制不可见，故在此自持实现；migrations 覆盖全部 7 个 SQL 文件）
-// ---------------------------------------------------------------------------
 
 /// 解析验收数据库 URL：TEST_DATABASE_URL / DATABASE_URL 优先，否则 testcontainers。
 fn resolve_acceptance_db_url() -> Option<String> {
@@ -1423,7 +1416,7 @@ fn start_testcontainers_pg() -> String {
         .clone()
 }
 
-// ---- webhook 投递验收 steps（R-whv-001/002）----
+// ---- webhook 投递验收 steps ----
 
 /// 最近一次捕获的 webhook 投递。
 pub struct CapturedDelivery {

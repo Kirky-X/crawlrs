@@ -78,7 +78,7 @@ mod tests {
     }
 
     /// 假阳性率实测：100k 容量灌 100k 键，10 万非插入键命中率 <1.5%
-    /// （名义 0.01 + 50% 余量，对齐规格 R-url-dedup-001）。
+    /// （名义 0.01 + 50% 余量）。
     #[test]
     fn test_false_positive_rate_under_1_5_percent() {
         let n = 100_000usize;

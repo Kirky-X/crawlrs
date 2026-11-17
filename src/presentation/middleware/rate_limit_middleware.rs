@@ -395,7 +395,7 @@ fn apply_429_cors_headers(response: &mut Response, req: &Request, allowed_origin
     }
 }
 
-/// axum `from_fn_with_state` 兼容入口（D1 修复：生产路由栈挂载点）。
+/// axum `from_fn_with_state` 兼容入口（修复：生产路由栈挂载点）。
 ///
 /// 此前 [`RateLimitMiddleware::new`] 仅以 `Extension` 注入、生产路由从未
 /// `.layer(from_fn(...))` 挂载——`rate_limiting.enabled=true / 60rpm / burst20`

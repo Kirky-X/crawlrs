@@ -227,7 +227,7 @@ impl CoalesceCoordinator {
             }
             CoalesceSignal::Completed { success: false } => {
                 // leader 失败/取消（结果未落库）：不查询结果，走自身重排。
-                // 这是 M2 修复点：旧实现统一按 Completed 查询，失败路径
+                // 旧实现统一按 Completed 查询，失败路径
                 // 必然白烧一次 `find_by_task_id`。
                 warn!(
                     "Coalesce leader task {} reported failure for waiter task {}; \

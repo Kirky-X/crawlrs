@@ -3,7 +3,7 @@
 
 //! `GET /metrics` —— Prometheus 文本曝光。
 //!
-//! D8 修复：此前返回硬编码 JSON stub（version/uptime 恒定、无任何真实指标族，
+//! 修复：此前返回硬编码 JSON stub（version/uptime 恒定、无任何真实指标族，
 //! E2E SJ-03/S-H 实证）。现从全局 `PrometheusHandle` 渲染真实指标文本。
 
 use axum::response::{IntoResponse, Response};

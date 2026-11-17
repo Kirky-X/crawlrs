@@ -22,7 +22,8 @@ pub fn validate_crawl_config(max_depth: u32, max_concurrency: Option<u32>) -> Re
         return Err("max_depth must be between 0 and 5".to_string());
     }
     if let Some(concurrency) = max_concurrency {
-        // D6 修复：三层上限不一致（DTO max=50 死属性 / handler 无校验 /
+        // 修复：三层上限不一致（DTO max=50 死属性 / handler 无校验 /
+
         // 此处 100）统一为契约值 50（E2E SC-04：51 被放行实为缺陷）。
         if concurrency > crate::application::dto::crawl_request::MAX_CONCURRENCY {
             return Err("max_concurrency must be between 1 and 50".to_string());

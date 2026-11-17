@@ -45,7 +45,7 @@ async fn row_exists(id: crate::domain::id::Id) -> bool {
         .is_some()
 }
 
-/// R-retention-003：`cleanup_expired(90)` 删除 created_at 超过 90 天的行，
+/// `cleanup_expired(90)` 删除 created_at 超过 90 天的行，
 /// 保留新行，返回值为删除行数。
 #[tokio::test]
 async fn cleanup_expired_deletes_old_keeps_recent() {
@@ -71,7 +71,7 @@ async fn cleanup_expired_deletes_old_keeps_recent() {
     assert!(row_exists(recent_id).await, "1-day-old row should be kept");
 }
 
-/// R-retention-003：retention_days=0 时所有历史行都过期。
+/// retention_days=0 时所有历史行都过期。
 #[tokio::test]
 async fn cleanup_expired_with_zero_retention_removes_fresh_rows() {
     let _guard = restriction_lock().lock().await;
@@ -94,7 +94,7 @@ async fn cleanup_expired_with_zero_retention_removes_fresh_rows() {
     );
 }
 
-/// R-retention-003：过期行数 > batch_size 时循环分批删净，返回总数 = 过期行数，新行保留。
+/// 过期行数 > batch_size 时循环分批删净，返回总数 = 过期行数，新行保留。
 #[tokio::test]
 async fn cleanup_expired_batches_until_drained() {
     let _guard = restriction_lock().lock().await;
@@ -126,7 +126,7 @@ async fn cleanup_expired_batches_until_drained() {
     assert!(row_exists(recent_id).await, "1-day-old row must survive");
 }
 
-/// R-retention-003：删除总数达到 `max_rows_per_cycle` 即封顶停止。
+/// 删除总数达到 `max_rows_per_cycle` 即封顶停止。
 #[tokio::test]
 async fn cleanup_expired_caps_at_max_rows_per_cycle() {
     let _guard = restriction_lock().lock().await;

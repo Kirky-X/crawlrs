@@ -187,7 +187,7 @@ fn build_rate_limiting_config(settings: &Settings) -> RateLimitingConfig {
 
 /// 按 `storage_backend` 选择限流存储句柄。
 ///
-/// 存储后端选择：database 路径失败显性报错（R-multidb-schema-003
+/// 存储后端选择：database 路径失败显性报错（
 /// 禁止「DDL 失败→回退内存」）；未知非法值维持既有 fail-open 语义。
 #[cfg(feature = "rate-limit")]
 fn select_rate_limit_storage(

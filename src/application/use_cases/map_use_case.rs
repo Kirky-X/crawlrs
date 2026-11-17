@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! `/v1/map` 业务用例：从站点 sitemap 发现 URL（bdd-acceptance-hardening R-map-002/003）。
+//! `/v1/map` 业务用例：从站点 sitemap 发现 URL（bdd-acceptance-hardening）。
 //!
 //! 语义（specs/map-endpoint）：
 //! - 抓取 `{origin}/sitemap.xml`，解析 `<urlset>` 的 `<loc>` 保序返回
@@ -296,7 +296,7 @@ pub struct MapUseCase {
     fetcher: Arc<dyn SitemapFetcher>,
 }
 
-/// 子 sitemap 递归上限（specs/map-endpoint R-map-002）
+/// 子 sitemap 递归上限
 const MAX_SUB_SITEMAPS: usize = 5;
 
 impl MapUseCase {
@@ -559,13 +559,13 @@ fn forward_capped(
 }
 
 /// 流式 loc 序列的聚合后处理：include 白名单 → exclude 黑名单 → 去重（保首次
-/// 出现位置）→ limit 截断（R-map-003）
+/// 出现位置）→ limit 截断
 ///
 /// include/exclude 是纯谓词，先过滤后去重输出语义不变，但去重集合从全量
 /// locs（max_urls 默认 5 万）缩小到命中白名单的子集。[`MapUseCase::execute`]
 /// 与 map_handler 聚合路径共用，保证两条路径的响应语义一致。
 pub fn finalize_links(locs: Vec<String>, dto: &MapRequestDto) -> Vec<String> {
-    // 先 include 白名单后 exclude 黑名单（R-map-003）
+    // 先 include 白名单后 exclude 黑名单
     let mut links = locs;
     if let Some(include) = &dto.include_patterns {
         links.retain(|u| include.iter().any(|p| matches_glob(p, u)));
@@ -678,7 +678,7 @@ mod tests {
 
     // parse_locs
 
-    /// R-map-002：urlset 多 `<loc>` 解析保序。
+    /// urlset 多 `<loc>` 解析保序。
     #[test]
     fn parse_locs_preserves_order() {
         let xml = urlset(&["https://a.com/1", "https://a.com/2", "https://a.com/3"]);
@@ -688,7 +688,7 @@ mod tests {
         );
     }
 
-    /// R-map-002：空 sitemap / 无 loc 返回空。
+    /// 空 sitemap / 无 loc 返回空。
     #[test]
     fn parse_locs_empty_sitemap() {
         assert!(parse_locs(&urlset(&[])).is_empty());
@@ -696,7 +696,7 @@ mod tests {
 
     // matches_glob
 
-    /// R-map-003：`*`/`?` 通配语义。
+    /// `*`/`?` 通配语义。
     #[test]
     fn matches_glob_semantics() {
         assert!(matches_glob("*/blog/*", "https://a.com/blog/post-1"));
@@ -712,7 +712,7 @@ mod tests {
 
     // execute
 
-    /// R-map-002：3 个 loc 的 sitemap 保序返回 3 个 link。
+    /// 3 个 loc 的 sitemap 保序返回 3 个 link。
     #[tokio::test]
     async fn execute_returns_locs_in_order() {
         let fetcher = MockFetcher {
@@ -734,7 +734,7 @@ mod tests {
         );
     }
 
-    /// R-map-002：重复 loc 去重保首次位置。
+    /// 重复 loc 去重保首次位置。
     #[tokio::test]
     async fn execute_dedups_keeping_first_position() {
         let fetcher = MockFetcher {
@@ -753,7 +753,7 @@ mod tests {
         assert_eq!(result.links, vec!["https://a.com/a", "https://a.com/b"]);
     }
 
-    /// R-map-002：sitemapindex 递归一层，两个子 sitemap 共 5 个 loc 全部返回。
+    /// sitemapindex 递归一层，两个子 sitemap 共 5 个 loc 全部返回。
     #[tokio::test]
     async fn execute_recurses_sitemap_index_one_level() {
         let fetcher = MockFetcher {
@@ -787,7 +787,7 @@ mod tests {
         assert_eq!(result.links[4], "https://a.com/5");
     }
 
-    /// R-map-002：子 sitemap 数超过 5 时只取前 5 个。
+    /// 子 sitemap 数超过 5 时只取前 5 个。
     #[tokio::test]
     async fn execute_caps_sub_sitemaps_at_five() {
         let children: Vec<String> = (0..7).map(|i| format!("https://a.com/s{i}.xml")).collect();
@@ -816,7 +816,7 @@ mod tests {
         assert!(!result.links.contains(&"https://a.com/u5".to_string()));
     }
 
-    /// R-map-003：include 白名单、exclude 黑名单过滤；同时给时先 include 后 exclude。
+    /// include 白名单、exclude 黑名单过滤；同时给时先 include 后 exclude。
     #[tokio::test]
     async fn execute_applies_include_then_exclude_patterns() {
         let fetcher = MockFetcher {
@@ -842,7 +842,7 @@ mod tests {
         assert_eq!(result.links, vec!["https://a.com/blog/1"]);
     }
 
-    /// R-map-003：limit 截断。
+    /// limit 截断。
     #[tokio::test]
     async fn execute_truncates_to_limit() {
         let fetcher = MockFetcher {
@@ -863,7 +863,7 @@ mod tests {
         assert_eq!(result.links, vec!["https://a.com/1", "https://a.com/2"]);
     }
 
-    /// R-map-002：sitemap 404 → 200 空 links（合法状态，非错误）。
+    /// sitemap 404 → 200 空 links（合法状态，非错误）。
     #[tokio::test]
     async fn execute_returns_empty_links_on_sitemap_404() {
         let fetcher = MockFetcher {
@@ -879,7 +879,7 @@ mod tests {
         assert!(result.links.is_empty());
     }
 
-    /// R-map-002：根 sitemap 3xx 重定向页 body 即使含 `<loc>` 也不得解析（严格 200 口径）。
+    /// 根 sitemap 3xx 重定向页 body 即使含 `<loc>` 也不得解析（严格 200 口径）。
     #[tokio::test]
     async fn execute_non_200_redirect_returns_empty_links() {
         let fetcher = MockFetcher {
@@ -901,7 +901,7 @@ mod tests {
         );
     }
 
-    /// R-map-004：目标站 5xx → SitemapStatus（handler 映射 502 MAP_TARGET_UNREACHABLE）。
+    /// 目标站 5xx → SitemapStatus（handler 映射 502 MAP_TARGET_UNREACHABLE）。
     #[tokio::test]
     async fn execute_maps_5xx_to_target_unreachable() {
         let fetcher = MockFetcher {
@@ -916,7 +916,7 @@ mod tests {
         assert!(matches!(result, Err(MapError::SitemapStatus(_))));
     }
 
-    /// R-map-001：无效 URL（无法解析 origin）→ OriginUnparsable 错误（DTO 校验是第一道防线）。
+    /// 无效 URL（无法解析 origin）→ OriginUnparsable 错误（DTO 校验是第一道防线）。
     #[tokio::test]
     async fn execute_rejects_unparsable_url() {
         let fetcher = MockFetcher {

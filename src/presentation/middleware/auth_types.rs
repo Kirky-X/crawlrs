@@ -157,7 +157,7 @@ impl axum::response::IntoResponse for AuthError {
     /// # 状态码映射
     ///
     /// | AuthError 变体 | HTTP 状态码 |
-    ///|---------------|-------------|
+    /// |---------------|-------------|
     /// | `InvalidKey` / `ExpiredKey` / `NilTeamId` | 401 Unauthorized |
     /// | `InactiveKey` / `MissingScope` / `Forbidden` | 403 Forbidden |
     /// | `RateLimited` | 429 Too Many Requests |

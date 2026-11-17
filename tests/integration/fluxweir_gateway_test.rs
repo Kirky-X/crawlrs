@@ -8,10 +8,9 @@
 //! `TEST_DATABASE_URL=... cargo test --test integration_tests \
 //!   --features full,test-mocks,gateway -- --ignored fluxweir_gateway_test`
 //!
-//! 覆盖：嵌入式起服与 readyz 探活（R-gateway-lifecycle-001）、单池共享落库
-//! 与迁移历史表分离（R-gateway-lifecycle-002/005 全新库分支）、SDK 回环形态
-//! 的网关侧摘要鉴权（R-admin-auth-003）。
-
+//! 覆盖：嵌入式起服与 readyz 探活、单池共享落库
+//! 与迁移历史表分离（全新库分支）、SDK 回环形态
+//! 的网关侧摘要鉴权。
 #![cfg(feature = "gateway")]
 
 use std::path::Path;
@@ -122,7 +121,7 @@ async fn fluxweir_gateway_embedded_lifecycle() {
     assert!(ready.status().is_success(), "readyz must be 2xx");
 
     // 4. 经网关发一次 chat 请求（无 vendor 上游 → 失败形态仍被记录；
-    //    R-gateway-lifecycle-002：落库行存在即为单池接管实证）
+    //    落库行存在即为单池接管实证）
     let before = count_rows(&pool, "request_logs").await;
     let chat = http
         .post(format!("{base_url}/v1/chat/completions"))
@@ -155,7 +154,7 @@ async fn fluxweir_gateway_embedded_lifecycle() {
         "request_logs must gain a row for the gateway request (before {before}, after {after})"
     );
 
-    // 5. 迁移历史表互不短路（R-gateway-lifecycle-005 全新库分支）：
+    // 5. 迁移历史表互不短路（全新库分支）：
     //    fluxweir 版本 1..=9 落默认表 dbnexus_migrations，与 crawlrs_migrations 并存
     let fluxweir_rows = count_rows(&pool, "dbnexus_migrations").await;
     assert!(

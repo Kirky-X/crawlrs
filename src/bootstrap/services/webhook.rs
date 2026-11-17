@@ -16,7 +16,7 @@ use crate::domain::services::webhook_service::WebhookServiceImpl;
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 
 /// 装配 webhook 服务：webhook-on → `WebhookServiceImpl`；webhook-off → `NoopWebhookService`
-///（所有方法返回 Ok(())，业务逻辑放行）。
+/// （所有方法返回 Ok(())，业务逻辑放行）。
 pub(super) fn init_webhook_service(
     #[cfg_attr(not(feature = "webhook"), allow(unused_variables))] repositories: &Repositories,
     #[cfg_attr(not(feature = "webhook"), allow(unused_variables))] settings: &Settings,

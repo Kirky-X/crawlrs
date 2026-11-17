@@ -100,7 +100,7 @@ impl ChunkAccumulator {
     }
 
     /// 结构化元素（表格/列表）独立成块：先 flush pending，再追加结构化块
-    ///（即使超过 max_chunk_size 也不截断）
+    /// （即使超过 max_chunk_size 也不截断）
     fn push_structural(&mut self, text: String, dom_path: String) {
         // 先 flush pending
         self.push_pending_chunk();
@@ -465,7 +465,7 @@ pub trait EmbeddingProvider: Send + Sync {
     fn dimensions(&self) -> usize;
 }
 
-/// 复合嵌入 provider（fluxweir-llm-gateway D5 降级链）
+/// 复合嵌入 provider（fluxweir-llm-gateway 降级链）
 ///
 /// primary 成功直用；primary 出错 **单次** 切换 secondary（log warn 显性记录，
 /// 无内嵌重试防风暴）；双失败时显性报错（anyhow 链携带双方错误上下文）。

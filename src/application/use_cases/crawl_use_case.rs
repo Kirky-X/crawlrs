@@ -1458,7 +1458,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_max_concurrency_at_boundary_50_succeeds() {
-        // D6 契约：max_concurrency 上限 50（三层统一后的边界值）
+        // 契约：max_concurrency 上限 50（三层统一后的边界值）
+
         let mut dto = make_crawl_dto();
         dto.config.max_concurrency = Some(50);
 

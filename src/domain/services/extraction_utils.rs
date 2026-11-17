@@ -63,7 +63,7 @@ impl ExtractionUtils {
     ///     "href",
     ///     base_url,
     ///     || Some(element.text.collect::<Vec<_>>.join(" ").trim.to_string),
-    ///);
+    /// );
     /// ```
     pub fn extract_element_value<F>(
         element: ElementRef,

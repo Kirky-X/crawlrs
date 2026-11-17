@@ -416,7 +416,6 @@ fn tc_validate_content_quality_poor_low_ratio() {
 }
 
 // Free function wrappers
-// ===========================================================================
 
 #[test]
 fn tc_process_web_content_with_processor_fn_html() {
@@ -460,7 +459,6 @@ fn tc_process_crawled_batch_with_processor_fn_success() {
 }
 
 // Free functions: init_encoding_patterns and detect_html_structure
-// ===========================================================================
 
 #[test]
 fn tc_init_encoding_patterns_returns_three_valid_patterns() {
@@ -494,7 +492,6 @@ fn tc_detect_html_structure_non_html_returns_false() {
 }
 
 // Trait object tests
-// ===========================================================================
 
 #[test]
 fn tc_text_encoding_processor_component_as_trait_object() {
@@ -532,7 +529,6 @@ fn tc_web_content_processor_trait_process_batch() {
 }
 
 // Error variant display
-// ===========================================================================
 
 #[test]
 fn tc_web_content_error_encoding_error_display() {
@@ -593,7 +589,6 @@ fn tc_crawl_processing_error_poor_content_quality_display() {
 }
 
 // ContentQuality enum tests
-// ===========================================================================
 
 #[test]
 fn tc_content_quality_variants_equality() {
@@ -617,7 +612,6 @@ fn tc_content_quality_poor_clone_preserves_message() {
 }
 
 // CrawlProcessorConfig tests
-// ===========================================================================
 
 #[test]
 fn tc_crawl_processor_config_default_values() {
@@ -638,7 +632,6 @@ fn tc_crawl_processor_config_clone_preserves_values() {
 }
 
 // ProcessedWebContent and ProcessedCrawlContent struct tests
-// ===========================================================================
 
 #[test]
 fn tc_processed_web_content_all_fields() {

@@ -89,7 +89,8 @@ impl BrowserPoolState {
     }
 
     async fn get_or_download_browser(&self) -> Result<Option<PathBuf>, EngineError> {
-        // D9 修复：显式路径优先（CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH）。
+        // 修复：显式路径优先（CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH）。
+
         // 池路径是 E2E/生产实际使用的启动路径（直连 playwright.rs 的同名逻辑
         // 在池模式下不会被调用，release+LTO 下其文案不进入二进制）——此前只
         // 修了直连路径，运行时仍由池路径吞错并触发误导性的
@@ -125,7 +126,7 @@ impl BrowserPoolState {
                         Ok(path)
                     }
                     Err(e) => {
-                        // D9 修复：不再静默回落 Ok(None)（那会让 chromiumoxide
+                        // 修复：不再静默回落 Ok(None)（那会让 chromiumoxide
                         // 自行探测并报出与真实原因无关的误导性错误）。此处无系统
                         // 浏览器、无已下载浏览器、内置下载不可用，playwright 引擎
                         // 不可能启动 —— 显式失败并给出可操作处置。

@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! fluxweir 承载的嵌入/重排 provider（变更 `fluxweir-llm-gateway` design D5）
+//! fluxweir 承载的嵌入/重排 provider（变更 `fluxweir-llm-gateway`）
 //!
 //! - [`FluxweirEmbeddingProvider`]：SDK `embed`，`f32` 直通 + 维度显性校验
 //! - [`FluxweirRerankProvider`]：SDK `rerank` → [`RerankScore`]（index 越界
@@ -314,7 +314,7 @@ mod tests {
     }
 
     /// 空输入在 provider 侧显性拒绝（InvalidInput），不发请求
-    ///（离线构造 client：reqwest build 无 I/O；校验短路先于任何网络调用）
+    /// （离线构造 client：reqwest build 无 I/O；校验短路先于任何网络调用）
     #[tokio::test]
     async fn rerank_rejects_empty_input_without_request() {
         let client = fluxweir::sdk::FluxweirClientBuilder::new()

@@ -334,7 +334,8 @@ impl BrowserPoolState {
         }
 
         // 内存水位门控（engine-moli）：Critical 拒绝新 acquire 并一次性回收空闲实例；
-        // Tight 只允许复用可用实例、总实例数不增。由路由层 D3/D4 语义兜底降级。
+        // Tight 只允许复用可用实例、总实例数不增。由路由层语义兜底降级。
+
         #[cfg(feature = "engine-moli")]
         if let Some(gated) = self.gate_by_memory_watermark().await {
             return gated;
@@ -607,7 +608,7 @@ pub async fn shutdown_global_pool() {
 
 #[cfg(test)]
 mod tests {
-    // ---- 内存水位门控（engine-moli）：R-engine-scheduling-003 验收 ----
+    // ---- 内存水位门控（engine-moli）：验收 ----
 
     #[cfg(feature = "engine-moli")]
     mod memory_gate {

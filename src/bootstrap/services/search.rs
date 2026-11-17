@@ -379,7 +379,8 @@ pub(super) async fn init_rag_components(settings: &Settings) -> Result<RagCompon
     settings.rag.validate_providers()?;
     let rag = &settings.rag;
 
-    // fluxweir 兜底 provider（design D5）：gateway 编译 + [fluxweir].enabled
+    // fluxweir 兜底 provider：gateway 编译 + [fluxweir].enabled
+
     // + rag_fallback 时构造；primary（vecboost/http/rig）失败单次切换。
     // base_url 从 settings 直接决议（embedded 网关此刻可能尚未起服——provider
     // 请求发生在运行期，readyz 之后）。
@@ -394,7 +395,7 @@ pub(super) async fn init_rag_components(settings: &Settings) -> Result<RagCompon
 /// RAG 兜底 provider 对（嵌入 + 重排）。
 type RagFallbackProviders = (Arc<dyn EmbeddingProvider>, Arc<dyn RerankProvider>);
 
-/// 构造 fluxweir RAG 兜底 provider（design D5）。
+/// 构造 fluxweir RAG 兜底 provider。
 ///
 /// gateway 编译 + `[fluxweir].enabled` + `rag_fallback` 时构造；primary
 /// （vecboost/http）失败单次切换。base_url 从 settings 直接决议（embedded 网关
@@ -442,7 +443,7 @@ async fn resolve_embedding_provider(
         #[cfg(feature = "rag-local")]
         "local" => match VecboostProvider::new(rag).await {
             Ok(provider) => Some(Arc::new(provider)),
-            // D5 装配矩阵：vecboost 初始化失败且有兜底 → 仅 fluxweir（不阻断启动）
+            // 装配矩阵：vecboost 初始化失败且有兜底 → 仅 fluxweir（不阻断启动）
             Err(e) if fluxweir_fallback.is_some() => {
                 log::warn!(
                     "vecboost embedding provider init failed, using fluxweir fallback only: {e}"
@@ -532,7 +533,7 @@ pub(super) fn init_llm_service(
     #[cfg_attr(not(feature = "gateway"), allow(unused_variables))]
     fluxweir_gateway: &crate::bootstrap::fluxweir_gateway::FluxweirGatewayHandle,
 ) -> Arc<dyn LLMServiceTrait> {
-    // fluxweir-llm-gateway T007：[fluxweir].enabled=true → FluxweirLlmCarrier
+    // [fluxweir].enabled=true → FluxweirLlmCarrier
     //（gateway 未编译的 enabled 形态已在 init_fluxweir_gateway fail-fast，
     // 此处 enabled 即蕴含 gateway 可用）；disabled → ExplicitErrorCarrier 原行为
     #[cfg(feature = "gateway")]

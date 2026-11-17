@@ -1129,7 +1129,7 @@ mod tests {
         assert_eq!(engine.support_score(&request), 100);
     }
 
-    // === support_score: needs_tls_fingerprint (D4 -) ===
+    // === support_score: needs_tls_fingerprint ===
 
     #[test]
     fn test_support_score_needs_tls_fingerprint_returns_low() {

@@ -218,7 +218,8 @@ async fn test_get_crawl_delay_url_without_host_returns_error() {
 
 #[test]
 fn test_new_uses_settings_user_agent() {
-    // D5 重构：抓取不再经引擎链，构造仅注入 reqwest 客户端；
+    // 重构：抓取不再经引擎链，构造仅注入 reqwest 客户端；
+
     // UA 必须来自 RobotsSettings（匹配与抓取共用）。
     let http_client = Arc::new(reqwest::Client::new());
     let settings = crate::config::settings::RobotsSettings {

@@ -1,4 +1,4 @@
-//! moli CDP Network 域事件探针（T023 前置实验，不入 connector 构建面）：
+ //! moli CDP Network 域事件探针（前置实验，不入 connector 构建面）：
 //! 监听 EventResponseReceived，导航后 8s 内统计到达事件数。
 use chromiumoxide::Browser;
 use chromiumoxide::cdp::browser_protocol::network::EventResponseReceived;

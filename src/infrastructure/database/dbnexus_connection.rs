@@ -20,7 +20,7 @@ use std::time::Duration;
 /// 值为包含 `<dialect>/` 子目录的基目录，而非直接的迁移目录。
 pub const MIGRATIONS_DIR_ENV: &str = "CRAWLRS_MIGRATIONS_DIR";
 
-/// crawlrs 专用迁移历史表（fluxweir-llm-gateway D9）。
+/// crawlrs 专用迁移历史表（fluxweir-llm-gateway）。
 ///
 /// dbnexus 默认历史表 `dbnexus_migrations` 由 crawlrs 与 fluxweir 共享时
 /// 会跨消费者短路：crawlrs 文件迁移版本 1..8 与 fluxweir 内存迁移版本
@@ -34,7 +34,7 @@ pub const CRAWLRS_MIGRATIONS_TABLE: &str = "crawlrs_migrations";
 /// 仅作存量基线读取源，crawlrs 不再写入）。
 const DBNEXUS_MIGRATIONS_TABLE: &str = "dbnexus_migrations";
 
-/// 编译期 db dialect feature → 迁移子目录（R-multidb-schema-002）。
+/// 编译期 db dialect feature → 迁移子目录。
 ///
 /// dbnexus 驱动 feature 编译期互斥，任一时刻至多命中一个分支；
 /// 三者皆未编译（嵌入式构建）时返回 `None`。
@@ -69,7 +69,7 @@ pub fn dialect_migrations_dir(base: &Path) -> Option<PathBuf> {
 }
 
 /// 编译期 db dialect feature → dbnexus `DatabaseType`（与
-/// [`dialect_migrations_dir`] 同款互斥映射，R-multidb-schema-002）。
+/// [`dialect_migrations_dir`] 同款互斥映射）。
 fn migration_db_type() -> Option<dbnexus::DatabaseType> {
     #[cfg(feature = "db-postgres")]
     {
@@ -92,7 +92,7 @@ fn migration_db_type() -> Option<dbnexus::DatabaseType> {
     }
 }
 
-/// crawlrs 专用迁移执行（fluxweir-llm-gateway D9：历史表分离 + 存量基线）。
+/// crawlrs 专用迁移执行（fluxweir-llm-gateway：历史表分离 + 存量基线）。
 ///
 /// 流程：`crawlrs_migrations` 空表首跑时从 `DBNEXUS_MIGRATIONS_TABLE` 复制
 /// `file_path LIKE '%migrations/%'` 的行为基线（crawlrs 池历史跑的是文件迁移、
@@ -101,7 +101,7 @@ fn migration_db_type() -> Option<dbnexus::DatabaseType> {
 /// 随后 `MigrationExecutor::run_migrations` 跑 `migrations/<dialect>/`。
 ///
 /// `auto_migrate=false` 时不执行也不报错（与原池内语义一致）；dialect 目录
-/// 缺失时显性报错（R-multidb-schema-003，禁止静默跳过）。
+/// 缺失时显性报错（禁止静默跳过）。
 ///
 /// 返回本次应用（不含基线标记）的迁移数。
 pub async fn run_crawlrs_migrations(
@@ -166,9 +166,9 @@ async fn build_crawlrs_migration_executor(
 
 /// 迁移目录与 DatabaseType 的编译期 dialect 解析：
 /// - `migrations_dir` 缺失 → 显性报错（auto_migrate 开启却无目录可选）；
-/// - 基目录 → `migrations/<dialect>/` 投影（R-multidb-schema-002）；
+/// - 基目录 → `migrations/<dialect>/` 投影；
 /// - dialect feature → `dbnexus::DatabaseType`（与 [`dialect_migrations_dir`]
-///   同款互斥映射，R-multidb-schema-002）。
+///   同款互斥映射）。
 fn resolve_dialect_dir_and_type(
     migrations_dir: Option<&Path>,
 ) -> Result<(PathBuf, dbnexus::DatabaseType), DbErr> {
@@ -505,7 +505,7 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
         pool.enable_prepare_cache(capacity);
     }
 
-    // fluxweir-llm-gateway D9：显式迁移执行（专用历史表 + 存量基线回填；
+    // fluxweir-llm-gateway：显式迁移执行（专用历史表 + 存量基线回填；
     // 传基目录，方言投影在 run_crawlrs_migrations 内统一）
     let applied = run_crawlrs_migrations(
         &pool,
@@ -545,9 +545,9 @@ fn resolve_permissions_path() -> Option<String> {
 
 /// 解析迁移基目录与方言子目录。
 ///
-/// R-multidb-schema-002：按编译 dialect 选择迁移目录；auto_migrate 缺省
+/// 按编译 dialect 选择迁移目录；auto_migrate 缺省
 /// false（不执行迁移也不报错）。未编译任何 dialect 却要求 auto_migrate
-/// 时显性报错——禁止静默跳过或回退（R-multidb-schema-003）。
+/// 时显性报错——禁止静默跳过或回退。
 fn resolve_migrations_dir(settings: &DatabaseSettings) -> Result<(String, Option<PathBuf>), DbErr> {
     let migrations_base =
         std::env::var(MIGRATIONS_DIR_ENV).unwrap_or_else(|_| "migrations".to_string());
@@ -583,7 +583,7 @@ fn build_db_config(
         pool_config,
         permissions_path,
         migrations_dir,
-        // fluxweir-llm-gateway D9：池内 auto_migrate 恒关——迁移移交
+        // fluxweir-llm-gateway：池内 auto_migrate 恒关——迁移移交
         // [`run_crawlrs_migrations`]（专用历史表 `crawlrs_migrations`，
         // 与 fluxweir 的 dbnexus_migrations 隔离）；settings.auto_migrate
         // 语义保留，由池创建后的显式执行器承接
@@ -593,7 +593,7 @@ fn build_db_config(
         warmup_timeout: 30,
         warmup_retries: 3,
         cache_config: CacheConfig::default(),
-        // fluxweir-llm-gateway T018：显式激活幂等读重试（SELECT/SHOW/EXPLAIN，
+        // 显式激活幂等读重试（SELECT/SHOW/EXPLAIN，
         // INSERT 不受影响）——fluxweir 自建池默认 Some(default)，共享池不设
         // 会使 fluxweir read 路径重试语义静默失活
         retry_policy: Some(dbnexus::RetryPolicy::default()),
@@ -609,7 +609,7 @@ mod tests {
     use super::*;
     use crate::common::test_helpers::create_test_db_pool;
 
-    /// R-multidb-schema-002：编译 dialect → 迁移子目录一一对应。
+    /// 编译 dialect → 迁移子目录一一对应。
     /// 默认测试构建启用 db-postgres，应选中 `postgres/`。
     #[cfg(feature = "db-postgres")]
     #[test]
@@ -622,7 +622,7 @@ mod tests {
         );
     }
 
-    /// R-multidb-schema-002：方言目录必须在仓库中真实存在，
+    /// 方言目录必须在仓库中真实存在，
     /// 否则 auto_migrate=true 会在运行期才失败。
     #[cfg(feature = "db-postgres")]
     #[test]
@@ -646,7 +646,7 @@ mod tests {
         );
     }
 
-    /// R-multidb-schema-002：auto_migrate 缺省 false（不执行迁移也不报错）。
+    /// auto_migrate 缺省 false（不执行迁移也不报错）。
     #[test]
     fn database_settings_default_auto_migrate_is_false() {
         let settings = make_settings("postgresql://localhost/test");

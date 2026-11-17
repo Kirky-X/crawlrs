@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Cache backend fail-closed tests (spec: redis-shared-cache,
-//! R-redis-shared-cache-001).
+//! 规格）。
 //!
 //! `[cache] backend = "memory" | "redis"`：
 //! - `backend=redis` 且 redis feature 未编译时，启动（`load_settings`）拒绝；
@@ -131,7 +131,7 @@ fn unknown_backend_value_rejected() {
     );
 }
 
-/// 缺省 backend（memory）：启动行为不变（R-redis-shared-cache-001 第三条）。
+/// 缺省 backend（memory）：启动行为不变。
 #[test]
 fn default_backend_memory_still_loads() {
     let _env = {

@@ -6,7 +6,7 @@
 //! 平台业务路由的 sdforge 注册层。
 //!
 //! 全部业务端点经 sdforge inventory 在编译期注册，运行时由 [`build_forge_router`]
-//! 一次性收集构建 Axum Router。两种注册机制（design D1′ / D2）：
+//! 一次性收集构建 Axum Router。两种注册机制：
 //!
 //! 1. **`RouteRegistration` 直注**（本变更主力）：提交 const 工厂函数指针，
 //!    运行时构造「既有 handler 原样组装」的 HttpRoute——URL/方法/提取器与迁移前

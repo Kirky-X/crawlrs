@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Map 路由的 sdforge 直注注册（bdd-acceptance-hardening R-map-004）。
+//! Map 路由的 sdforge 直注注册（bdd-acceptance-hardening）。
 //!
 //! 形态与 `search.rs` 逐字节对齐：`HttpRoute` + `inventory::submit!`。
 

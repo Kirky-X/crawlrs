@@ -1,4 +1,4 @@
-//! 保真对照样本测试（html2md-converter-chain T007 / R-markdown-conversion-004）
+//!保真对照样本测试
 //!
 //! 四类结构：GFM 表格（thead 表头行 / 全 th 首行 / role=presentation 布局表展开 /
 //! 复杂表回退 HTML 段）、MathML 原样保留、TeX→`$..$` 包裹、表单默认值输出。

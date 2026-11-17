@@ -2362,9 +2362,7 @@ async fn test_host_browser_hint_expiry_restores_http_candidates() {
     assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
-// =============================================================================
 // F2 Session 身份三件套：route 层集成测试
-// =============================================================================
 
 use crate::config::settings::SessionSettings;
 use crate::engines::provider::ProxyProvider;
@@ -2646,9 +2644,7 @@ async fn test_session_cookie_captured_then_injected() {
     assert_eq!(obs[0].proxy, obs[1].proxy, "2xx 成功后代理粘性保持");
 }
 
-// =============================================================================
-// js-upgrade 重路由死端降级（R-engine-router-001 / 002）
-// =============================================================================
+// js-upgrade 重路由死端降级
 
 /// 触发 `JsUpgradeProbe` 的 HTML fixture：10 个非追踪 `<script src>`（弱信号
 /// score=10 恰好达阈值），同时保留足够可见文本（>50 字符）与 body 体积
@@ -2742,7 +2738,7 @@ fn js_upgrade_request() -> InternalScrapeRequest {
     }
 }
 
-/// R-engine-router-001 / 002：仅注册 HTTP 引擎时 probe 命中 → 降级返回原始响应，
+/// 仅注册 HTTP 引擎时 probe 命中 → 降级返回原始响应，
 /// 不递归重派（scrape 恰 1 次），且统计按成功记账（probe 失败口径不残留）。
 #[tokio::test]
 async fn test_js_upgrade_dead_end_degrades_to_original_response() {
@@ -2783,7 +2779,7 @@ async fn test_js_upgrade_dead_end_degrades_to_original_response() {
     );
 }
 
-/// R-engine-router-003：注册 JS-capable 引擎时 probe 命中 → 升级递归照旧改派，
+/// 注册 JS-capable 引擎时 probe 命中 → 升级递归照旧改派，
 /// 最终响应来自 JS 引擎，HTTP 引擎该次按失败记账。
 #[tokio::test]
 async fn test_js_upgrade_reroute_dispatches_browser_when_available() {
@@ -2848,7 +2844,7 @@ async fn test_js_upgrade_reroute_dispatches_browser_when_available() {
     assert!(browser_stat.success_rate > 0.99);
 }
 
-// ---- 内存水位 Critical 降级语义（engine-moli）：R-engine-scheduling-002 验收 ----
+// ---- 内存水位 Critical 降级语义（engine-moli）：验收 ----
 
 #[cfg(feature = "engine-moli")]
 mod memory_critical {

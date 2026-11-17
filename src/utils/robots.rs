@@ -410,7 +410,8 @@ impl RobotsChecker {
     /// 单次抓取尝试：成功/404/其余非 5xx 结束本轮（内容或空串）；
     /// 5xx 与传输错误交给重试循环
     async fn fetch_robots_once(&self, robots_url: &str) -> RobotsFetchAttempt {
-        // D5 修复：robots.txt 直连 HTTP，不走抓取引擎链。此前经 EngineRouter
+        // 修复：robots.txt 直连 HTTP，不走抓取引擎链。此前经 EngineRouter
+
         // 抓取，极短纯文本（如 `User-agent: *\nDisallow: /`）被反爬启发式
         // StructuralBlock 误判为「JS 空壳」并强制 needs_js，无 JS 引擎环境下
         // 抓取必败 → fail-open 放行全站 Disallow（E2E SB-17 实测）。SSRF 校验

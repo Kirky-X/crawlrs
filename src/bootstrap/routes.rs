@@ -377,7 +377,8 @@ fn apply_global_api_layers(
             crate::presentation::middleware::security_headers_middleware::security_headers_middleware,
         ))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
-        // D1 修复：限流中间件此前从未挂载（仅 Extension 注入），生产限流配置
+        // 修复：限流中间件此前从未挂载（仅 Extension 注入），生产限流配置
+
         // 形同虚设（E2E SG-09 实测 40 并发零 429）。公开端点由中间件内部
         // PUBLIC_ENDPOINTS 白名单跳过；IP 限流本身受 [rate_limiting].enabled
         // 控制（审查 N3），per-key 配额仍由 handler 在认证后执行。
@@ -507,7 +508,7 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>
     let app = task_routes()
         .layer(Extension(task_repo_impl.clone()))
         .layer(Extension(result_repo_impl.clone()))
-        // ws 任务状态推送：事件总线单例 + 连接治理守卫（R-ws-task-status-001/003）。
+        // ws 任务状态推送：事件总线单例 + 连接治理守卫。
         .layer(Extension(Arc::clone(&state.event_bus) as Arc<dyn EventBus>))
         .layer(Extension(Arc::new(TaskWsGuard::new(
             settings.websocket.max_connections,

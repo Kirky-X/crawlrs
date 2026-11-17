@@ -141,7 +141,7 @@ pub struct ServicesComponents {
 /// Returns all initialized services.
 ///
 /// `Result` 承载启动期配置/迁移错误（如 `storage_backend=database` 缺池或缺
-/// dialect 构建的显性报错，R-multidb-schema-003），禁止静默降级。
+/// dialect 构建的显性报错），禁止静默降级。
 pub(crate) async fn init_services(
     infrastructure: &InfrastructureComponents,
     engine_client: Arc<EngineClient>,

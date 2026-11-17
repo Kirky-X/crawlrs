@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 保留期清理的分批参数（retention-worker-hardening R-retention-001/D1）。
+//! 保留期清理的分批参数（retention-worker-hardening）。
 //!
 //! 纯数据结构：repo 层不读 `Settings`，`policy` 由 worker 从配置构造后传入，
 //! 保持 repository 无状态（db-retention-governance Constraints 惯例）。
@@ -45,7 +45,7 @@ mod tests {
     use super::*;
     use crate::config::settings::RetentionSettings;
 
-    /// R-retention-001：`from_settings` 逐字段映射配置值。
+    /// `from_settings` 逐字段映射配置值。
     #[test]
     fn from_settings_maps_each_field() {
         let settings = RetentionSettings {
@@ -60,7 +60,7 @@ mod tests {
         assert_eq!(policy.statement_timeout_ms, 45_000);
     }
 
-    /// R-retention-001：`Default` 与配置默认值一致（5000 / 100000 / 60000）。
+    /// `Default` 与配置默认值一致（5000 / 100000 / 60000）。
     #[test]
     fn default_matches_settings_defaults() {
         let policy = RetentionBatchPolicy::default();
