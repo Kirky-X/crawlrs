@@ -14,8 +14,7 @@ default-run = "basic_scrape"
 publish = false
 
 [dependencies]
-# 从父目录引用主项目；仅显式启用 metrics 以运行 metrics_export 示例
-# （不含 content/alchemize：示例不涉 HTML→Markdown 转换）
+# 从父目录引用主项目；仅显式启用 metrics 以运行 metrics_export 示例（不含 content/alchemize：示例不涉 HTML→Markdown 转换）
 crawlrs = { path = "..", default-features = false, features = [
     "metrics",
     "engine-playwright",
@@ -25,14 +24,12 @@ crawlrs = { path = "..", default-features = false, features = [
     "test-mocks",
 ] }
 
-# 异步运行时
 tokio = { workspace = true, features = ["full"] }
 
 # 日志记录（使用 log facade，inklog 在 crawlrs 主项目中初始化）
 log.workspace = true
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime", "regex"] }
 
-# 其他常用依赖
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -46,14 +43,11 @@ rand.workspace = true
 dbnexus = { workspace = true, features = ["permission", "auto-migrate"] }
 sea-orm.workspace = true
 
-# 配置示例依赖
 confers.workspace = true
 
-# SDK 示例依赖
 sdforge.workspace = true
 axum.workspace = true
 
-# Advanced examples
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 [[bin]]
 name = "async_batch"
@@ -79,7 +73,6 @@ path = "advanced/metrics_export.rs"
 name = "mllm_scrape"
 path = "advanced/mllm_scrape.rs"
 
-# Auth examples
 [[bin]]
 name = "api_key_auth"
 path = "auth/api_key_auth.rs"
@@ -96,7 +89,6 @@ path = "auth/scope_validation.rs"
 name = "team_isolation"
 path = "auth/team_isolation.rs"
 
-# Browser examples
 [[bin]]
 name = "test_flaresolverr_direct"
 path = "browser/test_flaresolverr_direct.rs"
@@ -113,12 +105,10 @@ path = "browser/test_google_preview.rs"
 name = "test_playwright_basic"
 path = "browser/test_playwright_basic.rs"
 
-# Cache examples
 [[bin]]
 name = "cache_configuration"
 path = "cache/cache_configuration.rs"
 
-# Database examples
 [[bin]]
 name = "basic_crud"
 path = "database/basic_crud.rs"
@@ -131,7 +121,6 @@ path = "database/transaction.rs"
 name = "migration"
 path = "database/migration.rs"
 
-# Config examples
 [[bin]]
 name = "basic_config"
 path = "config/basic_config.rs"
@@ -144,7 +133,6 @@ path = "config/env_override.rs"
 name = "validation"
 path = "config/validation.rs"
 
-# SDK examples
 [[bin]]
 name = "basic_sdk"
 path = "sdk/basic_sdk.rs"
@@ -161,7 +149,6 @@ path = "cache/oxcache_cache.rs"
 name = "ttl_management"
 path = "cache/ttl_management.rs"
 
-# Crawl examples
 [[bin]]
 name = "basic_crawl"
 path = "crawl/basic_crawl.rs"
@@ -186,7 +173,6 @@ path = "crawl/robots_compliance.rs"
 name = "status_tracking"
 path = "crawl/status_tracking.rs"
 
-# Extract examples
 [[bin]]
 name = "css_selector"
 path = "extract/css_selector.rs"
@@ -211,7 +197,6 @@ path = "extract/structured_data.rs"
 name = "xpath_extraction"
 path = "extract/xpath_extraction.rs"
 
-# Proxy examples
 [[bin]]
 name = "http_proxy"
 path = "proxy/http_proxy.rs"
@@ -224,7 +209,6 @@ path = "proxy/proxy_auth.rs"
 name = "rotate_proxies"
 path = "proxy/rotate_proxies.rs"
 
-# Rate limiting examples
 [[bin]]
 name = "basic_rate_limit"
 path = "rate-limiting/basic_rate_limit.rs"
@@ -237,7 +221,6 @@ path = "rate-limiting/circuit_breaker.rs"
 name = "team_concurrency"
 path = "rate-limiting/team_concurrency.rs"
 
-# Scrape examples
 [[bin]]
 name = "basic_scrape"
 path = "scrape/basic_scrape.rs"
@@ -270,7 +253,6 @@ path = "scrape/page_actions.rs"
 name = "screenshot"
 path = "scrape/screenshot.rs"
 
-# Search examples
 [[bin]]
 name = "test_baidu"
 path = "search/test_baidu.rs"
@@ -299,7 +281,6 @@ path = "search/test_unified_search.rs"
 name = "test_fallback_engines"
 path = "search/test_fallback_engines.rs"
 
-# Teams examples
 [[bin]]
 name = "basic_teams"
 path = "teams/basic_teams.rs"
@@ -312,19 +293,15 @@ path = "teams/credits_management.rs"
 name = "geo_restrictions"
 path = "teams/geo_restrictions.rs"
 
-# Task management examples
 [[bin]]
 name = "task_management"
 path = "tasks/task_management.rs"
 
-# Engine test
 [[bin]]
 name = "test_all_engines"
 path = "browser/test_all_engines.rs"
 
-# Text encoding examples
 
-# Webhooks examples
 [[bin]]
 name = "basic_webhook"
 path = "webhooks/basic_webhook.rs"
@@ -342,8 +319,8 @@ path = "webhooks/task_events.rs"
 name = "crawlrs_examples"
 path = "src/lib.rs"
 
-# 与主 crate 保持一致的 lints 配置（sdforge_macros 的 forge 宏会生成 cfg(feature = "openapi")）
-# forge 宏生成的路由注册代码不直接被 dead_code 分析识别，示例代码允许未引用项
+# lints 与主 crate 一致：sdforge_macros 的 forge 宏生成 cfg(feature = "openapi")
+# forge 宏生成的路由注册代码不被 dead_code 识别，示例代码允许未引用项
 [lints.rust]
 unexpected_cfgs = "allow"
 dead_code = "allow"
