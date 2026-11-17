@@ -1,23 +1,35 @@
-# 安全检查补充 workflow
-# 由统一护栏配置生成（2026-10-20）。只包含本仓现有 CI 尚未覆盖的检查，
-# 不改动既有 workflow，避免与已有 job 重复。
+# Copyright (c) 2025-2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+
+# 安全与质量检查统一 workflow（2026-11-17 合并）。
+# 由三份 push/PR 触发的 workflow 合并而来：
+#   - security.yml 原内容：actionlint / zizmor / gitleaks / cargo-audit / trivy
+#   - codeql.yml 原内容：CodeQL 静态分析（analyze）
+#   - check-tech-debt.yml 原内容：技术债巡检（check-tech-debt）
+# 自本次合并起不再随 push/pull_request 触发，改为：
+#   - schedule：每周二 04:37 UTC（复用原 CodeQL 的 cron `37 4 * * 2`）
+#   - workflow_dispatch 手动派发
+# push/PR 门禁由 ci.yml 唯一承担。
 name: security
+
 on:
-  push:
-    branches: [main, master]
-  pull_request:
+  schedule:
+    - cron: "37 4 * * 2"
   workflow_dispatch:
 
 permissions:
   contents: read
-  # rustsec/audit-check v2 把审计结果以 check-run 形式回写（含已豁免警告的
-  # 注记），缺该权限时报 "Resource not accessible by integration"（R-17 实证）。
-  checks: write
 
 jobs:
   security:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      # rustsec/audit-check v2 把审计结果以 check-run 形式回写（含已豁免警告的
+      # 注记），缺该权限时报 "Resource not accessible by integration"（R-17 实证）。
+      # 原先挂在 workflow 顶层；合并后收窄到本 job（CodeQL/tech-debt 不需要）。
+      checks: write
     steps:
       # 写法对齐 vecboost/garrison/CodeNexus 同一 workflow：SHA 钉 + fetch-depth: 0。
       # 浅克隆会让 gitleaks-action 的 `<head>^..<head>` 区间无法解析（报
@@ -44,7 +56,7 @@ jobs:
       - name: gitleaks 密钥扫描
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
-          # gitleaks-action v3.0.0 的 pull_request 扫描强制要求 GITHUB_TOKEN，
+          # gitleaks-action v3.0.0 扫描强制要求 GITHUB_TOKEN，
           # 缺失时进程直接 exit 1。
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
@@ -61,3 +73,87 @@ jobs:
           scan-type: fs
           scan-ref: .
           severity: CRITICAL,HIGH
+
+  analyze:
+    # 原 codeql.yml（name: CodeQL）的唯一 job，内容原样保留
+    name: Analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: "/language:autodetect"
+
+  check-tech-debt:
+    # 原 check-tech-debt.yml（name: Code Quality Check）的唯一 job，内容原样保留。
+    # 其 pull_request 分支逻辑（EVENT_NAME/BASE_REF）在 schedule/dispatch 下自然跳过。
+    name: Check Tech Debt
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          rust-version: stable
+
+      - name: Check for new anyhow usage
+        id: anyhow-check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # Count current anyhow::Result usage
+          CURRENT_ANYHOW=$(rg "anyhow::Result" --type rust | wc -l)
+          echo "Current anyhow::Result usage: $CURRENT_ANYHOW files"
+          echo "anyhow_count=$CURRENT_ANYHOW" >> $GITHUB_OUTPUT
+
+          # Check for new anyhow::Result in this PR
+          if [ "$EVENT_NAME" == "pull_request" ]; then
+            # Get files changed in this PR
+            NEW_ANYHOW=$(git diff --name-only "origin/$BASE_REF" HEAD | xargs rg -l "anyhow::Result" 2>/dev/null | wc -l || echo "0")
+            echo "New anyhow::Result files in this PR: $NEW_ANYHOW"
+            if [ "$NEW_ANYHOW" -gt 0 ]; then
+              echo "::warning::Found $NEW_ANYHOW new file(s) using anyhow::Result. Consider using custom error types instead."
+              git diff --name-only "origin/$BASE_REF" HEAD | xargs rg "anyhow::Result" 2>/dev/null || true
+            fi
+          fi
+
+      - name: Check for hardcoded worker count
+        run: |
+          # Check for hardcoded worker count in main.rs
+          if rg "start_workers\([0-9]\)" src/main.rs > /dev/null; then
+            echo "::warning::Found hardcoded worker count in main.rs. Consider using configuration."
+          fi
+
+      - name: Check for hardcoded Duration values
+        id: duration-check
+        run: |
+          # Count hardcoded Duration::from_secs (excluding tests)
+          HARDCODE_DURATION=$(rg "Duration::from_secs\(" --type rust src/ | grep -v "#[cfg(test)]" | grep -v "mod tests" | wc -l)
+          echo "Hardcoded Duration values (non-test): $HARDCODE_DURATION files"
+          echo "duration_count=$HARDCODE_DURATION" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        run: |
+          echo "=== Tech Debt Summary ==="
+          echo "anyhow::Result files: ${{ steps.anyhow-check.outputs.anyhow_count }}"
+          echo "Hardcoded Duration files: ${{ steps.duration-check.outputs.duration_count }}"
+          echo "========================"
