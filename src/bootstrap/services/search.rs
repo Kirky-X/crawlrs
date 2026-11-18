@@ -251,18 +251,25 @@ pub(super) fn init_llm_stack(
     // Initialize LLM service (使用依赖注入的 http_client)
     let llm_service = init_llm_service(settings, http_client.clone(), fluxweir_gateway);
 
-    // Initialize extraction service（嵌入 provider 就绪时注入 RAG 运行时）
-    let extraction_service: Arc<dyn ExtractionServiceTrait> =
-        match &embedding_provider {
-            Some(provider) => Arc::new(ExtractionService::new(llm_service.clone()).with_rag(
-                Arc::new(RagExtractionRuntime::new(
+    // Initialize extraction service（嵌入 provider 就绪时注入 RAG 运行时；
+    // 净化配置从 [llm.sanitization] 注入，缺省安全全开）
+    let sanitization = crate::domain::services::llm::sanitizer::SanitizationConfig::from(
+        &settings.llm.sanitization,
+    );
+    let extraction_service: Arc<dyn ExtractionServiceTrait> = match &embedding_provider {
+        Some(provider) => Arc::new(
+            ExtractionService::new(llm_service.clone())
+                .with_sanitization(sanitization)
+                .with_rag(Arc::new(RagExtractionRuntime::new(
                     ChunkerConfig::default(),
                     provider.clone(),
                     settings.rag.rag_top_k,
-                )),
-            )),
-            None => Arc::new(ExtractionService::new(llm_service.clone())),
-        };
+                ))),
+        ),
+        None => {
+            Arc::new(ExtractionService::new(llm_service.clone()).with_sanitization(sanitization))
+        }
+    };
 
     // Initialize content extraction facade
     //

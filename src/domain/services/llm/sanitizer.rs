@@ -45,9 +45,11 @@ impl Default for SanitizationConfig {
 }
 
 /// Action applied to suspicious instruction lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SuspiciousAction {
     /// Remove matched lines and count them in the report (default).
+    #[default]
     StripAndFlag,
     /// Only count matches, keep the text (observation mode).
     FlagOnly,

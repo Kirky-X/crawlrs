@@ -22,7 +22,7 @@ pub use super::engines::{
     PlaywrightEngineSettings,
 };
 pub use super::fluxweir::FluxweirSettings;
-pub use super::llm::{LLMSettings, LlmChunkingSettings};
+pub use super::llm::{LLMSettings, LlmChunkingSettings, LlmSanitizationSettings};
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 pub use super::rag::RagSettings;
 pub use super::search::{

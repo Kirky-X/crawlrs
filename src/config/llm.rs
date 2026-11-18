@@ -98,6 +98,100 @@ fn default_request_timeout_secs() -> u64 {
     120
 }
 
+/// LLM 提取注入净化配置（间接提示注入源头防御）
+///
+/// 键值语义与 `config/default.toml` `[llm.sanitization]` 节一一对应；
+/// 由 [`crate::domain::services::llm::sanitizer::SanitizationConfig`] 消费。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__LLM__SANITIZATION__")]
+pub struct LlmSanitizationSettings {
+    /// 总开关：false 时净化层完全旁路（回退旧行为）
+    #[serde(default = "default_sanitization_enabled")]
+    #[config(default = true)]
+    pub enabled: bool,
+
+    /// DOM 层：跳过隐藏子树（内联 display:none/visibility:hidden/opacity:0、hidden 属性、aria-hidden）
+    #[serde(default = "default_sanitization_strip_hidden_nodes")]
+    #[config(default = true)]
+    pub strip_hidden_nodes: bool,
+
+    /// 文本层：移除零宽字符（U+200B/U+200C/U+200D/U+FEFF）
+    #[serde(default = "default_sanitization_strip_zero_width")]
+    #[config(default = true)]
+    pub strip_zero_width: bool,
+
+    /// 文本层：剥除 `<!-- ... -->` HTML 注释载荷
+    #[serde(default = "default_sanitization_strip_html_comments")]
+    #[config(default = true)]
+    pub strip_html_comments: bool,
+
+    /// 文本长度上限（char 边界截断；0 = 不截断）
+    #[serde(default = "default_sanitization_max_text_length")]
+    #[config(default = 500_000)]
+    pub max_text_length: usize,
+
+    /// 可疑指令行的处置：strip_and_flag（移除并计数，默认）/ flag_only（仅计数观察）
+    ///
+    /// confers ConfigValue 不支持任意枚举（同 `id.algorithm` 先例）：配置面收
+    /// 字符串，[`From`] 转换时解析，未知值回退 strip_and_flag（更严格方向）并告警。
+    #[serde(default = "default_sanitization_suspicious_pattern_action")]
+    #[config(default = "strip_and_flag".to_string())]
+    pub suspicious_pattern_action: String,
+}
+
+impl From<&LlmSanitizationSettings>
+    for crate::domain::services::llm::sanitizer::SanitizationConfig
+{
+    fn from(s: &LlmSanitizationSettings) -> Self {
+        use crate::domain::services::llm::sanitizer::SuspiciousAction;
+        let action = match s.suspicious_pattern_action.as_str() {
+            "flag_only" | "flagOnly" => SuspiciousAction::FlagOnly,
+            "strip_and_flag" | "stripAndFlag" => SuspiciousAction::StripAndFlag,
+            other => {
+                log::warn!(
+                    "llm.sanitization.suspicious_pattern_action = '{other}' is unknown \
+                     (options: strip_and_flag | flag_only); falling back to strip_and_flag"
+                );
+                SuspiciousAction::StripAndFlag
+            }
+        };
+        Self {
+            enabled: s.enabled,
+            strip_hidden_nodes: s.strip_hidden_nodes,
+            strip_zero_width: s.strip_zero_width,
+            strip_html_comments: s.strip_html_comments,
+            max_text_length: s.max_text_length,
+            suspicious_pattern_action: action,
+        }
+    }
+}
+
+/// serde 默认值（与 `#[config(default = ...)]` 保持一致）
+fn default_sanitization_enabled() -> bool {
+    true
+}
+
+fn default_sanitization_strip_hidden_nodes() -> bool {
+    true
+}
+
+fn default_sanitization_strip_zero_width() -> bool {
+    true
+}
+
+fn default_sanitization_strip_html_comments() -> bool {
+    true
+}
+
+fn default_sanitization_max_text_length() -> usize {
+    500_000
+}
+
+/// serde 默认值：可疑行处置动作（与 `#[config(default = "strip_and_flag")]` 一致）
+fn default_sanitization_suspicious_pattern_action() -> String {
+    "strip_and_flag".to_string()
+}
+
 /// LLM 配置设置
 ///
 /// 配置 LLM 提取编排参数。供应商访问语义（provider / api_key / api_base_url）
@@ -120,6 +214,12 @@ pub struct LLMSettings {
     /// （同 `sitemap` / `crawl` 节先例）。
     #[serde(default)]
     pub chunking: LlmChunkingSettings,
+
+    /// 注入净化配置（间接提示注入源头防御；默认安全全开）
+    ///
+    /// `serde(default)` 兼容旧 config 文件缺 `[llm.sanitization]` 节。
+    #[serde(default)]
+    pub sanitization: LlmSanitizationSettings,
 
     /// 直调单请求超时秒数
     ///
@@ -277,6 +377,7 @@ mod tests {
         let settings = LLMSettings {
             model: Some("llama2".to_string()),
             chunking: LlmChunkingSettings::default(),
+            sanitization: LlmSanitizationSettings::default(),
             provenance_enabled: true,
             request_timeout_secs: 90,
             provenance_min_coverage: 0.8,
@@ -296,5 +397,93 @@ mod tests {
         let debug = format!("{:?}", settings);
         assert!(debug.contains("LLMSettings"));
         assert!(debug.contains("gpt-4"));
+    }
+
+    /// 净化配置默认值与 config/default.toml `[llm.sanitization]` 节一致（安全全开）
+    #[test]
+    fn test_llm_sanitization_settings_defaults_match_spec() {
+        let s = LlmSanitizationSettings::default();
+        assert!(s.enabled, "默认开：隐藏内容进 LLM 本身就是缺陷");
+        assert!(s.strip_hidden_nodes);
+        assert!(s.strip_zero_width);
+        assert!(s.strip_html_comments);
+        assert_eq!(s.max_text_length, 500_000);
+        assert_eq!(s.suspicious_pattern_action, "strip_and_flag");
+    }
+
+    /// 旧配置缺 `[llm.sanitization]` 节时 serde 默认兜底（向后兼容）
+    #[test]
+    fn test_llm_settings_without_sanitization_section_defaults() {
+        let toml = r#"
+            model = "qwen3:1.7b"
+        "#;
+        let s: LLMSettings = toml::from_str(toml).expect("deserialize");
+        assert!(s.sanitization.enabled);
+        assert_eq!(s.sanitization.max_text_length, 500_000);
+    }
+
+    /// 显式 `enabled = false` 可完整关闭净化（回退旧行为）
+    #[test]
+    fn test_llm_sanitization_settings_toml_parses_all_keys() {
+        let toml = r#"
+            enabled = false
+            strip_hidden_nodes = false
+            strip_zero_width = false
+            strip_html_comments = false
+            max_text_length = 1000
+            suspicious_pattern_action = "flag_only"
+        "#;
+        let s: LlmSanitizationSettings = toml::from_str(toml).expect("deserialize");
+        assert!(!s.enabled);
+        assert!(!s.strip_hidden_nodes);
+        assert!(!s.strip_zero_width);
+        assert!(!s.strip_html_comments);
+        assert_eq!(s.max_text_length, 1000);
+        assert_eq!(s.suspicious_pattern_action, "flag_only");
+    }
+
+    /// `From<&LlmSanitizationSettings> for SanitizationConfig` 一一映射
+    #[test]
+    fn test_llm_sanitization_settings_converts_to_config() {
+        let s = LlmSanitizationSettings::default();
+        let cfg = crate::domain::services::llm::sanitizer::SanitizationConfig::from(&s);
+        assert!(cfg.enabled);
+        assert!(cfg.strip_hidden_nodes);
+        assert_eq!(cfg.max_text_length, 500_000);
+        assert_eq!(
+            cfg.suspicious_pattern_action,
+            crate::domain::services::llm::sanitizer::SuspiciousAction::StripAndFlag
+        );
+
+        let off = LlmSanitizationSettings {
+            enabled: false,
+            ..LlmSanitizationSettings::default()
+        };
+        let cfg = crate::domain::services::llm::sanitizer::SanitizationConfig::from(&off);
+        assert!(!cfg.enabled);
+    }
+
+    /// 未知 action 字符串回退 strip_and_flag（更严格方向）
+    #[test]
+    fn test_llm_sanitization_unknown_action_falls_back_to_strip() {
+        let s = LlmSanitizationSettings {
+            suspicious_pattern_action: "nonsense".to_string(),
+            ..LlmSanitizationSettings::default()
+        };
+        let cfg = crate::domain::services::llm::sanitizer::SanitizationConfig::from(&s);
+        assert_eq!(
+            cfg.suspicious_pattern_action,
+            crate::domain::services::llm::sanitizer::SuspiciousAction::StripAndFlag
+        );
+
+        let s = LlmSanitizationSettings {
+            suspicious_pattern_action: "flag_only".to_string(),
+            ..LlmSanitizationSettings::default()
+        };
+        let cfg = crate::domain::services::llm::sanitizer::SanitizationConfig::from(&s);
+        assert_eq!(
+            cfg.suspicious_pattern_action,
+            crate::domain::services::llm::sanitizer::SuspiciousAction::FlagOnly
+        );
     }
 }

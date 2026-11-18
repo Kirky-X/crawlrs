@@ -298,6 +298,17 @@ merge_enabled = true
 # 术语预检：schema 字段名拆词（停用词过滤后）均不在文本中时告警并短路（省 token）
 term_precheck_enabled = true
 
+# LLM 提取注入净化（间接提示注入源头防御；缺省即下方默认，可按需覆盖）
+# 外部页面内容在进入 LLM prompt 前剥除四类注入载体；报告以 _sanitization 键
+# 与 _provenance 并列挂载（空报告不挂载，旧客户端零感知）。
+# [llm.sanitization]
+# enabled = true                       # 总开关：false 完全旁路（回退旧行为）
+# strip_hidden_nodes = true            # DOM 层跳过隐藏子树（display:none/hidden/aria-hidden 等）
+# strip_zero_width = true              # 移除零宽字符（U+200B/U+200C/U+200D/U+FEFF）
+# strip_html_comments = true           # 剥除 <!-- ... --> 注释载荷
+# max_text_length = 500000             # 文本长度上限（char 边界截断；0 = 不截断）
+# suspicious_pattern_action = "strip_and_flag"  # strip_and_flag=移除并计数 / flag_only=仅计数观察
+
 # 提取降级重试阶梯质量门（吸收点 F7；ContentExtractionFacade 跨通道编排）
 # 现状已按 confidence ≥0.7 短路 + LLM 回退；此节补 word_count 驱动升级与长度比裁决
 [content_extraction]
