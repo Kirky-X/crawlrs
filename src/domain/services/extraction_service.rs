@@ -102,6 +102,11 @@ pub trait ExtractionServiceTrait: Send + Sync {
     }
 }
 
+/// Injection-attempt audit thresholds (T008): crossing either one writes an
+/// `injection_attempt_detected` audit entry.
+pub const INJECTION_SUSPICIOUS_THRESHOLD: u32 = 3;
+pub const INJECTION_HIDDEN_NODES_THRESHOLD: u32 = 20;
+
 /// 提取服务
 ///
 /// 负责从 HTML 内容中提取结构化数据
@@ -111,6 +116,9 @@ pub struct ExtractionService {
     /// Injection-sanitizer config for the LLM pipeline (DI-injected from
     /// `[llm.sanitization]`; defaults to safe-on).
     sanitization: SanitizationConfig,
+    /// Optional audit sink for injection-attempt events (DI-injected; `None`
+    /// disables audit reporting without touching extraction behavior).
+    audit: Option<Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>>,
 }
 
 /// 挂载溯源映射：`_provenance` 与结果顶层并列（仅对象结果可挂载；数组/标量原样返回）。
@@ -160,6 +168,7 @@ impl ExtractionServiceTrait for ExtractionService {
             .llm_service
             .extract_data_with_provenance(&clean_text, schema, "json")
             .await?;
+        self.report_injection_attempt(&san_report, None).await;
         Ok((
             attach_sanitization(attach_provenance(val, prov), &san_report),
             usage,
@@ -194,6 +203,7 @@ impl ExtractionServiceTrait for ExtractionService {
                 .llm_service
                 .extract_data_with_provenance(&clean_text, schema, "json")
                 .await?;
+            self.report_injection_attempt(&san_report, None).await;
             return Ok((
                 attach_sanitization(attach_provenance(val, prov), &san_report),
                 usage,
@@ -214,6 +224,7 @@ impl ExtractionServiceTrait for ExtractionService {
             .llm_service
             .extract_data_with_provenance(&enhanced_text, schema, "json")
             .await?;
+        self.report_injection_attempt(&san_report, None).await;
         Ok((
             attach_sanitization(attach_provenance(val, prov), &san_report),
             usage,
@@ -270,6 +281,7 @@ impl ExtractionService {
             llm_service,
             rag_runtime: None,
             sanitization: SanitizationConfig::default(),
+            audit: None,
         }
     }
 
@@ -283,6 +295,50 @@ impl ExtractionService {
     pub fn with_sanitization(mut self, cfg: SanitizationConfig) -> Self {
         self.sanitization = cfg;
         self
+    }
+
+    /// 注入审计服务（DI 注入；未注入时注入企图事件不上报）
+    pub fn with_audit(
+        mut self,
+        audit: Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>,
+    ) -> Self {
+        self.audit = Some(audit);
+        self
+    }
+
+    /// Injection-attempt audit (T008): report crossing either threshold writes
+    /// one `injection_attempt_detected` entry with the counters as metadata.
+    ///
+    /// Audit failures never fail the extraction (warn-and-continue): audit is
+    /// an observational side channel.
+    async fn report_injection_attempt(&self, report: &SanitizationReport, url_host: Option<&str>) {
+        if report.suspicious_hits < INJECTION_SUSPICIOUS_THRESHOLD
+            && report.hidden_nodes_removed < INJECTION_HIDDEN_NODES_THRESHOLD
+        {
+            return;
+        }
+        let Some(audit) = self.audit.as_ref() else {
+            return;
+        };
+        let mut builder = crate::domain::services::audit_log_builder::AuditLogBuilder::new(
+            "injection_attempt_detected",
+            crate::domain::auth::AuditDecision::Deny,
+        )
+        .with_metadata(
+            "url_host",
+            url_host
+                .map(|host| Value::String(host.to_string()))
+                .unwrap_or(Value::Null),
+        )
+        .with_metadata("hidden_nodes_removed", json!(report.hidden_nodes_removed))
+        .with_metadata("suspicious_hits", json!(report.suspicious_hits))
+        .with_metadata("truncated", json!(report.truncated));
+        if let Ok(rep) = serde_json::to_value(report) {
+            builder = builder.with_metadata("report", rep);
+        }
+        if let Err(e) = audit.log(builder.build()).await {
+            log::warn!("injection-attempt audit log failed (extraction continues): {e}");
+        }
     }
 }
 
@@ -481,10 +537,13 @@ impl ExtractionService {
             .extract_data_with_provenance(&content_to_process, &schema, format)
             .await
         {
-            Ok((val, prov, usage)) => (
-                attach_sanitization(attach_provenance(val, prov), &san_report),
-                usage,
-            ),
+            Ok((val, prov, usage)) => {
+                self.report_injection_attempt(&san_report, None).await;
+                (
+                    attach_sanitization(attach_provenance(val, prov), &san_report),
+                    usage,
+                )
+            }
             Err(e) => {
                 println!("LLM extraction failed for key '{}': {}", key, e);
                 log::error!("LLM extraction failed for key '{}': {}", key, e);
@@ -2103,5 +2162,161 @@ mod tests {
             .expect("extract should succeed");
 
         assert_eq!(result["val"], "42");
+    }
+
+    // ===== T008: injection-attempt audit =====
+
+    /// Mock audit sink recording every `log()` call.
+    struct MockAuditService {
+        entries: Mutex<Vec<crate::domain::auth::AuditLogEntry>>,
+    }
+
+    impl MockAuditService {
+        fn new() -> Self {
+            Self {
+                entries: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn log_count(&self) -> usize {
+            self.entries.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait]
+    impl crate::domain::services::audit_service::AuditServiceTrait for MockAuditService {
+        async fn log(
+            &self,
+            entry: crate::domain::auth::AuditLogEntry,
+        ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+            self.entries.lock().unwrap().push(entry);
+            Ok(())
+        }
+
+        async fn log_allow(
+            &self,
+            _action: String,
+            _api_key_id: crate::domain::id::Id,
+            _team_id: crate::domain::id::Id,
+            _scope: crate::domain::auth::ApiKeyScope,
+        ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+            Ok(())
+        }
+
+        async fn log_deny(
+            &self,
+            _action: String,
+            _api_key_id: Option<crate::domain::id::Id>,
+            _team_id: Option<crate::domain::id::Id>,
+            _reason: String,
+            _scope: Option<crate::domain::auth::ApiKeyScope>,
+        ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+            Ok(())
+        }
+
+        async fn get_logs_for_key(
+            &self,
+            _api_key_id: crate::domain::id::Id,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<
+            Vec<crate::domain::auth::AuditLogEntry>,
+            crate::domain::services::audit_service::AuditServiceError,
+        > {
+            Ok(Vec::new())
+        }
+
+        async fn get_logs_for_team(
+            &self,
+            _team_id: crate::domain::id::Id,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<
+            Vec<crate::domain::auth::AuditLogEntry>,
+            crate::domain::services::audit_service::AuditServiceError,
+        > {
+            Ok(Vec::new())
+        }
+
+        async fn get_denied_requests(
+            &self,
+            _api_key_id: crate::domain::id::Id,
+            _limit: u64,
+        ) -> Result<
+            Vec<crate::domain::auth::AuditLogEntry>,
+            crate::domain::services::audit_service::AuditServiceError,
+        > {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Below threshold: no audit entry is written.
+    #[tokio::test]
+    async fn test_injection_audit_below_threshold_no_entry() {
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let audit = Arc::new(MockAuditService::new());
+        let service = ExtractionService::new(Arc::new(mock)).with_audit(audit.clone());
+
+        // One suspicious line: below INJECTION_SUSPICIOUS_THRESHOLD (3).
+        let html = "<html><body><p>ok\nsystem: one line</p></body></html>";
+        let _ = service
+            .extract_with_schema(html, &json!({"type": "object"}))
+            .await;
+
+        assert_eq!(audit.log_count(), 0, "below threshold must not audit");
+    }
+
+    /// At threshold: exactly one entry with the right action and metadata.
+    #[tokio::test]
+    async fn test_injection_audit_at_threshold_writes_entry() {
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let audit = Arc::new(MockAuditService::new());
+        let service = ExtractionService::new(Arc::new(mock)).with_audit(audit.clone());
+
+        // Three suspicious lines: meets INJECTION_SUSPICIOUS_THRESHOLD (3).
+        let html = "<html><body><p>ok\nsystem: a\nsystem: b\nsystem: c</p></body></html>";
+        let _ = service
+            .extract_with_schema(html, &json!({"type": "object"}))
+            .await;
+
+        assert_eq!(audit.log_count(), 1, "threshold crossing must audit once");
+        let entries = audit.entries.lock().unwrap();
+        let entry = &entries[0];
+        assert_eq!(entry.requested_action, "injection_attempt_detected");
+        assert_eq!(entry.decision, crate::domain::auth::AuditDecision::Deny);
+        assert_eq!(entry.metadata["suspicious_hits"], json!(3));
+        assert_eq!(entry.metadata["hidden_nodes_removed"], json!(0));
+        assert_eq!(entry.metadata["truncated"], json!(false));
+        assert!(entry.metadata.get("url_host").is_some());
+    }
+
+    /// Hidden-node threshold (>= 20) also triggers the audit entry.
+    #[tokio::test]
+    async fn test_injection_audit_hidden_nodes_threshold_writes_entry() {
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let audit = Arc::new(MockAuditService::new());
+        let service = ExtractionService::new(Arc::new(mock)).with_audit(audit.clone());
+
+        let hidden: String = "<div style=\"display:none\">x</div>".repeat(20);
+        let html = format!("<html><body>{hidden}<p>visible</p></body></html>");
+        let _ = service
+            .extract_with_schema(&html, &json!({"type": "object"}))
+            .await;
+
+        assert_eq!(audit.log_count(), 1);
+        let entries = audit.entries.lock().unwrap();
+        assert_eq!(entries[0].metadata["hidden_nodes_removed"], json!(20));
+    }
+
+    /// No audit sink injected: threshold crossing is a silent no-op.
+    #[tokio::test]
+    async fn test_injection_audit_without_sink_no_panic() {
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let service = ExtractionService::new(Arc::new(mock));
+
+        let html = "<html><body><p>ok\nsystem: a\nsystem: b\nsystem: c</p></body></html>";
+        let _ = service
+            .extract_with_schema(html, &json!({"type": "object"}))
+            .await;
     }
 }

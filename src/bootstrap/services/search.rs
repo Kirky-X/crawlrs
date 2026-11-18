@@ -241,18 +241,20 @@ pub(super) struct LlmStack {
 
 /// 装配 LLM 服务 / 提取服务 / 正文提取 Facade。
 ///
-/// `embedding_provider` 为 `Some` 时提取服务注入 RAG 运行时。
+/// `embedding_provider` 为 `Some` 时提取服务注入 RAG 运行时；
+/// `audit` 注入提取服务的注入企图审计出口。
 pub(super) fn init_llm_stack(
     settings: &Settings,
     http_client: &Arc<reqwest::Client>,
     fluxweir_gateway: &FluxweirGatewayHandle,
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    audit: Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>,
 ) -> LlmStack {
     // Initialize LLM service (使用依赖注入的 http_client)
     let llm_service = init_llm_service(settings, http_client.clone(), fluxweir_gateway);
 
     // Initialize extraction service（嵌入 provider 就绪时注入 RAG 运行时；
-    // 净化配置从 [llm.sanitization] 注入，缺省安全全开）
+    // 净化配置从 [llm.sanitization] 注入缺省安全全开；审计服务注入上报出口）
     let sanitization = crate::domain::services::llm::sanitizer::SanitizationConfig::from(
         &settings.llm.sanitization,
     );
@@ -260,15 +262,18 @@ pub(super) fn init_llm_stack(
         Some(provider) => Arc::new(
             ExtractionService::new(llm_service.clone())
                 .with_sanitization(sanitization)
+                .with_audit(audit.clone())
                 .with_rag(Arc::new(RagExtractionRuntime::new(
                     ChunkerConfig::default(),
                     provider.clone(),
                     settings.rag.rag_top_k,
                 ))),
         ),
-        None => {
-            Arc::new(ExtractionService::new(llm_service.clone()).with_sanitization(sanitization))
-        }
+        None => Arc::new(
+            ExtractionService::new(llm_service.clone())
+                .with_sanitization(sanitization)
+                .with_audit(audit),
+        ),
     };
 
     // Initialize content extraction facade

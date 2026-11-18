@@ -165,6 +165,7 @@ pub(crate) async fn init_services(
         &http_client,
         &search.fluxweir_gateway,
         search.embedding_provider.clone(),
+        audit_service.clone(),
     );
     let workers = workers::init_workers(
         &infrastructure.repositories,
