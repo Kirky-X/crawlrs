@@ -577,6 +577,22 @@ pub enum RepositoryError {
     InternalError(String),
 }
 
+/// 提取域错误（extraction domain）
+///
+/// 独立枚举（不并入 [`CrawlRsError`]）：`CrawlRsError` 的穷尽匹配臂与
+/// i18n 错误面（locales/errors.ftl）耦合，新增变体要求同步 FTL key；
+/// 提取域错误经 anyhow 链传播即可满足当前消费方。
+#[derive(Debug, thiserror::Error)]
+pub enum ExtractionError {
+    /// 溯源质量门 Reject（`provenance_gate_action = "reject"`）：
+    /// 对齐失败字段导致整次提取被拒。
+    #[error("provenance gate rejected extraction: fields {failed_fields:?} failed alignment")]
+    ProvenanceGateRejected {
+        /// 双门失败的字段路径列表
+        failed_fields: Vec<String>,
+    },
+}
+
 // Worker 错误类型（从 utils/errors.rs 迁移）
 
 /// Worker 错误类型

@@ -258,10 +258,14 @@ pub(super) fn init_llm_stack(
     let sanitization = crate::domain::services::llm::sanitizer::SanitizationConfig::from(
         &settings.llm.sanitization,
     );
+    let gate_action =
+        crate::domain::services::llm::provenance::ProvenanceConfig::from_settings(&settings.llm)
+            .gate_action;
     let extraction_service: Arc<dyn ExtractionServiceTrait> = match &embedding_provider {
         Some(provider) => Arc::new(
             ExtractionService::new(llm_service.clone())
                 .with_sanitization(sanitization)
+                .with_provenance_gate(gate_action)
                 .with_audit(audit.clone())
                 .with_rag(Arc::new(RagExtractionRuntime::new(
                     ChunkerConfig::default(),
@@ -272,6 +276,7 @@ pub(super) fn init_llm_stack(
         None => Arc::new(
             ExtractionService::new(llm_service.clone())
                 .with_sanitization(sanitization)
+                .with_provenance_gate(gate_action)
                 .with_audit(audit),
         ),
     };

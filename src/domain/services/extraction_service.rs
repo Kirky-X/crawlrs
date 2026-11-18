@@ -6,6 +6,7 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::services::extraction_utils::ExtractableRule;
+use crate::domain::services::llm::provenance::GateAction;
 use crate::domain::services::llm::sanitizer::{
     sanitize_text, SanitizationConfig, SanitizationReport,
 };
@@ -119,6 +120,9 @@ pub struct ExtractionService {
     /// Optional audit sink for injection-attempt events (DI-injected; `None`
     /// disables audit reporting without touching extraction behavior).
     audit: Option<Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>>,
+    /// Provenance gate action for alignment-failed fields (DI-injected from
+    /// `[llm] provenance_gate_action`; default `DropNull` = legacy behavior).
+    gate_action: GateAction,
 }
 
 /// 挂载溯源映射：`_provenance` 与结果顶层并列（仅对象结果可挂载；数组/标量原样返回）。
@@ -129,6 +133,44 @@ fn attach_provenance(mut val: Value, prov: Option<Value>) -> Value {
         }
     }
     val
+}
+
+/// Provenance gate dispatch (T010): transform the provenance map per
+/// `gate_action` before mounting.
+///
+/// - `DropNull`: unchanged (null entries stay null — legacy behavior).
+/// - `MarkNeedsReview`: null entries become `{"flags":["needs_review"]}`.
+/// - `Reject`: any null entry fails the whole extraction.
+fn apply_gate_action(
+    prov: Option<Value>,
+    gate_action: GateAction,
+) -> Result<Option<Value>, crate::common::error::ExtractionError> {
+    let Some(mut prov) = prov else {
+        return Ok(None);
+    };
+    let Value::Object(map) = &mut prov else {
+        return Ok(Some(prov));
+    };
+    let mut failed: Vec<String> = Vec::new();
+    for (field, entry) in map.iter_mut() {
+        if entry.is_null() {
+            match gate_action {
+                GateAction::DropNull => {}
+                GateAction::MarkNeedsReview => {
+                    *entry = json!({ "flags": ["needs_review"] });
+                }
+                GateAction::Reject => failed.push(field.clone()),
+            }
+        }
+    }
+    if gate_action == GateAction::Reject && !failed.is_empty() {
+        return Err(
+            crate::common::error::ExtractionError::ProvenanceGateRejected {
+                failed_fields: failed,
+            },
+        );
+    }
+    Ok(Some(prov))
 }
 
 /// 挂载净化报告：`_sanitization` 与 `_provenance` 并列（仅对象结果挂载；
@@ -169,6 +211,7 @@ impl ExtractionServiceTrait for ExtractionService {
             .extract_data_with_provenance(&clean_text, schema, "json")
             .await?;
         self.report_injection_attempt(&san_report, None).await;
+        let prov = apply_gate_action(prov, self.gate_action)?;
         Ok((
             attach_sanitization(attach_provenance(val, prov), &san_report),
             usage,
@@ -204,6 +247,7 @@ impl ExtractionServiceTrait for ExtractionService {
                 .extract_data_with_provenance(&clean_text, schema, "json")
                 .await?;
             self.report_injection_attempt(&san_report, None).await;
+            let prov = apply_gate_action(prov, self.gate_action)?;
             return Ok((
                 attach_sanitization(attach_provenance(val, prov), &san_report),
                 usage,
@@ -225,6 +269,7 @@ impl ExtractionServiceTrait for ExtractionService {
             .extract_data_with_provenance(&enhanced_text, schema, "json")
             .await?;
         self.report_injection_attempt(&san_report, None).await;
+        let prov = apply_gate_action(prov, self.gate_action)?;
         Ok((
             attach_sanitization(attach_provenance(val, prov), &san_report),
             usage,
@@ -282,6 +327,7 @@ impl ExtractionService {
             rag_runtime: None,
             sanitization: SanitizationConfig::default(),
             audit: None,
+            gate_action: GateAction::DropNull,
         }
     }
 
@@ -303,6 +349,12 @@ impl ExtractionService {
         audit: Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>,
     ) -> Self {
         self.audit = Some(audit);
+        self
+    }
+
+    /// 注入溯源门失败动作（DI 从 `[llm] provenance_gate_action` 构造；默认 DropNull）
+    pub fn with_provenance_gate(mut self, action: GateAction) -> Self {
+        self.gate_action = action;
         self
     }
 
@@ -539,10 +591,18 @@ impl ExtractionService {
         {
             Ok((val, prov, usage)) => {
                 self.report_injection_attempt(&san_report, None).await;
-                (
-                    attach_sanitization(attach_provenance(val, prov), &san_report),
-                    usage,
-                )
+                match apply_gate_action(prov, self.gate_action) {
+                    Ok(prov) => (
+                        attach_sanitization(attach_provenance(val, prov), &san_report),
+                        usage,
+                    ),
+                    // Rule-level failure contract is (Null, zero usage), not an
+                    // extraction-wide error: log the gate rejection and degrade.
+                    Err(e) => {
+                        log::error!("provenance gate rejected field '{key}': {e}");
+                        (Value::Null, TokenUsage::default())
+                    }
+                }
             }
             Err(e) => {
                 println!("LLM extraction failed for key '{}': {}", key, e);
@@ -2306,6 +2366,98 @@ mod tests {
         assert_eq!(audit.log_count(), 1);
         let entries = audit.entries.lock().unwrap();
         assert_eq!(entries[0].metadata["hidden_nodes_removed"], json!(20));
+    }
+
+    // ===== T010: provenance gate_action dispatch =====
+
+    /// Provenance map with one aligned and one failed (null) field.
+    fn mixed_provenance() -> Value {
+        json!({
+            "name": { "start": 0, "end": 7, "coverage": 1.0 },
+            "hallucinated": null
+        })
+    }
+
+    /// MarkNeedsReview: failed entry becomes flags, field value survives.
+    #[tokio::test]
+    async fn test_gate_action_mark_needs_review_flags_failed_field() {
+        let mock = MockLLMService::new_success(
+            json!({"name": "Product", "hallucinated": "made up"}),
+            TokenUsage::default(),
+        );
+        mock.set_provenance(mixed_provenance());
+        let service = ExtractionService::new(Arc::new(mock)).with_provenance_gate(
+            crate::domain::services::llm::provenance::GateAction::MarkNeedsReview,
+        );
+        let (result, _) = service
+            .extract_with_schema(
+                "<html><body>Product</body></html>",
+                &json!({"type": "object"}),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(
+            result["hallucinated"], "made up",
+            "field value must survive"
+        );
+        assert_eq!(
+            result["_provenance"]["hallucinated"]["flags"],
+            json!(["needs_review"]),
+            "entry must carry needs_review flag"
+        );
+        assert_eq!(
+            result["_provenance"]["name"]["coverage"], 1.0,
+            "aligned entry untouched"
+        );
+    }
+
+    /// Reject: any failed field fails the whole extraction with the error.
+    #[tokio::test]
+    async fn test_gate_action_reject_fails_extraction() {
+        let mock = MockLLMService::new_success(
+            json!({"name": "Product", "hallucinated": "made up"}),
+            TokenUsage::default(),
+        );
+        mock.set_provenance(mixed_provenance());
+        let service = ExtractionService::new(Arc::new(mock))
+            .with_provenance_gate(crate::domain::services::llm::provenance::GateAction::Reject);
+        let err = service
+            .extract_with_schema(
+                "<html><body>Product</body></html>",
+                &json!({"type": "object"}),
+            )
+            .await
+            .expect_err("reject must fail the extraction");
+
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("provenance gate rejected"),
+            "error must be ProvenanceGateRejected, got: {msg}"
+        );
+    }
+
+    /// DropNull (default): legacy behavior — failed entry stays null.
+    #[tokio::test]
+    async fn test_gate_action_drop_null_keeps_legacy_behavior() {
+        let mock = MockLLMService::new_success(
+            json!({"name": "Product", "hallucinated": "made up"}),
+            TokenUsage::default(),
+        );
+        mock.set_provenance(mixed_provenance());
+        let service = ExtractionService::new(Arc::new(mock)); // default DropNull
+        let (result, _) = service
+            .extract_with_schema(
+                "<html><body>Product</body></html>",
+                &json!({"type": "object"}),
+            )
+            .await
+            .expect("should succeed");
+
+        assert!(
+            result["_provenance"]["hallucinated"].is_null(),
+            "legacy null entry must be kept"
+        );
     }
 
     /// No audit sink injected: threshold crossing is a silent no-op.
