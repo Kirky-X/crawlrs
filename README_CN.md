@@ -63,7 +63,7 @@
 </tr>
 <tr>
 <td width="50%" style="vertical-align:top; padding: 12px">🕷️ <b>深度爬取</b><br><span style="color:#64748B">URL 过滤链 + 复合评分器 + 优先级队列 + 自适应停止条件，robots.txt 合规（Crawl-delay 双时钟）；sitemap 流式请求源、软 404 指纹剔除、断点续爬 seen 预热</span></td>
-<td width="50%" style="vertical-align:top; padding: 12px">📊 <b>数据提取</b><br><span style="color:#64748B">CSS 规则、正文提取器（Trafilatura / DomSmoothie）、LLM 与 RAG 增强多种提取模式；降级阶梯质量门、LLM 长文分块并行、提取结果字符级溯源</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">📊 <b>数据提取</b><br><span style="color:#64748B">CSS 规则、正文提取器（Trafilatura / DomSmoothie）、LLM 与 RAG 增强多种提取模式；降级阶梯质量门、LLM 长文分块并行、提取结果字符级溯源、间接提示注入净化（零宽字符/隐藏节点/可疑指令，<code>[llm.sanitization]</code>）</span></td>
 </tr>
 <tr>
 <td width="50%" style="vertical-align:top; padding: 12px">🚂 <b>五引擎智能路由</b><br><span style="color:#64748B">Reqwest / Playwright / FlareSolverr / Wreq（TLS 指纹）/ MLLM（视觉 LLM 导航 + 混合 AX 树快照）/ Moli（可选，内存水位调度下低配机的 JS 渲染回退位），SmartHybrid、竞速与顺序降级三种路由策略</span></td>

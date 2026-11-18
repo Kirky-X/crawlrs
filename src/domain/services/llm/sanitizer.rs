@@ -457,6 +457,35 @@ mod tests {
         }
     }
 
+    /// Performance guard: a ~10k-node document sanitizes well under 1s
+    /// (DOM predicate + text layers are same order as collection itself).
+    #[test]
+    fn sanitize_large_document_completes_fast() {
+        let mut html = String::with_capacity(1 << 20);
+        html.push_str("<html><body>");
+        for i in 0..10_000 {
+            if i % 10 == 0 {
+                html.push_str("<div style=\"display:none\">hidden payload</div>");
+            } else {
+                html.push_str(&format!("<p>visible paragraph {i} with normal content</p>"));
+            }
+        }
+        html.push_str("</body></html>");
+
+        let start = std::time::Instant::now();
+        let (text, report) =
+            crate::domain::services::extraction_service::ExtractionService::get_clean_text_with_report(
+                &html,
+            );
+        let elapsed = start.elapsed();
+        assert!(text.contains("visible paragraph 9999"));
+        assert_eq!(report.hidden_nodes_removed, 1_000);
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "sanitizing 10k-node doc took {elapsed:?}"
+        );
+    }
+
     /// Visible nodes (other styles, other attributes) are not hidden.
     #[test]
     fn visible_node_not_hidden() {

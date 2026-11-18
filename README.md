@@ -63,7 +63,7 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 </tr>
 <tr>
 <td width="50%" style="vertical-align:top; padding: 12px">🕷️ <b>Deep Crawling</b><br><span style="color:#64748B">URL filter chains + composite scorers + priority queues + adaptive stop conditions, with robots.txt compliance (dual-clock Crawl-delay); streaming sitemap request source, soft-404 fingerprinting, resume-crawl seen warm-up</span></td>
-<td width="50%" style="vertical-align:top; padding: 12px">📊 <b>Data Extraction</b><br><span style="color:#64748B">Multiple extraction modes: CSS rules, content extractors (Trafilatura / DomSmoothie), LLM and RAG-augmented extraction; degradation-ladder quality gate, LLM long-text chunking, character-level extraction provenance</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">📊 <b>Data Extraction</b><br><span style="color:#64748B">Multiple extraction modes: CSS rules, content extractors (Trafilatura / DomSmoothie), LLM and RAG-augmented extraction; degradation-ladder quality gate, LLM long-text chunking, character-level extraction provenance, indirect prompt-injection sanitization (zero-width / hidden nodes / suspicious instructions, <code>[llm.sanitization]</code>)</span></td>
 </tr>
 <tr>
 <td width="50%" style="vertical-align:top; padding: 12px">🚂 <b>Five-Engine Smart Routing</b><br><span style="color:#64748B">Reqwest / Playwright / FlareSolverr / Wreq (TLS fingerprint) / MLLM (vision-LLM navigation + hybrid AX-tree snapshot) / Moli (optional — the JS-rendering fallback for low-spec machines under memory-watermark scheduling), with SmartHybrid, race and sequential-fallback routing strategies</span></td>
