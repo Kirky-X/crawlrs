@@ -518,6 +518,7 @@ json = 'json only'
                 let config = provenance::ProvenanceConfig {
                     enabled: true,
                     min_coverage: 0.0,
+                    gate_action: provenance::GateAction::DropNull,
                 };
                 let (value, prov) = provenance::apply_provenance(text, value, &config);
                 Ok((value, prov, usage))

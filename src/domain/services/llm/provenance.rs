@@ -40,13 +40,54 @@ const MAX_LCS_TOKENS: usize = 1024;
 /// 滑窗宽度系数：窗口字符数 = excerpt 字符长 × 4（蓝图口径）
 const WINDOW_FACTOR: usize = 4;
 
-/// 溯源对齐配置（由 `[llm]` 的 `provenance_*` 两键构造）
+/// 溯源质量门失败动作（对齐失败字段的处置）
+///
+/// - `DropNull`（默认）：provenance 条目置 null（现状，向后兼容）
+/// - `MarkNeedsReview`：字段值保留，条目改挂 `{"flags":["needs_review"]}`
+/// - `Reject`：整次提取返回 `ProvenanceGateRejected` 错误
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateAction {
+    /// Gate-failed fields map to null entries (legacy behavior, default).
+    #[default]
+    DropNull,
+    /// Keep the field value; entry becomes `{"flags":["needs_review"]}`.
+    MarkNeedsReview,
+    /// Fail the whole extraction with `ProvenanceGateRejected`.
+    Reject,
+}
+
+impl GateAction {
+    /// Parse the `[llm] provenance_gate_action` config string.
+    ///
+    /// Unknown values fall back to `drop_null` with a warning (the
+    /// backward-compatible direction), mirroring the sanitizer action parsing.
+    pub fn parse_config(value: &str) -> Self {
+        match value {
+            "mark_needs_review" | "markNeedsReview" => Self::MarkNeedsReview,
+            "reject" => Self::Reject,
+            "drop_null" | "dropNull" => Self::DropNull,
+            other => {
+                log::warn!(
+                    "llm.provenance_gate_action = '{other}' is unknown \
+                     (options: drop_null | mark_needs_review | reject); \
+                     falling back to drop_null"
+                );
+                Self::DropNull
+            }
+        }
+    }
+}
+
+/// 溯源对齐配置（由 `[llm]` 的 `provenance_*` 键构造）
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProvenanceConfig {
     /// 总开关：false 时 `extract_data_with_provenance` 短路返回 None（零开销）
     pub enabled: bool,
     /// 覆盖率门下限（字符密度门 1/3 为代码内常量 [`DENSITY_GATE`]）
     pub min_coverage: f64,
+    /// 双门失败动作（默认 DropNull，向后兼容）
+    pub gate_action: GateAction,
 }
 
 impl Default for ProvenanceConfig {
@@ -54,6 +95,7 @@ impl Default for ProvenanceConfig {
         Self {
             enabled: false,
             min_coverage: DEFAULT_MIN_COVERAGE,
+            gate_action: GateAction::DropNull,
         }
     }
 }
@@ -64,6 +106,7 @@ impl ProvenanceConfig {
         Self {
             enabled: settings.provenance_enabled,
             min_coverage: settings.provenance_min_coverage,
+            gate_action: GateAction::parse_config(&settings.provenance_gate_action),
         }
     }
 }
@@ -790,6 +833,7 @@ mod tests {
         let cfg = ProvenanceConfig {
             enabled: true,
             min_coverage: DEFAULT_MIN_COVERAGE,
+            gate_action: GateAction::DropNull,
         };
         let (value, prov) = apply_provenance("hello world", json!({"a": "world"}), &cfg);
         assert!(value["_provenance"].is_object());
@@ -803,6 +847,7 @@ mod tests {
         let cfg = ProvenanceConfig {
             enabled: true,
             min_coverage: DEFAULT_MIN_COVERAGE,
+            gate_action: GateAction::DropNull,
         };
         let (value, prov) = apply_provenance("source", json!({"count": 3}), &cfg);
         assert!(value.get("_provenance").is_none(), "空映射不挂载");
@@ -838,6 +883,7 @@ mod tests {
         let cfg = ProvenanceConfig::default();
         assert!(!cfg.enabled);
         assert!((cfg.min_coverage - 0.75).abs() < f64::EPSILON);
+        assert_eq!(cfg.gate_action, GateAction::DropNull);
     }
 
     #[test]
@@ -850,6 +896,47 @@ mod tests {
         let cfg = ProvenanceConfig::from_settings(&settings);
         assert!(cfg.enabled);
         assert!((cfg.min_coverage - 0.6).abs() < f64::EPSILON);
+        assert_eq!(cfg.gate_action, GateAction::DropNull);
+    }
+
+    // GateAction (T009)
+
+    /// Serde snake_case roundtrip for all three actions.
+    #[test]
+    fn gate_action_serde_snake_case_roundtrip() {
+        for (action, wire) in [
+            (GateAction::DropNull, "\"drop_null\""),
+            (GateAction::MarkNeedsReview, "\"mark_needs_review\""),
+            (GateAction::Reject, "\"reject\""),
+        ] {
+            assert_eq!(serde_json::to_string(&action).unwrap(), wire);
+            let back: GateAction = serde_json::from_str(wire).unwrap();
+            assert_eq!(back, action);
+        }
+    }
+
+    /// Config-string parsing: known values map, unknown falls back to DropNull.
+    #[test]
+    fn gate_action_parse_config_covers_known_and_falls_back() {
+        assert_eq!(GateAction::parse_config("drop_null"), GateAction::DropNull);
+        assert_eq!(
+            GateAction::parse_config("mark_needs_review"),
+            GateAction::MarkNeedsReview
+        );
+        assert_eq!(GateAction::parse_config("reject"), GateAction::Reject);
+        assert_eq!(GateAction::parse_config("wat"), GateAction::DropNull);
+    }
+
+    /// from_settings maps the gate action config string.
+    #[test]
+    fn provenance_config_from_settings_maps_gate_action() {
+        let settings = crate::config::settings::LLMSettings {
+            provenance_enabled: true,
+            provenance_gate_action: "mark_needs_review".to_string(),
+            ..Default::default()
+        };
+        let cfg = ProvenanceConfig::from_settings(&settings);
+        assert_eq!(cfg.gate_action, GateAction::MarkNeedsReview);
     }
 
     // helpers

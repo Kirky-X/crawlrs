@@ -94,6 +94,11 @@ fn default_provenance_min_coverage() -> f64 {
     0.75
 }
 
+/// serde 默认值：溯源双门失败动作（与 `#[config(default = "drop_null")]` 保持一致）
+fn default_provenance_gate_action() -> String {
+    "drop_null".to_string()
+}
+
 fn default_request_timeout_secs() -> u64 {
     120
 }
@@ -244,6 +249,15 @@ pub struct LLMSettings {
     #[serde(default = "default_provenance_min_coverage")]
     #[config(default = 0.75)]
     pub provenance_min_coverage: f64,
+
+    /// 溯源双门失败动作：drop_null（默认，条目置 null）/ mark_needs_review
+    /// （字段保留，条目挂 flags）/ reject（整次提取报错）
+    ///
+    /// confers ConfigValue 不支持枚举（同 `suspicious_pattern_action` 先例）：
+    /// 配置面收字符串，`ProvenanceConfig::from_settings` 解析。
+    #[serde(default = "default_provenance_gate_action")]
+    #[config(default = "drop_null".to_string())]
+    pub provenance_gate_action: String,
 }
 
 #[cfg(test)]
@@ -381,6 +395,7 @@ mod tests {
             provenance_enabled: true,
             request_timeout_secs: 90,
             provenance_min_coverage: 0.8,
+            provenance_gate_action: "reject".to_string(),
         };
         let cloned = settings.clone();
         assert_eq!(cloned.model, settings.model);
@@ -485,5 +500,35 @@ mod tests {
             cfg.suspicious_pattern_action,
             crate::domain::services::llm::sanitizer::SuspiciousAction::FlagOnly
         );
+    }
+
+    /// 溯源门失败动作缺键默认 drop_null（向后兼容）
+    #[test]
+    fn test_llm_provenance_gate_action_defaults_to_drop_null() {
+        let s = LLMSettings::default();
+        assert_eq!(s.provenance_gate_action, "drop_null");
+
+        let toml = r#"
+            model = "qwen3:1.7b"
+        "#;
+        let s: LLMSettings = toml::from_str(toml).expect("deserialize");
+        assert_eq!(
+            s.provenance_gate_action, "drop_null",
+            "缺键必须默认 drop_null"
+        );
+    }
+
+    /// 溯源门失败动作三个取值可显式解析
+    #[test]
+    fn test_llm_provenance_gate_action_parses_all_values() {
+        for (raw, expected) in [
+            ("drop_null", "drop_null"),
+            ("mark_needs_review", "mark_needs_review"),
+            ("reject", "reject"),
+        ] {
+            let toml = format!(r#"provenance_gate_action = "{raw}""#);
+            let s: LLMSettings = toml::from_str(&toml).expect("deserialize");
+            assert_eq!(s.provenance_gate_action, expected);
+        }
     }
 }
