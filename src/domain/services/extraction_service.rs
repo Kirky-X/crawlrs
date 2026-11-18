@@ -498,18 +498,44 @@ impl ExtractionService {
     }
 
     /// 获取干净的文本内容（去除 script, style 等噪音）
+    ///
+    /// Thin wrapper over [`Self::get_clean_text_with_report`]; legacy callers
+    /// keep the single-`String` contract (sanitization applies with defaults).
     pub fn get_clean_text(html: &str) -> String {
+        Self::get_clean_text_with_report(html).0
+    }
+
+    /// [`Self::get_clean_text`] + sanitization report (hidden-node counter).
+    ///
+    /// DOM layer only: noise-tag pruning plus hidden-subtree pruning via
+    /// [`crate::domain::services::llm::sanitizer::is_hidden_node`] (default
+    /// `SanitizationConfig`: `strip_hidden_nodes = true`).
+    pub fn get_clean_text_with_report(
+        html: &str,
+    ) -> (
+        String,
+        crate::domain::services::llm::sanitizer::SanitizationReport,
+    ) {
         let document = Html::parse_document(html);
         let mut text_parts = Vec::new();
+        let mut report = crate::domain::services::llm::sanitizer::SanitizationReport::default();
+        let strip_hidden = crate::domain::services::llm::sanitizer::SanitizationConfig::default()
+            .strip_hidden_nodes;
 
         // 递归获取文本，从根元素开始
-        Self::collect_clean_text(document.root_element(), &mut text_parts);
+        Self::collect_clean_text(
+            document.root_element(),
+            &mut text_parts,
+            &mut report,
+            strip_hidden,
+        );
 
-        text_parts
+        let text = text_parts
             .join(" ")
             .split_whitespace()
             .collect::<Vec<_>>()
-            .join(" ")
+            .join(" ");
+        (text, report)
     }
 
     /// 噪音标签：这些标签内的内容不进入干净文本
@@ -536,8 +562,19 @@ impl ExtractionService {
             && (trimmed.contains(';') || trimmed.contains('{'))
     }
 
-    fn collect_clean_text(node: scraper::ElementRef, text_parts: &mut Vec<String>) {
+    fn collect_clean_text(
+        node: scraper::ElementRef,
+        text_parts: &mut Vec<String>,
+        report: &mut crate::domain::services::llm::sanitizer::SanitizationReport,
+        strip_hidden: bool,
+    ) {
         if Self::is_noise_tag(node.value().name()) {
+            return;
+        }
+        // Hidden-subtree pruning (injection sanitizer DOM layer): visually
+        // hidden nodes are a prime carrier for indirect prompt injection.
+        if strip_hidden && crate::domain::services::llm::sanitizer::is_hidden_node(node) {
+            report.hidden_nodes_removed += 1;
             return;
         }
 
@@ -548,7 +585,7 @@ impl ExtractionService {
                     text_parts.push(trimmed.to_string());
                 }
             } else if let Some(element) = scraper::ElementRef::wrap(child) {
-                Self::collect_clean_text(element, text_parts);
+                Self::collect_clean_text(element, text_parts, report, strip_hidden);
             }
         }
     }
@@ -1721,6 +1758,43 @@ mod tests {
         let text = ExtractionService::get_clean_text(html);
         assert!(text.contains("Nested"));
         assert!(text.contains("text"));
+    }
+
+    // get_clean_text_with_report (hidden-node pruning, T005)
+
+    #[test]
+    fn test_get_clean_text_with_report_hidden_div_removed() {
+        let html =
+            r#"<html><body><div style="display:none">secret</div><p>Visible</p></body></html>"#;
+        let (text, report) = ExtractionService::get_clean_text_with_report(html);
+        assert!(!text.contains("secret"), "hidden div must not leak: {text}");
+        assert!(text.contains("Visible"));
+        assert_eq!(report.hidden_nodes_removed, 1);
+    }
+
+    #[test]
+    fn test_get_clean_text_with_report_hidden_subtree_pruned_entirely() {
+        // Hidden parent prunes nested visible-looking children as one subtree.
+        let html = r#"<html><body><div hidden><p>deep secret</p></div><p>Ok</p></body></html>"#;
+        let (text, report) = ExtractionService::get_clean_text_with_report(html);
+        assert!(!text.contains("deep secret"));
+        assert_eq!(report.hidden_nodes_removed, 1, "subtree counted once");
+    }
+
+    #[test]
+    fn test_get_clean_text_with_report_clean_page_zero_report() {
+        let html = r#"<html><body><p>Just text</p></body></html>"#;
+        let (text, report) = ExtractionService::get_clean_text_with_report(html);
+        assert!(text.contains("Just text"));
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn test_get_clean_text_legacy_wrapper_drops_report() {
+        let html = r#"<html><body><div aria-hidden="true">x</div><p>y</p></body></html>"#;
+        let text = ExtractionService::get_clean_text(html);
+        assert!(!text.contains('x'));
+        assert!(text.contains('y'));
     }
 
     #[test]
