@@ -418,9 +418,21 @@ impl PlaywrightBrowserManagerComponent {
             }
             Err(e) => {
                 // 修复：显式失败，不再静默回落触发误导性下游错误。
-                Err(EngineError::Unsupported(format!(
-                    "playwright 引擎不可用：未找到系统 Chrome/Chromium，内置自动下载不可用（{e}）。                     处置：安装 Chrome/Chromium，或设置环境变量                      CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH 指向浏览器可执行文件。"
-                )))
+                let msg = match crate::i18n::startup_i18n() {
+                    Some((locale, bundle)) => crate::i18n::t_with_args(
+                        locale,
+                        bundle,
+                        "engine-playwright-browser-unavailable",
+                        &[("error", e.to_string())],
+                    ),
+                    None => format!(
+                        "Playwright engine unavailable: no system Chrome/Chromium found, \
+                         built-in auto-download unavailable ({e}). Remedy: install \
+                         Chrome/Chromium, or set CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH \
+                         to the browser executable."
+                    ),
+                };
+                Err(EngineError::Unsupported(msg))
             }
         }
     }

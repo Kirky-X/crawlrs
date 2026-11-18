@@ -66,3 +66,6 @@ search-error-smart-search = 智能搜索失败: { $message }
 # ID 模块启动期配置校验（2 个 key）— IdModule::resolve_algorithm()
 error-id-algorithm-unknown = id.algorithm = { $algorithm } 不是已知算法（可选 uuid_v8；uuid_v4/uuid_v7 别名归入 uuid_v8）：{ $error }
 error-id-algorithm-uncompiled = id.algorithm = { $algorithm } 未编译进本构建（nebulaid 仅启用 sdk,uuid-v8 特性）；请改用 uuid_v8，或在 Cargo.toml 启用对应 nebulaid 特性
+
+# Playwright 引擎启动错误（1 个 key）
+engine-playwright-browser-unavailable = playwright 引擎不可用：未找到系统 Chrome/Chromium，内置自动下载不可用（{ $error }）。处置：安装 Chrome/Chromium，或设置环境变量 CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH 指向浏览器可执行文件。

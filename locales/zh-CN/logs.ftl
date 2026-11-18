@@ -126,3 +126,9 @@ search-default-engine-unknown = search.default_engine '{ $engine }' 不是已知
 # auth-off 降级模式（2 个 key）
 auth-allow-unauthenticated-enabled = allow_unauthenticated_protected() 显式启用：受保护路由将放行未鉴权请求（匿名受限身份）。仅限受信任内网部署；公开网络必须启用 auth feature。
 auth-disabled-unauthenticated-denied = auth feature 已禁用：受保护路由收到未鉴权请求，默认拒绝（401）。若确需匿名放行，请显式调用 allow_unauthenticated_protected()。
+
+# Bootstrap admin key / 内存与系统监控降级（4 个 key）
+bootstrap-admin-key-uuid-parse-failed = CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 长度 36 但 UUID 解析失败，回退自动生成 team: { $error }
+bootstrap-admin-key-invalid-length = CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 非空但不是 36 位 UUID（长度 { $length }），回退自动生成 team
+memory-watermark-sysinfo-init-failed = sysinfo System 初始化失败，内存水位采样停用: { $error }
+system-metrics-sysinfo-init-failed = sysinfo System 初始化失败，系统监控 fail-closed 降级（读取返回 100%，内存准入拒绝新任务）: { $error }

@@ -127,3 +127,9 @@ search-default-engine-unknown = search.default_engine '{ $engine }' is not a kno
 # Auth-off degraded mode (2 keys)
 auth-allow-unauthenticated-enabled = allow_unauthenticated_protected() explicitly enabled: protected routes will pass unauthenticated requests through with a restricted anonymous identity. For trusted intranet deployments only; the auth feature must be enabled for public networks.
 auth-disabled-unauthenticated-denied = auth feature disabled: protected route received an unauthenticated request, denying by default (401). To allow anonymous access, call allow_unauthenticated_protected() explicitly.
+
+# Bootstrap admin key / memory & metrics failover (4 keys)
+bootstrap-admin-key-uuid-parse-failed = CRAWLRS__BOOTSTRAP_ADMIN_API_KEY is 36 chars long but UUID parse failed, falling back to auto-generated team: { $error }
+bootstrap-admin-key-invalid-length = CRAWLRS__BOOTSTRAP_ADMIN_API_KEY is non-empty but not a 36-char UUID (length { $length }), falling back to auto-generated team
+memory-watermark-sysinfo-init-failed = sysinfo System init failed, memory watermark sampling disabled: { $error }
+system-metrics-sysinfo-init-failed = sysinfo System init failed, system monitoring fail-closed degraded (reads return 100%, memory admission rejects new tasks): { $error }

@@ -131,9 +131,21 @@ impl BrowserPoolState {
                         // 浏览器、无已下载浏览器、内置下载不可用，playwright 引擎
                         // 不可能启动 —— 显式失败并给出可操作处置。
                         warn!("Browser download failed: {}", e);
-                        Err(EngineError::Unsupported(format!(
-                            "playwright 引擎不可用：未找到系统 Chrome/Chromium，内置自动下载不可用（{e}）。处置：安装 Chrome/Chromium，或设置环境变量 CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH 指向浏览器可执行文件。"
-                        )))
+                        let msg = match crate::i18n::startup_i18n() {
+                            Some((locale, bundle)) => crate::i18n::t_with_args(
+                                locale,
+                                bundle,
+                                "engine-playwright-browser-unavailable",
+                                &[("error", e.to_string())],
+                            ),
+                            None => format!(
+                                "Playwright engine unavailable: no system Chrome/Chromium found, \
+                                 built-in auto-download unavailable ({e}). Remedy: install \
+                                 Chrome/Chromium, or set CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH \
+                                 to the browser executable."
+                            ),
+                        };
+                        Err(EngineError::Unsupported(msg))
                     }
                 }
             })

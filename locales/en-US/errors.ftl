@@ -66,3 +66,6 @@ search-error-smart-search = Smart search failed: { $message }
 # ID module startup config validation (2 keys) — IdModule::resolve_algorithm()
 error-id-algorithm-unknown = id.algorithm = { $algorithm } is not a known algorithm (option: uuid_v8; uuid_v4/uuid_v7 aliases map to uuid_v8): { $error }
 error-id-algorithm-uncompiled = id.algorithm = { $algorithm } is not compiled into this build (nebulaid enables only the sdk,uuid-v8 features); use uuid_v8 instead, or enable the corresponding nebulaid feature in Cargo.toml
+
+# Playwright engine startup error (1 key)
+engine-playwright-browser-unavailable = Playwright engine unavailable: no system Chrome/Chromium found, built-in auto-download unavailable ({ $error }). Remedy: install Chrome/Chromium, or set environment variable CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH to the browser executable.

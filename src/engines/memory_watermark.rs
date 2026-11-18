@@ -210,7 +210,11 @@ impl MemoryWatermark {
             Err(e) => {
                 log::error!(
                     target: "crawlrs::engines::memory_watermark",
-                    "sysinfo System 初始化失败，内存水位采样停用: {e}"
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "memory-watermark-sysinfo-init-failed",
+                        &[("error", e.to_string())],
+                    )
                 );
                 self.mark_sampler_unavailable();
                 return;

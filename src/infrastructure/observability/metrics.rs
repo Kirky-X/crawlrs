@@ -31,7 +31,13 @@ fn new_system() -> Option<System> {
             Some(sys)
         }
         Err(e) => {
-            log::error!("sysinfo System 初始化失败，系统监控 fail-closed 降级（读取返回 100%，内存准入拒绝新任务）: {e}");
+            log::error!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "system-metrics-sysinfo-init-failed",
+                    &[("error", e.to_string())],
+                )
+            );
             None
         }
     }

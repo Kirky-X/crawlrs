@@ -38,7 +38,11 @@ pub(super) fn resolve_bootstrap_team_id(cfg_val: &str) -> Option<crate::domain::
             Ok(id) => Some(id),
             Err(e) => {
                 log::warn!(
-                    "CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 长度 36 但 UUID 解析失败，回退自动生成 team: {e}"
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "bootstrap-admin-key-uuid-parse-failed",
+                        &[("error", e.to_string())],
+                    )
                 );
                 None
             }
@@ -46,8 +50,11 @@ pub(super) fn resolve_bootstrap_team_id(cfg_val: &str) -> Option<crate::domain::
     } else {
         if !cfg_val.is_empty() {
             log::warn!(
-                "CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 非空但不是 36 位 UUID（长度 {}），回退自动生成 team",
-                cfg_val.len()
+                "{}",
+                crate::i18n::tr_log_args(
+                    "bootstrap-admin-key-invalid-length",
+                    &[("length", cfg_val.len().to_string())],
+                )
             );
         }
         None
