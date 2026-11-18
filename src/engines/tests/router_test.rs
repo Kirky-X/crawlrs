@@ -3002,3 +3002,256 @@ mod memory_critical {
         assert_eq!(playwright.calls(), 1);
     }
 }
+
+// ===== T003: antibot escalation audit instrumentation =====
+
+/// Mock audit sink capturing full escalation entries.
+struct EscalationAuditSink {
+    entries: std::sync::Mutex<Vec<crate::domain::auth::AuditLogEntry>>,
+}
+
+#[async_trait]
+impl crate::domain::services::audit_service::AuditServiceTrait for EscalationAuditSink {
+    async fn log(
+        &self,
+        entry: crate::domain::auth::AuditLogEntry,
+    ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+        self.entries.lock().unwrap().push(entry);
+        Ok(())
+    }
+
+    async fn log_allow(
+        &self,
+        _action: String,
+        _api_key_id: crate::domain::id::Id,
+        _team_id: crate::domain::id::Id,
+        _scope: crate::domain::auth::ApiKeyScope,
+    ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+        Ok(())
+    }
+
+    async fn log_deny(
+        &self,
+        _action: String,
+        _api_key_id: Option<crate::domain::id::Id>,
+        _team_id: Option<crate::domain::id::Id>,
+        _reason: String,
+        _scope: Option<crate::domain::auth::ApiKeyScope>,
+    ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+        Ok(())
+    }
+
+    async fn get_logs_for_key(
+        &self,
+        _api_key_id: crate::domain::id::Id,
+        _limit: u64,
+        _offset: u64,
+    ) -> Result<
+        Vec<crate::domain::auth::AuditLogEntry>,
+        crate::domain::services::audit_service::AuditServiceError,
+    > {
+        Ok(Vec::new())
+    }
+
+    async fn get_logs_for_team(
+        &self,
+        _team_id: crate::domain::id::Id,
+        _limit: u64,
+        _offset: u64,
+    ) -> Result<
+        Vec<crate::domain::auth::AuditLogEntry>,
+        crate::domain::services::audit_service::AuditServiceError,
+    > {
+        Ok(Vec::new())
+    }
+
+    async fn get_denied_requests(
+        &self,
+        _api_key_id: crate::domain::id::Id,
+        _limit: u64,
+    ) -> Result<
+        Vec<crate::domain::auth::AuditLogEntry>,
+        crate::domain::services::audit_service::AuditServiceError,
+    > {
+        Ok(Vec::new())
+    }
+}
+
+/// Engine that answers with a 403 anti-bot challenge page.
+struct ChallengeEngine {
+    name: &'static str,
+}
+
+#[async_trait]
+impl ScraperEngine for ChallengeEngine {
+    async fn scrape(
+        &self,
+        _request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        Ok(InternalScrapeResponse {
+            js_degraded: false,
+            status_code: 403,
+            content: "<html><body>Just a moment... Cloudflare challenge page for testing the escalation audit instrumentation.</body></html>".to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 5,
+            final_url: None,
+            captured_responses: Vec::new(),
+        })
+    }
+
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
+        if request.needs_js {
+            0
+        } else {
+            100
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+/// Engine that only serves JS requests (browser-like).
+struct JsOnlyEngine {
+    name: &'static str,
+}
+
+#[async_trait]
+impl ScraperEngine for JsOnlyEngine {
+    async fn scrape(
+        &self,
+        _request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        Ok(InternalScrapeResponse {
+            js_degraded: false,
+            status_code: 200,
+            content: "<html><body><h1>Browser rendered content</h1><p>This page has plenty of visible text so the antibot classifier near-empty structural check will not flag it during router tests.</p></body></html>".to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+            captured_responses: Vec::new(),
+        })
+    }
+
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
+        if request.needs_js {
+            100
+        } else {
+            10
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+/// 403 challenge on the HTTP engine emits exactly one `antibot_escalation`
+/// entry with the initial engine, the JS re-route target, and the trigger.
+#[tokio::test]
+async fn test_antibot_challenge_emits_escalation_audit_event() {
+    let http: Arc<dyn ScraperEngine> = Arc::new(ChallengeEngine {
+        name: "http-challenge",
+    });
+    let browser: Arc<dyn ScraperEngine> = Arc::new(JsOnlyEngine { name: "js-browser" });
+    let router = EngineRouter::new(vec![http, browser]);
+
+    let sink: Arc<EscalationAuditSink> = Arc::new(EscalationAuditSink {
+        entries: std::sync::Mutex::new(Vec::new()),
+    });
+    router.set_audit_sink(Some(sink.clone()));
+
+    let mut request = make_request();
+    // IP-literal URL: SSRF validate_url passes without DNS (sandbox-safe).
+    request.url = "http://1.1.1.1/challenge".to_string();
+    let _ = router.route(&request).await;
+
+    // Spawned audit write: poll briefly until it lands.
+    for _ in 0..100 {
+        if sink.entries.lock().unwrap().len() >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let entries = sink.entries.lock().unwrap();
+    let esc: Vec<_> = entries
+        .iter()
+        .filter(|e| e.requested_action == "antibot_escalation")
+        .collect();
+    assert!(!esc.is_empty(), "antibot_escalation event must be emitted");
+    let payload = &esc[0].metadata["escalation"];
+    assert_eq!(payload["initial_engine"], "http-challenge");
+    assert_eq!(payload["escalated_to"], "js-browser");
+    assert_eq!(payload["trigger"], "antibot_classified");
+    assert_eq!(payload["target_host"], "1.1.1.1");
+}
+
+/// Engine failing with a 403-attributed error triggers a sequential fallback
+/// hop audited as `trigger=http_403`.
+#[tokio::test]
+async fn test_sequential_fallback_403_emits_http403_escalation() {
+    struct Failing403Engine {
+        name: &'static str,
+    }
+
+    #[async_trait]
+    impl ScraperEngine for Failing403Engine {
+        async fn scrape(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            Err(EngineError::AntiBotDetected(
+                "HTTP 403 blocked without data-HTML body".to_string(),
+            ))
+        }
+
+        fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+            100
+        }
+
+        fn name(&self) -> &'static str {
+            self.name
+        }
+    }
+
+    let failing: Arc<dyn ScraperEngine> = Arc::new(Failing403Engine {
+        name: "failing-403",
+    });
+    let ok: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+        engine_name: "recovering",
+        score: 50,
+    });
+    let router = EngineRouter::new(vec![failing, ok]);
+
+    let sink: Arc<EscalationAuditSink> = Arc::new(EscalationAuditSink {
+        entries: std::sync::Mutex::new(Vec::new()),
+    });
+    router.set_audit_sink(Some(sink.clone()));
+
+    let mut request = make_request();
+    request.url = "http://1.1.1.1/fallback".to_string();
+    let result = router.route(&request).await;
+    assert!(result.is_ok(), "second engine must recover: {result:?}");
+
+    for _ in 0..100 {
+        if !sink.entries.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let entries = sink.entries.lock().unwrap();
+    let esc: Vec<_> = entries
+        .iter()
+        .filter(|e| e.requested_action == "antibot_escalation")
+        .collect();
+    assert_eq!(esc.len(), 1, "exactly one fallback event, got {entries:?}");
+    let payload = &esc[0].metadata["escalation"];
+    assert_eq!(payload["trigger"], "http403");
+    assert_eq!(payload["initial_engine"], "failing-403");
+    assert_eq!(payload["escalated_to"], "recovering");
+}

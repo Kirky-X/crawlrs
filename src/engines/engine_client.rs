@@ -310,6 +310,11 @@ impl EngineClient {
         Self::with_router(router)
     }
 
+    /// 访问内部 router（升级审计后置注入等平台侧装配用）。
+    pub fn router(&self) -> &Arc<dyn EngineRouterTrait> {
+        &self.router
+    }
+
     /// Create a new EngineClient with a custom router.
     pub fn with_router(router: Arc<dyn EngineRouterTrait>) -> Self {
         let health_monitor = Arc::new(EngineHealthMonitor::new(Vec::new()));

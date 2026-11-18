@@ -60,6 +60,14 @@ pub trait EngineRouterTrait: Send + Sync {
     ///
     /// 默认 no-op：测试替身不持有 host 纪律状态，无需实现。
     fn set_crawl_delay(&self, _host: &str, _delay: Duration) {}
+
+    /// 注入反爬升级审计出口（T003）：services 阶段（audit 就绪后）后置注入；
+    /// `None` 时埋点零开销旁路。默认 no-op：测试替身无需实现。
+    fn set_audit_sink(
+        &self,
+        _audit: Option<Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>>,
+    ) {
+    }
 }
 
 /// 负载均衡策略
@@ -130,6 +138,12 @@ pub struct EngineRouter {
     /// 记录 race 胜出引擎延迟，估算 P84 阈值，供未来顺序路径决策是否发送副本请求。
     /// `HedgeController` 内部全 `Atomic*`，无锁线程安全，可直接共享无需 `Arc`。
     hedge_controller: HedgeController,
+    /// 反爬升级审计出口（antibot_escalation 事件）：services 阶段后置注入
+    /// （`RwLock` 允许 Arc 化后 set）；`None`（默认）时埋点零开销旁路，
+    /// 注入后经 spawn 异步写（不阻塞路由热路径）。读多写少，无竞争锁开销可忽略。
+    audit: parking_lot::RwLock<
+        Option<Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>>,
+    >,
     /// 内存水位镜像（engine-moli 特性）：评分后按水位修正引擎分数；
     /// `None`（未装配）时路由行为与无水位调度完全一致。
     #[cfg(feature = "engine-moli")]
@@ -203,6 +217,7 @@ impl EngineRouter {
             session,
             failure_snapshot: None, // F4：默认未配置（failure_snapshot_dir 空串）
             hedge_controller: HedgeController::with_defaults(), // 默认参数
+            audit: parking_lot::RwLock::new(None), // 升级审计默认未注入（零开销旁路）
             #[cfg(feature = "engine-moli")]
             memory: None,
             #[cfg(feature = "engine-moli")]
@@ -249,6 +264,7 @@ impl EngineRouter {
             session: SessionManager::disabled(), // F2：默认不启用（现状盲轮换）
             failure_snapshot: None,              // F4：默认未配置（failure_snapshot_dir 空串）
             hedge_controller: HedgeController::with_defaults(), // 默认参数
+            audit: parking_lot::RwLock::new(None), // 升级审计默认未注入
             #[cfg(feature = "engine-moli")]
             memory: None,
             #[cfg(feature = "engine-moli")]
@@ -274,6 +290,44 @@ impl EngineRouter {
 
     pub fn set_max_engine_attempts(&mut self, attempts: usize) {
         self.max_engine_attempts = attempts.max(1);
+    }
+
+    /// 后置注入反爬升级审计出口（T003；trait `set_audit_sink` 的具体实现）。
+    pub fn set_audit_sink_impl(
+        &self,
+        audit: Option<Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>>,
+    ) {
+        *self.audit.write() = audit;
+    }
+
+    /// 反爬升级埋点统一出口（T003）：解析 host、取审计 sink（未注入即零开销
+    /// 旁路）并 spawn 异步写。`robots_verdict` 暂为 NotFetched（T005 接 checker）。
+    pub(super) fn emit_escalation_hop(
+        &self,
+        request_url: &str,
+        initial_engine: &str,
+        escalated_to: String,
+        trigger: crate::engines::router::escalation_audit::EscalationTrigger,
+    ) {
+        let guard = self.audit.read();
+        let Some(audit) = guard.as_ref() else {
+            return;
+        };
+        let target_host = url::Url::parse(request_url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.to_string()))
+            .unwrap_or_default();
+        let ev = crate::engines::router::escalation_audit::EscalationEvent {
+            tenant_id: None,
+            team_id: None,
+            task_id: None,
+            target_host,
+            initial_engine: initial_engine.to_string(),
+            escalated_to,
+            trigger,
+            robots_verdict: crate::engines::router::escalation_audit::RobotsVerdict::NotFetched,
+        };
+        crate::engines::router::escalation_audit::emit_escalation(Some(audit), ev);
     }
 
     /// 注入失败现场快照器（F4）
@@ -606,6 +660,13 @@ impl EngineRouterTrait for EngineRouter {
     fn set_crawl_delay(&self, host: &str, delay: Duration) {
         self.host_discipline.set_crawl_delay(host, delay);
     }
+
+    fn set_audit_sink(
+        &self,
+        audit: Option<Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>>,
+    ) {
+        self.set_audit_sink_impl(audit);
+    }
 }
 
 /// 检查引擎"成功"响应是否为反爬挑战页。
@@ -675,6 +736,8 @@ mod tests_impl;
 
 // 引擎选择逻辑拆分
 mod engine_selector;
+// 反爬升级审计事件（零依赖无条件编译；None 注入形态零开销旁路）
+pub mod escalation_audit;
 // 路由模式拆分
 mod route_race;
 mod route_sequential;

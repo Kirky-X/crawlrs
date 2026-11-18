@@ -112,6 +112,21 @@ impl EngineRouter {
                 *state.last_error = Some(EngineError::AntiBotDetected(challenge_reason));
                 *state.force_needs_js = true;
 
+                // Escalation audit (T003): antibot classified → JS re-route hop.
+                let mut js_probe = request.clone();
+                js_probe.needs_js = true;
+                let escalated_to = self
+                    .select_optimal_engines(&js_probe)
+                    .first()
+                    .map(|(_, e)| e.name().to_string())
+                    .unwrap_or_else(|| "js-engine".to_string());
+                self.emit_escalation_hop(
+                    &request.url,
+                    engine_name,
+                    escalated_to,
+                    crate::engines::router::escalation_audit::EscalationTrigger::AntibotClassified,
+                );
+
                 // 记录 AntiBot 失败到 tracker
                 let reason = RetryReason::AntiBot;
                 state.tracker.record(reason);
@@ -174,7 +189,8 @@ impl EngineRouter {
         // 的失败记账，控制流落入下方成功收尾段（stats 成功记账 /
         // 熔断 record_success / host 纪律 / session Cookie 捕获
         // 均按成功语义原样执行）。
-        if self.select_optimal_engines(&js_request).is_empty() {
+        let js_candidates = self.select_optimal_engines(&js_request);
+        if js_candidates.is_empty() {
             warn!(
                 "JS upgrade probe hit (score={}, reason={}) but no \
                  JS-capable engine is registered for the needs_js \
@@ -184,6 +200,17 @@ impl EngineRouter {
             );
             None
         } else {
+            // Escalation audit (T003): JS challenge → browser engine hop.
+            let escalated_to = js_candidates
+                .first()
+                .map(|(_, e)| e.name().to_string())
+                .unwrap_or_else(|| "js-engine".to_string());
+            self.emit_escalation_hop(
+                &request.url,
+                engine_name,
+                escalated_to,
+                crate::engines::router::escalation_audit::EscalationTrigger::JsChallenge,
+            );
             self.update_engine_stats(engine_name, false, response_time);
             self.metrics.record_engine_failure(
                 engine_name,

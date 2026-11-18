@@ -172,14 +172,30 @@ impl EngineRouter {
             force_needs_js: &mut force_needs_js,
         };
 
-        for (score, engine) in candidates.into_iter().take(max_attempts) {
+        let mut candidates = candidates.into_iter().take(max_attempts).peekable();
+        while let Some((score, engine)) = candidates.next() {
             total_attempts += 1;
+            // Fallback hop audit (T004): only when a next candidate exists.
+            let next_engine = candidates.peek().map(|(_, e)| e.name().to_string());
             match self
-                .attempt_engine(engine, score, total_attempts, &context, &mut state)
+                .attempt_engine(engine.clone(), score, total_attempts, &context, &mut state)
                 .await
             {
                 AttemptOutcome::Done(result) => return result,
-                AttemptOutcome::Retry => {}
+                AttemptOutcome::Retry => {
+                    if let Some(next) = next_engine {
+                        // Read the failure through `state` (the local `last_error`
+                        // stays mutably borrowed by `state` for the whole loop).
+                        let trigger = state
+                            .last_error
+                            .as_ref()
+                            .map(|e| crate::engines::router::escalation_audit::fallback_trigger(Some(e)))
+                            .unwrap_or(
+                                crate::engines::router::escalation_audit::EscalationTrigger::SequentialFallback,
+                            );
+                        self.emit_escalation_hop(&request.url, engine.name(), next, trigger);
+                    }
+                }
             }
         }
 
