@@ -68,6 +68,10 @@ pub trait EngineRouterTrait: Send + Sync {
         _audit: Option<Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>>,
     ) {
     }
+
+    /// 注入 robots 判定关联源（T005）：升级事件 robots_verdict/风险分级。
+    /// 默认 no-op：测试替身无需实现。
+    fn set_robots_checker(&self, _checker: Option<Arc<crate::utils::robots::RobotsChecker>>) {}
 }
 
 /// 负载均衡策略
@@ -144,6 +148,9 @@ pub struct EngineRouter {
     audit: parking_lot::RwLock<
         Option<Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>>,
     >,
+    /// robots 判定关联源（T005）：升级事件风险分级；`None`（默认）或缓存
+    /// 未命中时事件 robots_verdict=NotFetched（只读缓存查询，零网络）。
+    robots_checker: parking_lot::RwLock<Option<Arc<crate::utils::robots::RobotsChecker>>>,
     /// 内存水位镜像（engine-moli 特性）：评分后按水位修正引擎分数；
     /// `None`（未装配）时路由行为与无水位调度完全一致。
     #[cfg(feature = "engine-moli")]
@@ -217,7 +224,8 @@ impl EngineRouter {
             session,
             failure_snapshot: None, // F4：默认未配置（failure_snapshot_dir 空串）
             hedge_controller: HedgeController::with_defaults(), // 默认参数
-            audit: parking_lot::RwLock::new(None), // 升级审计默认未注入（零开销旁路）
+            audit: parking_lot::RwLock::new(None), // 升级审计默认未注入
+            robots_checker: parking_lot::RwLock::new(None), // robots 关联默认未注入
             #[cfg(feature = "engine-moli")]
             memory: None,
             #[cfg(feature = "engine-moli")]
@@ -265,6 +273,7 @@ impl EngineRouter {
             failure_snapshot: None,              // F4：默认未配置（failure_snapshot_dir 空串）
             hedge_controller: HedgeController::with_defaults(), // 默认参数
             audit: parking_lot::RwLock::new(None), // 升级审计默认未注入
+            robots_checker: parking_lot::RwLock::new(None),
             #[cfg(feature = "engine-moli")]
             memory: None,
             #[cfg(feature = "engine-moli")]
@@ -300,6 +309,14 @@ impl EngineRouter {
         *self.audit.write() = audit;
     }
 
+    /// 后置注入 robots 判定关联源（T005；trait `set_robots_checker` 的具体实现）。
+    pub fn set_robots_checker_impl(
+        &self,
+        checker: Option<Arc<crate::utils::robots::RobotsChecker>>,
+    ) {
+        *self.robots_checker.write() = checker;
+    }
+
     /// 反爬升级埋点统一出口（T003）：解析 host、取审计 sink（未注入即零开销
     /// 旁路）并 spawn 异步写。`robots_verdict` 暂为 NotFetched（T005 接 checker）。
     pub(super) fn emit_escalation_hop(
@@ -317,6 +334,11 @@ impl EngineRouter {
             .ok()
             .and_then(|u| u.host_str().map(|h| h.to_string()))
             .unwrap_or_default();
+        let robots_guard = self.robots_checker.read();
+        let robots_verdict = crate::engines::router::escalation_audit::resolve_robots_verdict(
+            robots_guard.as_deref(),
+            request_url,
+        );
         let ev = crate::engines::router::escalation_audit::EscalationEvent {
             tenant_id: None,
             team_id: None,
@@ -325,7 +347,7 @@ impl EngineRouter {
             initial_engine: initial_engine.to_string(),
             escalated_to,
             trigger,
-            robots_verdict: crate::engines::router::escalation_audit::RobotsVerdict::NotFetched,
+            robots_verdict,
         };
         crate::engines::router::escalation_audit::emit_escalation(Some(audit), ev);
     }
@@ -666,6 +688,10 @@ impl EngineRouterTrait for EngineRouter {
         audit: Option<Arc<dyn crate::domain::services::audit_service::AuditServiceTrait>>,
     ) {
         self.set_audit_sink_impl(audit);
+    }
+
+    fn set_robots_checker(&self, checker: Option<Arc<crate::utils::robots::RobotsChecker>>) {
+        self.set_robots_checker_impl(checker);
     }
 }
 

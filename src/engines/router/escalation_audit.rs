@@ -104,6 +104,24 @@ impl EscalationEvent {
     }
 }
 
+/// Resolve the robots verdict for an escalation target (T005).
+///
+/// Read-only cache lookup on the checker (`cached_verdict`, zero network);
+/// missing checker or uncached host yields `NotFetched`.
+pub fn resolve_robots_verdict(
+    checker: Option<&crate::utils::robots::RobotsChecker>,
+    target_url: &str,
+) -> RobotsVerdict {
+    let Some(checker) = checker else {
+        return RobotsVerdict::NotFetched;
+    };
+    match checker.cached_verdict(target_url) {
+        Some(true) => RobotsVerdict::Allowed,
+        Some(false) => RobotsVerdict::Disallowed,
+        None => RobotsVerdict::NotFetched,
+    }
+}
+
 /// Attribute a sequential fallback hop from the failing engine error (T004).
 ///
 /// HTTP engines return 4xx/5xx bodies as successful responses (the antibot
@@ -303,6 +321,62 @@ mod tests {
         > {
             Ok(Vec::new())
         }
+    }
+
+    // ===== T005: robots verdict correlation =====
+
+    fn test_checker() -> crate::utils::robots::RobotsChecker {
+        let settings = crate::config::settings::RobotsSettings::default();
+        crate::utils::robots::RobotsChecker::new(
+            std::sync::Arc::new(reqwest::Client::new()),
+            &settings,
+            None,
+            None,
+        )
+    }
+
+    /// Missing checker → NotFetched.
+    #[test]
+    fn resolve_robots_verdict_without_checker_is_not_fetched() {
+        assert_eq!(
+            resolve_robots_verdict(None, "https://example.com/a"),
+            RobotsVerdict::NotFetched
+        );
+    }
+
+    /// Cached Disallow rule → Disallowed; uncached host → NotFetched;
+    /// disallowed + escalation → risk_level high (end to end).
+    #[tokio::test]
+    async fn resolve_robots_verdict_disallowed_cache_marks_high_risk() {
+        let checker = test_checker();
+        checker
+            .seed_memory_cache_for_test(
+                "https://blocked.example.com/a",
+                "User-agent: *\nDisallow: /\n",
+            )
+            .await;
+        checker
+            .seed_memory_cache_for_test("https://open.example.com/a", "User-agent: *\nDisallow: \n")
+            .await;
+
+        assert_eq!(
+            resolve_robots_verdict(Some(&checker), "https://blocked.example.com/page"),
+            RobotsVerdict::Disallowed
+        );
+        assert_eq!(
+            resolve_robots_verdict(Some(&checker), "https://open.example.com/page"),
+            RobotsVerdict::Allowed
+        );
+        assert_eq!(
+            resolve_robots_verdict(Some(&checker), "https://uncached.example.com/page"),
+            RobotsVerdict::NotFetched
+        );
+
+        // End-to-end: a Disallowed host that still escalates is high risk.
+        let mut ev = sample_event(RobotsVerdict::NotFetched);
+        ev.robots_verdict =
+            resolve_robots_verdict(Some(&checker), "https://blocked.example.com/page");
+        assert_eq!(ev.risk_level(), "high");
     }
 
     /// Some(sink) writes exactly one `antibot_escalation` entry via spawn.

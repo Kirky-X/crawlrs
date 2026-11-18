@@ -339,6 +339,50 @@ impl RobotsChecker {
         None
     }
 
+    /// 只读缓存判定（T005 升级审计关联）：内存缓存命中且未过期时给出
+    /// `Some(allowed)`；未命中/过期/获取失败标记 → `None`。
+    ///
+    /// 零网络、零等待：内存缓存锁用 `try_lock`（锁被并发持有时按未命中处理），
+    /// 供路由升级埋点的同步路径安全调用（不阻塞异步 runtime）。
+    pub fn cached_verdict(&self, url_str: &str) -> Option<bool> {
+        let robots_url = build_robots_url(url_str).ok()?;
+        let cache = self.memory_cache.try_lock().ok()?;
+        let cached = cache.entries.get(&robots_url)?;
+        if cached.expires_at <= Instant::now() {
+            return None;
+        }
+        if cached.fetch_failed {
+            return if self.fail_closed { Some(false) } else { None };
+        }
+        let url = Url::parse(url_str).ok()?;
+        // F6：匹配目标携带 query（与 is_allowed 同口径）
+        let path_and_query = match url.query() {
+            Some(q) => format!("{}?{}", url.path(), q),
+            None => url.path().to_string(),
+        };
+        let mut matcher = DefaultMatcher::default();
+        Some(matcher.one_agent_allowed_by_robots(
+            &cached.content,
+            &self.user_agent,
+            &path_and_query,
+        ))
+    }
+
+    /// 测试辅助：直接向内存缓存播种 robots 内容（绕过抓取）。
+    #[cfg(test)]
+    pub async fn seed_memory_cache_for_test(&self, url_str: &str, content: &str) {
+        let robots_url = build_robots_url(url_str).expect("valid target url");
+        let mut guard = self.memory_cache.lock().await;
+        guard.insert(
+            robots_url,
+            CachedRobots {
+                content: std::sync::Arc::from(content),
+                expires_at: Instant::now() + self.cache_ttl,
+                fetch_failed: false,
+            },
+        );
+    }
+
     /// 持久缓存查询：命中 → 回填内存缓存（正常 TTL）并记 hit
     async fn try_cache_service(&self, cache_key: &str, robots_url: &str) -> Option<FetchedRobots> {
         if let Some(ref cache_service) = self.cache_service {

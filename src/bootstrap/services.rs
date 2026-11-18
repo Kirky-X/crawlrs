@@ -160,10 +160,14 @@ pub(crate) async fn init_services(
     let search =
         search::init_search_stack(infrastructure, settings, &http_client, &engine_client).await;
     let (queue, audit_service) = auth::init_auth_and_audit(settings, infrastructure).await;
-    // T003：反爬升级审计出口后置注入 router（audit 就绪晚于 engine 构造）
+    // T003/T005：反爬升级审计出口与 robots 判定关联源后置注入 router
+    // （audit/robots 均就绪晚于 engine 构造）
     engine_client
         .router()
         .set_audit_sink(Some(audit_service.clone()));
+    engine_client
+        .router()
+        .set_robots_checker(Some(search.robots_checker.clone()));
     let llm = search::init_llm_stack(
         settings,
         &http_client,
