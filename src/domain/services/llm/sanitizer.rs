@@ -154,6 +154,46 @@ fn strip_suspicious_lines(text: &str) -> String {
         .join("\n")
 }
 
+/// DOM-layer hidden-node predicate: true when the element is visually hidden
+/// by inline style (`display:none` / `visibility:hidden` / `opacity:0`),
+/// the `hidden` attribute, or `aria-hidden="true"`.
+///
+/// Only inline style and attribute-level hiding are detected; stylesheet
+/// class rules are out of scope (Deferred in the change proposal).
+/// Case- and whitespace-tolerant style parsing.
+pub fn is_hidden_node(el: scraper::ElementRef) -> bool {
+    let node = el.value();
+    if node.attr("hidden").is_some() {
+        return true;
+    }
+    if node
+        .attr("aria-hidden")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        == Some(true)
+    {
+        return true;
+    }
+    node.attr("style").is_some_and(style_declares_hidden)
+}
+
+/// Parse an inline `style` attribute and detect hidden declarations.
+fn style_declares_hidden(style: &str) -> bool {
+    for decl in style.split(';') {
+        let Some((prop, value)) = decl.split_once(':') else {
+            continue;
+        };
+        let prop = prop.trim().to_ascii_lowercase();
+        let value = value.trim().to_ascii_lowercase();
+        match prop.as_str() {
+            "display" if value == "none" => return true,
+            "visibility" if value == "hidden" => return true,
+            "opacity" if value.parse::<f64>().is_ok_and(|v| v == 0.0) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Remove `<!-- ... -->` payloads and count each stripped comment.
 ///
 /// Scans for delimiters manually (no regex): robust against newlines inside
@@ -372,5 +412,64 @@ mod tests {
             suspicious_pattern_hits("Regular product content.\n数据提取测试"),
             0
         );
+    }
+
+    // ===== T004: DOM hidden-node predicate =====
+
+    /// Select the first element matching `selector` from `html`.
+    fn first_element(html: &str, selector: &str) -> scraper::ElementRef<'static> {
+        // Leak the parsed document intentionally for test ergonomics: tests are
+        // short-lived and each document backs a handful of assertions.
+        let document = Box::leak(Box::new(scraper::Html::parse_document(html)));
+        let sel = scraper::Selector::parse(selector).expect("valid selector");
+        document.select(&sel).next().expect("selector must match")
+    }
+
+    /// Each of the five hiding markers makes the node "hidden".
+    #[test]
+    fn hidden_node_detected_for_all_five_markers() {
+        let cases = [
+            r#"<div style="display:none">x</div>"#,
+            r#"<div style="visibility:hidden">x</div>"#,
+            r#"<div style="opacity:0">x</div>"#,
+            r#"<div hidden>x</div>"#,
+            r#"<div aria-hidden="true">x</div>"#,
+        ];
+        for html in cases {
+            let el = first_element(html, "div");
+            assert!(is_hidden_node(el), "must be hidden: {html}");
+        }
+    }
+
+    /// Style matching tolerates case and whitespace variations.
+    #[test]
+    fn hidden_node_style_parsing_case_whitespace_tolerant() {
+        let cases = [
+            r#"<div style="DISPLAY : NONE">x</div>"#,
+            r#"<div style="color:red; visibility : HIDDEN">x</div>"#,
+            r#"<div style="opacity: 0.0">x</div>"#,
+        ];
+        for html in cases {
+            let el = first_element(html, "div");
+            assert!(is_hidden_node(el), "must be hidden: {html}");
+        }
+    }
+
+    /// Visible nodes (other styles, other attributes) are not hidden.
+    #[test]
+    fn visible_node_not_hidden() {
+        let cases = [
+            r#"<div style="display:block">x</div>"#,
+            r#"<div style="visibility:visible">x</div>"#,
+            r#"<div style="opacity:0.5">x</div>"#,
+            r#"<div style="color:red">x</div>"#,
+            r#"<div aria-hidden="false">x</div>"#,
+            r#"<div data-hidden="yes">x</div>"#,
+            r#"<div>plain</div>"#,
+        ];
+        for html in cases {
+            let el = first_element(html, "div");
+            assert!(!is_hidden_node(el), "must be visible: {html}");
+        }
     }
 }
