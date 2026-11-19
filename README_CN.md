@@ -70,7 +70,7 @@
 <td width="50%" style="vertical-align:top; padding: 12px">🛡️ <b>反爬对抗</b><br><span style="color:#64748B">三层反爬检测、SPA 空壳探测升级、UA 池一致性伪装、智能重试、代理轮换、请求合并；Session 身份三件套记分退休、AutoThrottle 自适应限速、429 指数退避</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🏢 <b>企业平台能力</b><br><span style="color:#64748B">多租户隔离（专用代理池、浏览器与 DNS 配额）、garrison 认证（RBAC + JWT + 防暴力破解）、limiteron 限流熔断、Webhook 事件通知</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🏢 <b>企业平台能力</b><br><span style="color:#64748B">多租户隔离（专用代理池、浏览器与 DNS 配额）、按租户合规 profile（GDPR、ai.txt、PII 最小化）、garrison 认证（RBAC + JWT + 防暴力破解）、limiteron 限流熔断、Webhook 事件通知</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">📈 <b>可观测性</b><br><span style="color:#64748B">Prometheus 指标导出（队列深度、引擎成功率、缓存命中等）、inklog 结构化日志、审计日志、失败现场快照（错误签名去重存档）</span></td>
 </tr>
 <tr>

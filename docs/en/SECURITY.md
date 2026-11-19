@@ -111,6 +111,10 @@ Run `crawlrs doctor --security` before startup to verify the compiled feature ma
 
 Anti-bot escalation hops emit structured `antibot_escalation` audit events; replay a task's escalation chain with `crawlrs route-replay <task-id>`.
 
+### Compliance Plane
+
+Per-tenant compliance profiles (`[compliance.<tenant>]`) gate `ai.txt` admission, PII minimization and retention checks. GDPR profiles force PII minimization. Scrape responses may carry an optional `security_context` object (engine path, robots/ai.txt verdicts, sanitization summary, PII-minimized flag); it is omitted when empty, so the 0.2.0 schema stays compatible. Run `crawlrs compliance-report <tenant> <days>d` for a five-line accountability report. Note that pattern-based PII detection is conservative (it may over-mask) and tenant-supplied custom patterns are not supported.
+
 ---
 
 ## ⛓️ Supply Chain and Gates
