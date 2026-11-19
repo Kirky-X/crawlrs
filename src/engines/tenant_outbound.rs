@@ -9,7 +9,7 @@
 //! adds no new dependencies.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use thiserror::Error;
@@ -20,6 +20,9 @@ use crate::engines::proxy_pool::ProxyPool;
 
 /// Maximum wait for `QueueWithTimeout` browser-context permits.
 const BROWSER_QUEUE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// DNS sliding-window length.
+const DNS_WINDOW: Duration = Duration::from_secs(60);
 
 /// Quota overflow for a tenant's outbound resources.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -42,6 +45,68 @@ pub enum OutboundQuotaError {
         /// Tenant whose wait elapsed.
         tenant: String,
     },
+}
+
+/// Per-tenant DNS query rate bucket (60s sliding window).
+///
+/// Only configured tenants are counted; unauthenticated and unconfigured tenants
+/// always pass. A clock function is injected for deterministic window-expiry tests.
+pub struct DnsQuotaBucket {
+    windows: DashMap<String, (Instant, u32)>,
+    limits: DashMap<String, u32>,
+    now: fn() -> Instant,
+}
+
+impl DnsQuotaBucket {
+    /// Build a bucket from per-tenant per-minute DNS limits.
+    pub fn new(limits: impl IntoIterator<Item = (String, u32)>) -> Self {
+        let limit_map = DashMap::new();
+        for (tenant, max) in limits {
+            limit_map.insert(tenant, max);
+        }
+        Self {
+            windows: DashMap::new(),
+            limits: limit_map,
+            now: Instant::now,
+        }
+    }
+
+    /// Override the clock (tests only).
+    #[cfg(test)]
+    fn with_clock(mut self, now: fn() -> Instant) -> Self {
+        self.now = now;
+        self
+    }
+
+    /// Consume one DNS query from a tenant's window.
+    ///
+    /// Returns `Ok(())` for unauthenticated/unconfigured tenants (no quota) and
+    /// for configured tenants still under budget. `DnsQuotaExceeded` when the
+    /// window is exhausted.
+    pub fn try_consume(&self, tenant: Option<&str>) -> Result<(), OutboundQuotaError> {
+        let tenant = match tenant {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+        let max = match self.limits.get(tenant) {
+            Some(m) => *m.value(),
+            None => return Ok(()),
+        };
+        let now = (self.now)();
+        let mut entry = self.windows.entry(tenant.to_string()).or_insert((now, 0));
+        let (start, used) = entry.value_mut();
+        if now.duration_since(*start) >= DNS_WINDOW {
+            *start = now;
+            *used = 0;
+        }
+        if *used >= max {
+            return Err(OutboundQuotaError::DnsQuotaExceeded {
+                tenant: tenant.to_string(),
+            });
+        }
+        *used += 1;
+        Ok(())
+    }
 }
 
 /// Per-tenant browser-context concurrency limiter.
@@ -322,6 +387,40 @@ mod tests {
             tenant: "acme".to_string(),
         };
         assert!(format!("{err}").contains("acme"));
+    }
+
+    #[test]
+    fn dns_bucket_none_and_unconfigured_tenants_pass() {
+        let bucket = DnsQuotaBucket::new([("acme".to_string(), 2)]);
+        assert!(bucket.try_consume(None).is_ok());
+        assert!(bucket.try_consume(Some("unknown")).is_ok());
+    }
+
+    #[test]
+    fn dns_bucket_third_query_exceeds_quota() {
+        let bucket = DnsQuotaBucket::new([("acme".to_string(), 2)]);
+        assert!(bucket.try_consume(Some("acme")).is_ok());
+        assert!(bucket.try_consume(Some("acme")).is_ok());
+        assert!(matches!(
+            bucket.try_consume(Some("acme")),
+            Err(OutboundQuotaError::DnsQuotaExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn dns_bucket_window_expiry_resets_quota() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NOW_MS: AtomicU64 = AtomicU64::new(0);
+        fn fake_now() -> Instant {
+            Instant::now() + Duration::from_millis(NOW_MS.load(Ordering::Relaxed))
+        }
+        NOW_MS.store(0, Ordering::Relaxed);
+        let bucket = DnsQuotaBucket::new([("acme".to_string(), 1)]).with_clock(fake_now);
+        assert!(bucket.try_consume(Some("acme")).is_ok());
+        assert!(bucket.try_consume(Some("acme")).is_err());
+        // Advance past the 60s window.
+        NOW_MS.store(61_000, Ordering::Relaxed);
+        assert!(bucket.try_consume(Some("acme")).is_ok());
     }
 
     #[tokio::test]
