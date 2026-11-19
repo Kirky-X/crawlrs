@@ -11,6 +11,7 @@ pub mod engines;
 pub mod fluxweir;
 pub mod llm;
 pub mod logging;
+pub mod outbound;
 pub mod rag;
 pub mod runtime;
 pub mod search;

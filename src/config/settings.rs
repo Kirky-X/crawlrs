@@ -170,6 +170,12 @@ pub struct Settings {
     /// ID 生成配置（NebulaId 迁移；`serde(default)` 兼容旧配置缺 `[id]` 节）
     #[serde(default)]
     pub id: IdSettings,
+
+    /// Per-tenant outbound isolation (proxy pool / browser / DNS budgets).
+    /// Empty map keeps the shared-pool, unlimited-budget behavior.
+    #[serde(default)]
+    pub outbound_isolation:
+        std::collections::HashMap<String, crate::config::outbound::TenantOutboundConfig>,
 }
 
 // ID 生成配置（NebulaId）
@@ -1240,6 +1246,7 @@ mod tests {
             session: SessionSettings::default(),
             content_extraction: ContentExtractionSettings::default(),
             id: IdSettings::default(),
+            outbound_isolation: std::collections::HashMap::new(),
         };
 
         assert_eq!(settings.server.port, 8899);
