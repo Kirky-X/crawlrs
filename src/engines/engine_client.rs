@@ -367,11 +367,24 @@ impl EngineClient {
     /// * `Ok(ScrapeResponse)` on success
     /// * `Err(EngineError)` on failure
     pub async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+        self.scrape_for_tenant(request, None).await
+    }
+
+    /// 带租户标识的抓取入口（出站隔离 T004/T006 接线）。
+    ///
+    /// `tenant` 为服务端身份（worker 从 `task.team_id` 解析）；`None` 表示
+    /// 未认证/嵌入式请求，行为与 [`scrape`](Self::scrape) 完全一致——
+    /// 共享代理池、无限流、审计事件 tenant_id 为空。
+    pub async fn scrape_for_tenant(
+        &self,
+        request: &ScrapeRequest,
+        tenant: Option<&str>,
+    ) -> Result<ScrapeResponse, EngineError> {
         if let Err(e) = validate_url(&request.url).await {
             return Err(EngineError::SsrfProtection(e.to_string()));
         }
 
-        let internal_request = request.to_internal()?;
+        let internal_request = request.to_internal_for_tenant(tenant)?;
 
         // Route to appropriate engine
         match self.router.route(&internal_request).await {

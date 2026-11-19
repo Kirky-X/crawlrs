@@ -239,6 +239,102 @@ pub async fn acquire_browser_slot(
     })
 }
 
+/// Per-tenant browser admission gate（出站隔离 T006 接线用）。
+///
+/// 组合 [`TenantBrowserLimiter`] 与各租户的 [`OverflowPolicyConfig`]：
+/// 浏览器池 acquire 路径先过本门（租户级许可），再竞争全局实例信号量。
+/// 未配置浏览器配额的租户与 `None` 租户直通；拒绝在 `metrics` feature
+/// 下计入 `tenant_browser_quota_reject_total`。
+pub struct TenantBrowserGate {
+    limiter: TenantBrowserLimiter,
+    policies: DashMap<String, OverflowPolicyConfig>,
+}
+
+impl TenantBrowserGate {
+    /// Build a gate from per-tenant browser limits and overflow policies.
+    pub fn new(
+        limits: impl IntoIterator<Item = (String, u32)>,
+        policies: impl IntoIterator<Item = (String, OverflowPolicyConfig)>,
+    ) -> Self {
+        Self {
+            limiter: TenantBrowserLimiter::new(limits),
+            policies: policies.into_iter().collect(),
+        }
+    }
+
+    /// Build a gate from `[outbound_isolation]` settings：仅收取配置了
+    /// `max_concurrent_browser_contexts` 的租户；空配置得到空门（恒直通）。
+    pub fn from_settings(settings: &crate::config::settings::Settings) -> Self {
+        let limits = settings
+            .outbound_isolation
+            .iter()
+            .filter_map(|(tenant, cfg)| {
+                cfg.max_concurrent_browser_contexts
+                    .map(|max| (tenant.clone(), max))
+            });
+        let policies = settings
+            .outbound_isolation
+            .iter()
+            .map(|(tenant, cfg)| (tenant.clone(), cfg.overflow_policy));
+        Self::new(limits, policies)
+    }
+
+    /// 是否配置了任何租户浏览器配额（空门可跳过路径开销）。
+    pub fn is_empty(&self) -> bool {
+        self.limiter.tenant_count() == 0
+    }
+
+    /// 该租户的溢出策略（未配置默认 `RejectNewest`）。
+    fn policy_for(&self, tenant: &str) -> OverflowPolicyConfig {
+        self.policies
+            .get(tenant)
+            .map(|p| *p.value())
+            .unwrap_or(OverflowPolicyConfig::RejectNewest)
+    }
+
+    /// 取租户级浏览器许可；拒绝时计数 `tenant_browser_quota_reject_total`。
+    pub async fn acquire(
+        &self,
+        tenant: Option<&str>,
+    ) -> Result<Option<OwnedSemaphorePermit>, OutboundQuotaError> {
+        let Some(tenant) = tenant else {
+            return Ok(None);
+        };
+        let policy = self.policy_for(tenant);
+        match self.limiter.acquire(Some(tenant), policy).await {
+            Ok(permit) => Ok(permit),
+            Err(err) => {
+                #[cfg(feature = "metrics")]
+                metrics::counter!(
+                    "tenant_browser_quota_reject_total",
+                    "tenant" => tenant.to_string()
+                )
+                .increment(1);
+                Err(err)
+            }
+        }
+    }
+}
+
+/// 全局租户浏览器门单例（出站隔离 T006）
+///
+/// 仿 `engine-moli` 内存水位全局单例模式：DI 装配期（`set_global_browser_gate`）
+/// 注入，浏览器池构造期自取（见 `BrowserPoolState::new`）。仅当
+/// `[outbound_isolation]` 配置了至少一个 `max_concurrent_browser_contexts`
+/// 时注入——空门不设，池路径零开销。测试可用 `set_tenant_gate` 显式覆盖。
+static GLOBAL_TENANT_BROWSER_GATE: std::sync::OnceLock<std::sync::Arc<TenantBrowserGate>> =
+    std::sync::OnceLock::new();
+
+/// 注册全局租户浏览器门（进程级一次；DI bootstrap 调用）。
+pub fn set_global_browser_gate(gate: std::sync::Arc<TenantBrowserGate>) {
+    let _ = GLOBAL_TENANT_BROWSER_GATE.set(gate);
+}
+
+/// 取全局租户浏览器门（未注册 = `None` = 直通）。
+pub fn get_global_browser_gate() -> Option<std::sync::Arc<TenantBrowserGate>> {
+    GLOBAL_TENANT_BROWSER_GATE.get().cloned()
+}
+
 /// Routes each tenant to a dedicated or shared proxy pool.
 pub struct TenantProxyRegistry {
     shared: Arc<ProxyPool>,
@@ -538,6 +634,88 @@ mod tests {
         assert!(permit.is_some());
     }
 
+    // ---- TenantBrowserGate（T006 接线）验收 ----
+
+    /// 容量 1 的租户门：第一个许可持有期间第二个并发 acquire 被拒
+    /// （RejectNewest）；`None` 租户与未配置租户直通。
+    #[tokio::test]
+    async fn gate_capacity_one_rejects_second_concurrent_acquire() {
+        let gate = TenantBrowserGate::new(
+            [("acme".to_string(), 1)],
+            [("acme".to_string(), OverflowPolicyConfig::RejectNewest)],
+        );
+        assert!(!gate.is_empty());
+        let first = gate.acquire(Some("acme")).await.unwrap();
+        assert!(first.is_some(), "容量内租户必须获得许可");
+        let second = gate.acquire(Some("acme")).await;
+        assert!(matches!(
+            second,
+            Err(OutboundQuotaError::BrowserQuotaExceeded { .. })
+        ));
+        drop(first);
+        let third = gate.acquire(Some("acme")).await;
+        assert!(third.is_ok(), "许可释放后必须恢复准入");
+
+        // None 租户（未认证）与未配置租户直通，不占 acme 预算
+        assert!(gate.acquire(None).await.unwrap().is_none());
+        assert!(gate.acquire(Some("unknown")).await.unwrap().is_none());
+    }
+
+    /// 门按租户各自的 overflow_policy 分派：QueueWithTimeout 租户在
+    /// 许可被并发持有者释放后获得许可（不触发超时）。
+    #[tokio::test]
+    async fn gate_routes_per_tenant_overflow_policy() {
+        let gate = TenantBrowserGate::new(
+            [("queued".to_string(), 1)],
+            [("queued".to_string(), OverflowPolicyConfig::QueueWithTimeout)],
+        );
+        let first = gate.acquire(Some("queued")).await.unwrap();
+        let waiter = tokio::spawn({
+            let gate = std::sync::Arc::new(gate);
+            async move { gate.acquire(Some("queued")).await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        drop(first);
+        let second = waiter.await.unwrap();
+        assert!(second.is_ok(), "QueueWithTimeout 租户在释放后必须获得许可");
+    }
+
+    /// from_settings 只收取配置了 `max_concurrent_browser_contexts` 的租户，
+    /// 并继承各租户的 overflow_policy；空配置得到空门。
+    #[test]
+    fn gate_from_settings_collects_limited_tenants_only() {
+        use crate::config::outbound::TenantOutboundConfig;
+
+        let mut settings = crate::config::settings::Settings::default();
+        settings.outbound_isolation.insert(
+            "acme".to_string(),
+            TenantOutboundConfig {
+                max_concurrent_browser_contexts: Some(2),
+                overflow_policy: OverflowPolicyConfig::QueueWithTimeout,
+                ..TenantOutboundConfig::default()
+            },
+        );
+        settings.outbound_isolation.insert(
+            "no-browser-limit".to_string(),
+            TenantOutboundConfig::default(),
+        );
+
+        let gate = TenantBrowserGate::from_settings(&settings);
+        assert!(!gate.is_empty(), "配置了浏览器配额的租户必须进门");
+        assert_eq!(
+            gate.policy_for("acme"),
+            OverflowPolicyConfig::QueueWithTimeout
+        );
+        assert_eq!(
+            gate.policy_for("unmapped"),
+            OverflowPolicyConfig::RejectNewest,
+            "未配置租户默认 RejectNewest"
+        );
+
+        let empty = TenantBrowserGate::from_settings(&crate::config::settings::Settings::default());
+        assert!(empty.is_empty(), "空配置必须得到空门（恒直通）");
+    }
+
     #[test]
     fn from_empty_settings_all_tenants_resolve_to_shared() {
         let settings = crate::config::settings::Settings::default();
@@ -556,8 +734,10 @@ mod tests {
             "acme-pool".to_string(),
             vec![ProxyEntryConfig::Url("http://acme:8080".to_string())],
         );
-        let mut acme = TenantOutboundConfig::default();
-        acme.proxy_pool = Some("acme-pool".to_string());
+        let acme = TenantOutboundConfig {
+            proxy_pool: Some("acme-pool".to_string()),
+            ..TenantOutboundConfig::default()
+        };
         settings.outbound_isolation.insert("acme".to_string(), acme);
 
         let registry = TenantProxyRegistry::from_settings(&settings);

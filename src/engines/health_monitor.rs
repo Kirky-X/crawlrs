@@ -181,6 +181,7 @@ impl EngineHealthMonitor {
             block_ads: false,
             block_media: false,
             session_id: None,
+            tenant_id: None,
             wait_for: None,
             needs_mllm: false,
         };
@@ -1027,6 +1028,7 @@ mod tests {
             block_ads: false,
             block_media: false,
             session_id: None,
+            tenant_id: None,
             wait_for: None,
             needs_mllm: false,
         };
@@ -1063,6 +1065,7 @@ mod tests {
             block_ads: false,
             block_media: false,
             session_id: None,
+            tenant_id: None,
             wait_for: None,
             needs_mllm: false,
         };

@@ -623,6 +623,12 @@ pub struct InternalScrapeRequest {
     ///
     /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.session_id` 桥接而来。
     pub session_id: Option<String>,
+    /// 服务端租户标识（team_id；出站隔离/合规/审计用）
+    ///
+    /// 由 worker 从任务上下文经 `EngineClient::scrape_for_tenant` 传入；
+    /// 未认证路径与嵌入式形态为 `None`（走共享代理池、不限流）。
+    /// 公开 API 请求类型不携带该字段——租户是服务端身份，不接受客户端声明。
+    pub tenant_id: Option<String>,
     /// 页面加载后等待策略
     ///
     /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.wait_for` 桥接而来。
@@ -689,8 +695,9 @@ impl ScrapeRequest {
     /// 桥接为引擎内部请求；`ResponseUrl` 变体的 regex 在此前置编译校验
     /// （非法 regex 返回错误，请求不进入引擎——输入校验前置，不在引擎内编译）。
     #[inline]
-    pub(crate) fn to_internal(
+    pub(crate) fn to_internal_for_tenant(
         &self,
+        tenant: Option<&str>,
     ) -> Result<InternalScrapeRequest, crate::engines::engine_client::EngineError> {
         if let Some(crate::engines::engine_client::WaitFor::ResponseUrl(pattern)) =
             &self.options.wait_for
@@ -725,10 +732,21 @@ impl ScrapeRequest {
             block_ads: options.block_ads,
             block_media: options.block_media,
             session_id: resolve_session_id(&options.session_id),
+            tenant_id: tenant.map(str::to_string),
             wait_for: options.wait_for.clone(),
             needs_mllm: options.needs_mllm,
         };
         Ok(internal)
+    }
+
+    /// 未认证桥接（等价 `to_internal_for_tenant(None)`）：
+    /// 测试侧既有调用点的兼容薄包装。
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn to_internal(
+        &self,
+    ) -> Result<InternalScrapeRequest, crate::engines::engine_client::EngineError> {
+        self.to_internal_for_tenant(None)
     }
 }
 

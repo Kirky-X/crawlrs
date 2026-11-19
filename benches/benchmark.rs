@@ -404,6 +404,7 @@ fn create_mock_engines(count: usize) -> Vec<Arc<dyn ScraperEngine>> {
 /// 创建基准测试请求
 fn make_bench_request() -> InternalScrapeRequest {
     InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com".to_string(),
         method: HttpMethod::Get,
         headers: std::collections::HashMap::new(),

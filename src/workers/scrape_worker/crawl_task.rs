@@ -81,7 +81,12 @@ impl ScrapeWorker {
             &config,
             self.settings.timeouts.engines.default_timeout_seconds,
         );
-        let response = self.engine_client.scrape(&request).await;
+        // 租户 = team_id（出站隔离/合规/审计贯穿）
+        let tenant = task.team_id.to_string();
+        let response = self
+            .engine_client
+            .scrape_for_tenant(&request, Some(tenant.as_str()))
+            .await;
 
         match response {
             Ok(response) => {

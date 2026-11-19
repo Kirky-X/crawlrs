@@ -16,7 +16,6 @@ use super::settings_module::SettingsModule;
 use super::ModuleBuildError;
 use crate::bootstrap::engines::EngineComponents;
 use crate::engines::provider::ProxyProvider;
-use crate::engines::proxy_pool::ProxyPool;
 
 /// 引擎模块 — 提供 `EngineComponents`
 ///
@@ -45,6 +44,22 @@ impl AsyncAutoBuilder for EngineModule {
         Box::pin(async move {
             let settings = kit.require::<SettingsModule>()?;
             let http_client = kit.require::<HttpModule>()?;
+            // 出站隔离（T004/T006）：
+            // - 租户代理注册表：从 `[proxy.pools]` + `[outbound_isolation]` 构建，
+            //   空配置退化为只含 shared 池（行为与原全局单池一致）；
+            //   引擎层注入 shared 池（`select(None)`），SessionManager 持注册表
+            //   按租户身份选池。
+            // - 租户浏览器门：仅当配置了任何 `max_concurrent_browser_contexts`
+            //   时注册全局单例，浏览器池 acquire 先过租户配额再竞争全局信号量。
+            let tenant_registry = std::sync::Arc::new(
+                crate::engines::tenant_outbound::TenantProxyRegistry::from_settings(&settings),
+            );
+            let browser_gate = std::sync::Arc::new(
+                crate::engines::tenant_outbound::TenantBrowserGate::from_settings(&settings),
+            );
+            if !browser_gate.is_empty() {
+                crate::engines::tenant_outbound::set_global_browser_gate(browser_gate);
+            }
             // 构造 ProxyProvider 注入 ReqwestEngine
             // - proxy.enabled=true 且 urls 非空 → Some(Arc<dyn ProxyProvider>)
             // - 否则 → None（ReqwestEngine 不使用代理）
@@ -52,13 +67,12 @@ impl AsyncAutoBuilder for EngineModule {
             // sticky_ttl / cooldown 从 settings.proxy 注入（原硬编码 60s/30s）
             //
             // 策略：从 settings.proxy.strategy 注入（H1：RoundRobin / Sticky 路由）
+            //
+            // T004：提供者来自注册表的 shared 池（select(None)），取代裸
+            // ProxyPool::from_urls 全局池——租户专用池经 Session 身份路由。
             let proxy_provider: Option<Arc<dyn ProxyProvider>> =
                 if settings.proxy.enabled && !settings.proxy.urls.is_empty() {
-                    Some(Arc::new(ProxyPool::from_urls(
-                        settings.proxy.urls.clone(),
-                        std::time::Duration::from_secs(settings.proxy.sticky_ttl_seconds),
-                        std::time::Duration::from_secs(settings.proxy.cooldown_seconds),
-                    )))
+                    Some(tenant_registry.select(None))
                 } else {
                     None
                 };
@@ -102,8 +116,10 @@ impl AsyncAutoBuilder for EngineModule {
                 // F1/F5：[politeness] 配置注入 per-host 纪律（AutoThrottle/退避/抖动）
                 &settings.politeness,
                 // F2：[session] 配置注入 Session 身份三件套（代理 + UA/TLS 档
-                // + Cookie 绑定与记分退休；enabled=false 走现状盲轮换）
+                // + Cookie 绑定与记分退休；enabled=false 走现状盲轮换）；
+                // T004：同时注入租户代理注册表（身份按租户选池）
                 &settings.session,
+                Some(tenant_registry),
                 // F4：[observability] 配置注入失败现场快照器（目录空串 = 零成本）
                 &settings.observability,
                 vision_adapter,

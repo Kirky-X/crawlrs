@@ -29,10 +29,14 @@ impl ScrapeWorker {
             debug!("rules_count: {}", rules.len());
         }
 
-        // 2. 构建并执行 Scrape 请求
+        // 2. 构建并执行 Scrape 请求（租户 = team_id，出站隔离/合规用）
         let scrape_req =
             build_extract_request_fn(&url, self.settings.timeouts.engines.default_timeout_seconds);
-        let scrape_resp = self.engine_client.scrape(&scrape_req).await?;
+        let tenant = task.team_id.to_string();
+        let scrape_resp = self
+            .engine_client
+            .scrape_for_tenant(&scrape_req, Some(tenant.as_str()))
+            .await?;
 
         // 3. 文本编码处理
         let processed_content = match process_text_encoding(&task, &scrape_resp).await {

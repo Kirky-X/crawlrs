@@ -1067,6 +1067,7 @@ mod tests {
 
     fn mk_req(url: &str) -> InternalScrapeRequest {
         InternalScrapeRequest {
+            tenant_id: None,
             url: url.to_string(),
             method: HttpMethod::Get,
             headers: HashMap::new(),

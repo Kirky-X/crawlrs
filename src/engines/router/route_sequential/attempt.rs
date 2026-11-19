@@ -112,6 +112,7 @@ impl EngineRouter {
             block_ads: request.block_ads,
             block_media: request.block_media,
             session_id: request.session_id.clone(),
+            tenant_id: request.tenant_id.clone(),
             wait_for: request.wait_for.clone(),
             needs_mllm: request.needs_mllm,
         };
@@ -137,9 +138,13 @@ impl EngineRouter {
                 // 身份升级：强制退休当前亲和身份，本次 acquire 换新
                 self.session.retire(host_key, request.session_id.as_deref());
             }
-            let identity =
-                self.session
-                    .acquire(host_key, request.session_id.as_deref(), request.mobile);
+            let identity = self.session.acquire(
+                host_key,
+                request.session_id.as_deref(),
+                request.mobile,
+                // 出站隔离（T004）：身份代理按租户从 registry 选池
+                request.tenant_id.as_deref(),
+            );
             let profile = identity.ua_profile(self.session.ua_pool());
             apply_ua_profile_headers(headers, profile);
             if let Some(cookie) = self.session.cookie_header(&identity, host_key) {

@@ -87,6 +87,7 @@ async fn test_route_respects_max_engine_attempts() {
     router.set_max_engine_attempts(2);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "http://1.1.1.1".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -170,6 +171,7 @@ impl ScraperEngine for MockEngine {
 
 fn make_request() -> InternalScrapeRequest {
     InternalScrapeRequest {
+        tenant_id: None,
         url: "http://example.com".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -1448,6 +1450,7 @@ async fn test_feature_filter_excludes_low_score_engine_for_screenshot() {
     router.set_feature_filter_enabled(true);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "http://example.com".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -2275,6 +2278,7 @@ impl ScraperEngine for CallCountEngine {
 
 fn hint_test_request() -> InternalScrapeRequest {
     InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/page".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -2448,6 +2452,7 @@ impl ScraperEngine for SessionProbeEngine {
 /// session 探测请求（host 固定 1.1.1.1，与既有 router 测试同源）
 fn session_probe_request(session_id: &str) -> InternalScrapeRequest {
     InternalScrapeRequest {
+        tenant_id: None,
         url: "http://1.1.1.1/probe".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -2715,6 +2720,7 @@ impl ScraperEngine for JsUpgradeMockEngine {
 
 fn js_upgrade_request() -> InternalScrapeRequest {
     InternalScrapeRequest {
+        tenant_id: None,
         url: "http://1.1.1.1/otn/leftTicket/init".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -3173,7 +3179,7 @@ async fn test_antibot_challenge_emits_escalation_audit_event() {
 
     // Spawned audit write: poll briefly until it lands.
     for _ in 0..100 {
-        if sink.entries.lock().unwrap().len() >= 1 {
+        if !sink.entries.lock().unwrap().is_empty() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;

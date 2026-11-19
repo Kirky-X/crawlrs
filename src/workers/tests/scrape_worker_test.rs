@@ -4095,6 +4095,7 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         settings.engines.max_response_body_bytes as usize,
         &settings.politeness,
         &settings.session,
+        None,
         &settings.observability,
         None,
     );
@@ -4282,6 +4283,7 @@ async fn tc_scrape_worker_builder_builds_full_worker() {
         settings.engines.max_response_body_bytes as usize,
         &settings.politeness,
         &settings.session,
+        None,
         &settings.observability,
         None,
     );

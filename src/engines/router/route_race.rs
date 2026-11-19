@@ -318,6 +318,7 @@ fn clone_race_request(
         block_ads: request.block_ads,
         block_media: request.block_media,
         session_id: request.session_id.clone(),
+        tenant_id: request.tenant_id.clone(),
         wait_for: request.wait_for.clone(),
         needs_mllm: request.needs_mllm,
     }

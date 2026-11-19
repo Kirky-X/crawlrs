@@ -401,7 +401,12 @@ impl ScrapeWorker {
             return Ok(cached);
         }
 
-        let resp = self.engine_client.scrape(scrape_request).await;
+        // 租户 = team_id 贯穿引擎面（出站隔离代理池/浏览器/DNS 配额与审计）
+        let tenant = team_id.to_string();
+        let resp = self
+            .engine_client
+            .scrape_for_tenant(scrape_request, Some(tenant.as_str()))
+            .await;
         self.write_scrape_cache_on_success(&cache_ctx, cache_key.as_deref(), &resp)
             .await;
         resp

@@ -320,6 +320,17 @@ impl BrowserPool {
         *self.state.memory.write() = watermark;
     }
 
+    /// 注入租户级浏览器准入门（出站隔离 T006）
+    ///
+    /// 由 DI 装配在池构造后调用；`None`（`[outbound_isolation]` 未配置任何
+    /// 浏览器配额）时 acquire 路径零开销直通，与无门行为一致。
+    pub fn set_tenant_gate(
+        &self,
+        gate: Option<Arc<crate::engines::tenant_outbound::TenantBrowserGate>>,
+    ) {
+        *self.state.tenant_gate.write() = gate;
+    }
+
     /// 创建新的浏览器池
     pub fn new(config: BrowserPoolConfig, browser_config: Arc<dyn BrowserConfigTrait>) -> Self {
         let download_manager =
@@ -345,8 +356,9 @@ impl BrowserPool {
     ///
     /// 优先从池中获取可用实例，如果没有可用实例则创建新实例。
     /// 返回的 BrowserInstance 在 drop 时会自动归还到池中。
-    pub async fn acquire(&self) -> Result<BrowserInstance, EngineError> {
-        let (instance_id, browser) = self.state.acquire().await?;
+    /// `tenant`（出站隔离 T006）先过租户级浏览器配额门，`None` 直通。
+    pub async fn acquire(&self, tenant: Option<&str>) -> Result<BrowserInstance, EngineError> {
+        let (instance_id, browser) = self.state.acquire(tenant).await?;
 
         let return_sender = Some(self.state.clone_return_sender());
 
@@ -377,11 +389,11 @@ impl BrowserPool {
     /// - context 创建失败 / Page 创建失败 / TabPool::acquire 失败：
     ///   `EngineError::BrowserError`，并自动归还 Browser 避免泄漏
     ///   （隔离路径还会先销毁半创建的 context）
-    pub async fn acquire_page(&self) -> Result<PooledPage, EngineError> {
+    pub async fn acquire_page(&self, tenant: Option<&str>) -> Result<PooledPage, EngineError> {
         if self.state.config.context_isolation {
-            self.acquire_page_isolated().await
+            self.acquire_page_isolated(tenant).await
         } else {
-            self.acquire_page_tab_pool().await
+            self.acquire_page_tab_pool(tenant).await
         }
     }
 
@@ -393,8 +405,8 @@ impl BrowserPool {
     ///
     /// 失败路径：context 已创建但 Page 创建失败时，先销毁半创建的 context
     /// 再归还 Browser，防止 context 泄漏累积。
-    async fn acquire_page_isolated(&self) -> Result<PooledPage, EngineError> {
-        let (instance_id, browser) = self.state.acquire().await?;
+    async fn acquire_page_isolated(&self, tenant: Option<&str>) -> Result<PooledPage, EngineError> {
+        let (instance_id, browser) = self.state.acquire(tenant).await?;
 
         let context_id = match browser
             .create_browser_context(CreateBrowserContextParams::default())
@@ -449,8 +461,8 @@ impl BrowserPool {
     }
 
     /// 复用路径（逃生门）：从对应 Browser 的 [`TabPool`] 获取/复用 Page
-    async fn acquire_page_tab_pool(&self) -> Result<PooledPage, EngineError> {
-        let (instance_id, browser, tab_pool) = self.state.acquire_with_tab_pool().await?;
+    async fn acquire_page_tab_pool(&self, tenant: Option<&str>) -> Result<PooledPage, EngineError> {
+        let (instance_id, browser, tab_pool) = self.state.acquire_with_tab_pool(tenant).await?;
 
         // 从 TabPool 获取 Page，失败时归还 Browser 避免泄漏
         let page = match tab_pool.acquire(&browser).await {

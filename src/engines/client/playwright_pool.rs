@@ -167,6 +167,11 @@ struct PooledBrowser {
     /// 持有期间占用一个信号量槽位，drop 时自动释放。
     /// 确保 permit 生命周期与 PooledBrowser 一致，避免双重归还。
     _permit: tokio::sync::OwnedSemaphorePermit,
+    /// 租户级浏览器许可（出站隔离 T006 两级门）
+    ///
+    /// 声明在 `_permit` 之后：drop 逆序先释放全局实例许可、再释放租户
+    /// 配额许可。`None` = 未认证/未配置配额租户（不占预算）。
+    _tenant_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl PooledBrowser {
@@ -175,6 +180,7 @@ impl PooledBrowser {
         instance_id: u64,
         tab_pool_max_size: usize,
         permit: tokio::sync::OwnedSemaphorePermit,
+        tenant_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) -> Self {
         let now = Instant::now();
         Self {
@@ -186,6 +192,7 @@ impl PooledBrowser {
             instance_id,
             tab_pool: Arc::new(TabPool::new(tab_pool_max_size)),
             _permit: permit,
+            _tenant_permit: tenant_permit,
         }
     }
 
@@ -269,6 +276,11 @@ struct BrowserPoolState {
     /// Critical 首次进入的一次性空闲回收标记（AtomicBool CAS 保证单次触发）
     #[cfg(feature = "engine-moli")]
     critical_reclaim_done: AtomicBool,
+    /// 租户级浏览器准入门（出站隔离 T006）：`None`（未配置任何租户浏览器
+    /// 配额）时 acquire 路径零开销直通。构造期自取全局单例（仿 engine-moli
+    /// 水位镜像模式），显式 setter 可覆盖（测试注入）。
+    tenant_gate:
+        parking_lot::RwLock<Option<Arc<crate::engines::tenant_outbound::TenantBrowserGate>>>,
 }
 
 /// P08：池路径的代理 URL 校验（argv 注入防护）
@@ -311,6 +323,10 @@ impl BrowserPoolState {
             memory: parking_lot::RwLock::new(global_watermark),
             #[cfg(feature = "engine-moli")]
             critical_reclaim_done: AtomicBool::new(false),
+            // 出站隔离 T006：构造期自取全局租户门（未注册则 None = 直通）
+            tenant_gate: parking_lot::RwLock::new(
+                crate::engines::tenant_outbound::get_global_browser_gate(),
+            ),
             shutdown: AtomicBool::new(false),
             browser_path: OnceCell::new(),
             profile_dir_counter: AtomicU64::new(0),
@@ -326,7 +342,7 @@ impl BrowserPoolState {
             .push(dir);
     }
 
-    async fn acquire(&self) -> Result<(u64, Arc<Browser>), EngineError> {
+    async fn acquire(&self, tenant: Option<&str>) -> Result<(u64, Arc<Browser>), EngineError> {
         if self.shutdown.load(Ordering::Acquire) {
             return Err(EngineError::Other(
                 "Browser pool is shutting down".to_string(),
@@ -341,7 +357,26 @@ impl BrowserPoolState {
             return gated;
         }
 
-        // : 获取 OwnedSemaphorePermit，生命周期绑定到 PooledBrowser
+        // 出站隔离（T006）两级许可——第一级：租户级浏览器配额门。
+        // 配额耗尽在 RejectNewest 下立即拒绝（不竞争全局槽位）；
+        // QueueWithTimeout 下短暂排队后超时拒绝。`None` 租户/未装配
+        // 门/未配置租户直通（不占预算）。先克隆 Arc 再 await（读锁
+        // 守卫不得跨 await 点存活）。
+        let gate = self.tenant_gate.read().clone();
+        let tenant_permit = match gate {
+            Some(gate) => match gate.acquire(tenant).await {
+                Ok(permit) => permit,
+                Err(err) => {
+                    return Err(EngineError::RequestFailed(format!(
+                        "tenant browser quota exceeded: {err}"
+                    )))
+                }
+            },
+            None => None,
+        };
+
+        // 第二级：全局实例信号量（: 获取 OwnedSemaphorePermit，
+        // 生命周期绑定到 PooledBrowser）
         let permit = self
             .semaphore
             .clone()
@@ -351,12 +386,14 @@ impl BrowserPoolState {
 
         if self.config.enable_reuse {
             if let Some((id, browser)) = self.try_get_available().await {
+                // 复用路径：租户许可作为准入闸在此刻释放（实例本身持有
+                // 其创建时的许可——含创建租户的租户许可）。
                 return Ok((id, browser));
             }
         }
 
-        // 创建新实例（传递 permit 绑定到 PooledBrowser）
-        self.create_new_instance(permit).await
+        // 创建新实例（两级 permit 均绑定到 PooledBrowser，drop 逆序释放）
+        self.create_new_instance(permit, tenant_permit).await
     }
 
     /// 内存水位门控（engine-moli）：返回 `Some(result)` 表示 acquire 结果被
@@ -417,8 +454,9 @@ impl BrowserPoolState {
     /// - 实例不在 in_use（不应发生）：`EngineError::Other`
     async fn acquire_with_tab_pool(
         &self,
+        tenant: Option<&str>,
     ) -> Result<(u64, Arc<Browser>, Arc<TabPool>), EngineError> {
-        let (instance_id, browser) = self.acquire().await?;
+        let (instance_id, browser) = self.acquire(tenant).await?;
         // acquire 后 PooledBrowser 必在 in_use 中（acquire 内部插入）
         let tab_pool = {
             let in_use = self.in_use.read().await;
@@ -467,6 +505,7 @@ impl BrowserPoolState {
     async fn create_new_instance(
         &self,
         permit: tokio::sync::OwnedSemaphorePermit,
+        tenant_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) -> Result<(u64, Arc<Browser>), EngineError> {
         let instance_id = self.instance_counter.fetch_add(1, Ordering::Relaxed);
         info!("Creating new browser instance {}", instance_id);
@@ -477,6 +516,7 @@ impl BrowserPoolState {
             instance_id,
             self.config.tab_pool_max_size,
             permit,
+            tenant_permit,
         ));
         pooled.touch();
 
@@ -632,7 +672,7 @@ mod tests {
             let wm = watermark(100);
             assert_eq!(wm.apply_sample(Some(100)), MemoryLevel::Critical);
             pool.set_memory_watermark(Some(wm));
-            let result = pool.acquire_page().await;
+            let result = pool.acquire_page(None).await;
             match result {
                 Err(EngineError::MemoryConstrained(msg)) => {
                     assert!(msg.contains("Critical"), "错误文案应指明 Critical：{}", msg);
@@ -651,7 +691,7 @@ mod tests {
             // 冷池（total_instances==0）：门控放行首实例——acquire 越过水位门，
             // 失败只能发生在更深的实例创建层（测试环境无 Chrome 可执行文件），
             // 以"错误不是 MemoryConstrained"钉住放行语义。
-            let result = pool.acquire_page().await;
+            let result = pool.acquire_page(None).await;
             assert!(
                 !matches!(result, Err(EngineError::MemoryConstrained(_))),
                 "冷池 Tight 应放行首实例，实际被水位拒绝: {:?}",
@@ -662,7 +702,7 @@ mod tests {
             pool.state_for_test()
                 .total_instances
                 .store(1, Ordering::Relaxed);
-            let result = pool.acquire_page().await;
+            let result = pool.acquire_page(None).await;
             match result {
                 Err(EngineError::MemoryConstrained(msg)) => {
                     assert!(msg.contains("Tight"), "错误文案应指明 Tight：{}", msg);
@@ -704,7 +744,7 @@ mod tests {
             // 真正启动浏览器不在本单测范围，故池先 shutdown 后断言错误类型不是水位错误）
             let pool = pool();
             pool.shutdown().await;
-            let result = pool.acquire_page().await;
+            let result = pool.acquire_page(None).await;
             assert!(
                 !matches!(result, Err(EngineError::MemoryConstrained(_))),
                 "无水位装配时不得出现水位错误"
@@ -768,7 +808,7 @@ mod tests {
         let browser_config = Arc::new(BrowserConfigComponent::default());
         let pool = BrowserPool::new(config, browser_config);
         pool.shutdown().await;
-        let result = pool.acquire_page().await;
+        let result = pool.acquire_page(None).await;
         assert!(result.is_err());
     }
 
@@ -799,7 +839,7 @@ mod tests {
         let browser_config = Arc::new(BrowserConfigComponent::default());
         let pool = BrowserPool::new(config, browser_config);
         pool.shutdown().await;
-        let result = pool.acquire_page().await;
+        let result = pool.acquire_page(None).await;
         assert!(result.is_err());
     }
 
@@ -851,7 +891,7 @@ mod tests {
 
         pool.shutdown().await;
 
-        let result = pool.acquire().await;
+        let result = pool.acquire(None).await;
         assert!(result.is_err());
     }
 
@@ -869,6 +909,45 @@ mod tests {
         assert_eq!(stats1.total_instances, stats2.total_instances);
     }
 
+    // 出站隔离（T006）两级准入验收：容量 0 的租户在浏览器启动之前被
+    // 租户门短路（错误含配额语义）；`None` 租户不被门拦截（错误来自
+    // 后续的浏览器启动路径，不含配额语义）。
+    #[tokio::test]
+    async fn tenant_gate_rejects_capacity_zero_tenant_before_launch() {
+        use crate::engines::tenant_outbound::TenantBrowserGate;
+
+        let config = BrowserPoolConfig::default();
+        let browser_config = Arc::new(BrowserConfigComponent::default());
+        let pool = BrowserPool::new(config, browser_config);
+        let gate = Arc::new(TenantBrowserGate::new(
+            [("zero".to_string(), 0)],
+            [(
+                "zero".to_string(),
+                crate::config::outbound::OverflowPolicyConfig::RejectNewest,
+            )],
+        ));
+        pool.set_tenant_gate(Some(gate));
+
+        let tenanted = pool.acquire_page(Some("zero")).await;
+        match tenanted {
+            Err(EngineError::RequestFailed(msg)) => {
+                assert!(
+                    msg.contains("tenant browser quota"),
+                    "门拒绝错误必须含配额语义，实际: {msg}"
+                );
+            }
+            other => panic!("期望 RequestFailed（配额拒绝），实际: {:?}", other.err()),
+        }
+
+        // None 租户直通门（无浏览器环境下在启动路径失败，与门无关）
+        let anonymous = pool.acquire_page(None).await;
+        assert!(anonymous.is_err(), "无浏览器环境 acquire 必然失败");
+        assert!(
+            !format!("{:?}", anonymous.err().unwrap()).contains("tenant browser quota"),
+            "None 租户不得被门拦截"
+        );
+    }
+
     // QUAL-001: 并发安全测试
 
     #[tokio::test]
@@ -881,7 +960,7 @@ mod tests {
         let mut handles = Vec::new();
         for _ in 0..20 {
             let pool_clone = pool.clone();
-            handles.push(tokio::spawn(async move { pool_clone.acquire().await }));
+            handles.push(tokio::spawn(async move { pool_clone.acquire(None).await }));
         }
 
         // 同时关闭池

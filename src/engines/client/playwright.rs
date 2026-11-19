@@ -690,7 +690,8 @@ async fn acquire_fingerprinted_page(
     ua_pool: &UaPool,
     request: &InternalScrapeRequest,
 ) -> Result<(PooledPage, chromiumoxide::page::Page), EngineError> {
-    let pooled_page = pool.acquire_page().await?;
+    // 出站隔离（T006）：先过租户级浏览器配额门（None 租户直通）
+    let pooled_page = pool.acquire_page(request.tenant_id.as_deref()).await?;
     // Page 是 Arc-based，clone 廉价；pooled_page 持有原始 Page 用于归还
     let page: chromiumoxide::page::Page = pooled_page.page().clone();
 
@@ -1339,6 +1340,7 @@ mod tests {
 
         // Test with JS requirement
         let request_js = InternalScrapeRequest {
+            tenant_id: None,
             url: "http://example.com".to_string(),
             method: crate::engines::engine_client::HttpMethod::Get,
             headers: HashMap::new(),
@@ -1364,6 +1366,7 @@ mod tests {
 
         // Test with Screenshot requirement
         let request_screenshot = InternalScrapeRequest {
+            tenant_id: None,
             url: "http://example.com".to_string(),
             method: crate::engines::engine_client::HttpMethod::Get,
             headers: HashMap::new(),
@@ -1389,6 +1392,7 @@ mod tests {
 
         // Test with neither (basic request)
         let request_basic = InternalScrapeRequest {
+            tenant_id: None,
             url: "http://example.com".to_string(),
             method: crate::engines::engine_client::HttpMethod::Get,
             headers: HashMap::new(),

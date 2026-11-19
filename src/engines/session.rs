@@ -119,6 +119,10 @@ pub struct SessionManager {
     ua_pool: std::sync::Arc<UaPool>,
     /// 代理提供者（`None` = 未配置代理，身份 proxy_url 为 None）
     proxy_provider: Option<std::sync::Arc<dyn ProxyProvider>>,
+    /// 租户代理注册表（出站隔离 T004）：`Some` 时身份代理按租户从
+    /// dedicated/shared 池选取，取代 `proxy_provider` 的全局单池语义；
+    /// `None`（未配置出站隔离）维持原行为。
+    proxy_registry: Option<std::sync::Arc<crate::engines::tenant_outbound::TenantProxyRegistry>>,
     /// 池容量上限（内存护栏）
     max_sessions: usize,
     /// 退休分数阈值
@@ -151,6 +155,7 @@ impl SessionManager {
             sessions: DashMap::new(),
             ua_pool,
             proxy_provider,
+            proxy_registry: None,
             max_sessions: settings.max_sessions.max(1),
             max_error_score: settings.max_error_score,
             max_uses: settings.max_uses.max(1),
@@ -169,6 +174,19 @@ impl SessionManager {
             std::sync::Arc::new(UaPool::new()),
             None,
         )
+    }
+
+    /// 挂载租户代理注册表（出站隔离 T004，DI 后置注入）。
+    ///
+    /// `Some` 后身份代理按 `registry.select(tenant)` 取池：配置了专用池的
+    /// 租户身份从专用池取代理，其余（含 `None` 租户）走 shared 池。
+    /// 空配置 registry 退化为只含 shared，与未挂载行为等价。
+    pub fn with_proxy_registry(
+        mut self,
+        registry: std::sync::Arc<crate::engines::tenant_outbound::TenantProxyRegistry>,
+    ) -> Self {
+        self.proxy_registry = Some(registry);
+        self
     }
 
     /// 是否启用（route 层据此选择 session / 盲轮换路径）
@@ -195,6 +213,7 @@ impl SessionManager {
         host: &str,
         session_id: Option<&str>,
         mobile: bool,
+        tenant: Option<&str>,
     ) -> std::sync::Arc<SessionIdentity> {
         use dashmap::mapref::entry::Entry;
 
@@ -208,7 +227,7 @@ impl SessionManager {
             Entry::Occupied(mut occ) => {
                 let existing = occ.get().clone();
                 if self.should_retire(&existing) {
-                    let fresh = self.build_identity(key, mobile);
+                    let fresh = self.build_identity(key, mobile, tenant);
                     log::info!(
                         "{}",
                         crate::i18n::tr_log_args(
@@ -229,7 +248,7 @@ impl SessionManager {
                 }
             }
             Entry::Vacant(vac) => {
-                let fresh = self.build_identity(key, mobile);
+                let fresh = self.build_identity(key, mobile, tenant);
                 if at_capacity {
                     // 降级：返回临时身份（本请求完整三件套），不入池
                     log::debug!(
@@ -381,15 +400,29 @@ impl SessionManager {
     }
 
     /// 构造新身份：代理经 `sticky`（键 = 身份 id，代理与身份同生共死），
-    /// UA profile 按 `pick_seeded(id)` 分组取（mobile/desktop 不串档）
-    fn build_identity(&self, key: u64, mobile: bool) -> std::sync::Arc<SessionIdentity> {
+    /// UA profile 按 `pick_seeded(id)` 分组取（mobile/desktop 不串档）。
+    ///
+    /// 出站隔离（T004）：挂载 registry 时按 `select(tenant)` 取池——配置了
+    /// 专用池的租户身份绑定专用池代理，`None`/未配置租户走 shared 池。
+    fn build_identity(
+        &self,
+        key: u64,
+        mobile: bool,
+        tenant: Option<&str>,
+    ) -> std::sync::Arc<SessionIdentity> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let proxy_url = self.proxy_provider.as_ref().and_then(|provider| {
-            let sticky_key = format!("session-identity-{id}");
-            provider
-                .sticky(&sticky_key)
-                .or_else(|| provider.next(ProxyCategory::Html))
-        });
+        let sticky_key = format!("session-identity-{id}");
+        let proxy_url = if let Some(registry) = &self.proxy_registry {
+            let pool = registry.select(tenant);
+            pool.sticky(&sticky_key)
+                .or_else(|| pool.next(ProxyCategory::Html))
+        } else {
+            self.proxy_provider.as_ref().and_then(|provider| {
+                provider
+                    .sticky(&sticky_key)
+                    .or_else(|| provider.next(ProxyCategory::Html))
+            })
+        };
         // pick_seeded(id) 与该下标解析同源（同 id 必同 profile，见 ua_pool）
         let pool_len = if mobile {
             self.ua_pool.mobile.len()
@@ -477,13 +510,65 @@ mod tests {
         )
     }
 
+    /// 出站隔离（T004）：挂载 registry 后，配置专用池的租户身份从专用池
+    /// 取代理；`None` 租户与未映射租户走 shared 池。
+    #[test]
+    fn acquire_with_tenant_selects_dedicated_pool() {
+        use crate::engines::tenant_outbound::TenantProxyRegistry;
+
+        let shared = Arc::new(ProxyPool::from_urls(
+            vec!["http://shared-proxy:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let dedicated = Arc::new(ProxyPool::from_urls(
+            vec!["http://acme-dedicated:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let registry = TenantProxyRegistry::new(Arc::clone(&shared));
+        registry.register_pool("acme-pool", dedicated);
+        registry.map_tenant("acme", "acme-pool");
+
+        let mgr = SessionManager::from_settings(
+            &SessionSettings {
+                enabled: true,
+                ..SessionSettings::default()
+            },
+            Arc::new(UaPool::new()),
+            Some(make_provider()),
+        )
+        .with_proxy_registry(Arc::new(registry));
+
+        let tenanted = mgr.acquire("shop.example.com", Some("sess-acme"), false, Some("acme"));
+        assert_eq!(
+            tenanted.proxy_url.as_deref(),
+            Some("http://acme-dedicated:8080"),
+            "acme 租户身份必须绑定专用池代理"
+        );
+
+        let anonymous = mgr.acquire("shop.example.com", Some("sess-anon"), false, None);
+        assert_eq!(
+            anonymous.proxy_url.as_deref(),
+            Some("http://shared-proxy:8080"),
+            "未认证身份必须走 shared 池"
+        );
+
+        let unmapped = mgr.acquire("shop.example.com", Some("sess-other"), false, Some("other"));
+        assert_eq!(
+            unmapped.proxy_url.as_deref(),
+            Some("http://shared-proxy:8080"),
+            "未配置租户必须走 shared 池"
+        );
+    }
+
     /// 同 (host, session_id) 连续 acquire 返回同一身份（代理 URL + UA 档稳定）
     #[test]
     fn acquire_same_host_session_returns_stable_identity() {
         let mgr = make_manager(3.0, 100, 1800, 4096);
-        let a = mgr.acquire("shop.example.com", Some("sess-1"), false);
-        let b = mgr.acquire("shop.example.com", Some("sess-1"), false);
-        let c = mgr.acquire("shop.example.com", Some("sess-1"), false);
+        let a = mgr.acquire("shop.example.com", Some("sess-1"), false, None);
+        let b = mgr.acquire("shop.example.com", Some("sess-1"), false, None);
+        let c = mgr.acquire("shop.example.com", Some("sess-1"), false, None);
         assert_eq!(a.id, b.id, "第二次 acquire 必须命中同一身份");
         assert_eq!(b.id, c.id, "第三次 acquire 仍命中同一身份");
         assert_eq!(
@@ -508,8 +593,8 @@ mod tests {
     #[test]
     fn different_sessions_get_different_identities() {
         let mgr = make_manager(3.0, 100, 1800, 4096);
-        let s1 = mgr.acquire("h.example.com", Some("s1"), false);
-        let s2 = mgr.acquire("h.example.com", Some("s2"), false);
+        let s1 = mgr.acquire("h.example.com", Some("s1"), false, None);
+        let s2 = mgr.acquire("h.example.com", Some("s2"), false, None);
         assert_ne!(s1.id, s2.id, "不同 session_id 必须是不同身份");
         assert_ne!(s1.proxy_url, s2.proxy_url, "不同身份从 RR 池取得不同代理");
     }
@@ -519,7 +604,7 @@ mod tests {
     #[test]
     fn error_score_retirement_on_threshold() {
         let mgr = make_manager(3.0, 100, 1800, 4096);
-        let id = mgr.acquire("api.example.com", Some("s"), false);
+        let id = mgr.acquire("api.example.com", Some("s"), false, None);
         mgr.mark_bad(&id);
         mgr.mark_bad(&id);
         assert!(
@@ -527,13 +612,13 @@ mod tests {
             "两次 mark_bad 后 score=2.0"
         );
         assert_eq!(
-            mgr.acquire("api.example.com", Some("s"), false).id,
+            mgr.acquire("api.example.com", Some("s"), false, None).id,
             id.id,
             "score 2.0 < 3.0 不得退休"
         );
         mgr.mark_bad(&id);
         assert!((id.error_score() - 3.0).abs() < f64::EPSILON);
-        let fresh = mgr.acquire("api.example.com", Some("s"), false);
+        let fresh = mgr.acquire("api.example.com", Some("s"), false, None);
         assert_ne!(fresh.id, id.id, "score 达阈值后 acquire 必须换新身份");
         assert!(
             (fresh.error_score() - 0.0).abs() < f64::EPSILON,
@@ -554,7 +639,7 @@ mod tests {
     #[test]
     fn mark_good_floors_at_zero() {
         let mgr = make_manager(3.0, 100, 1800, 4096);
-        let id = mgr.acquire("ok.example.com", Some("s"), false);
+        let id = mgr.acquire("ok.example.com", Some("s"), false, None);
         mgr.mark_bad(&id);
         assert!((id.error_score() - 1.0).abs() < f64::EPSILON);
         mgr.mark_good(&id);
@@ -566,11 +651,11 @@ mod tests {
     #[test]
     fn max_uses_retires_identity() {
         let mgr = make_manager(100.0, 2, 1800, 4096); // score 阈值调高，隔离 uses 维度
-        let a = mgr.acquire("h.example.com", Some("s"), false);
-        let b = mgr.acquire("h.example.com", Some("s"), false);
+        let a = mgr.acquire("h.example.com", Some("s"), false, None);
+        let b = mgr.acquire("h.example.com", Some("s"), false, None);
         assert_eq!(a.id, b.id, "uses=1、2 时仍同一身份");
         assert_eq!(b.uses(), 2);
-        let c = mgr.acquire("h.example.com", Some("s"), false);
+        let c = mgr.acquire("h.example.com", Some("s"), false, None);
         assert_ne!(c.id, a.id, "uses=2 达 max_uses 后必须换新身份");
         assert_eq!(c.uses(), 1, "新身份 uses 从本次 acquire 起计");
     }
@@ -579,8 +664,8 @@ mod tests {
     #[test]
     fn max_age_zero_rotates_identity_every_acquire() {
         let mgr = make_manager(100.0, 100, 0, 4096);
-        let a = mgr.acquire("h.example.com", Some("s"), false);
-        let b = mgr.acquire("h.example.com", Some("s"), false);
+        let a = mgr.acquire("h.example.com", Some("s"), false, None);
+        let b = mgr.acquire("h.example.com", Some("s"), false, None);
         assert_ne!(a.id, b.id, "max_age=0 时每次 acquire 都必须换新身份");
     }
 
@@ -590,9 +675,9 @@ mod tests {
     fn retire_forces_new_identity_on_next_acquire() {
         let mgr = make_manager(100.0, 100, 1800, 4096);
         let host = "stall.example.com";
-        let a = mgr.acquire(host, None, false);
+        let a = mgr.acquire(host, None, false, None);
         mgr.retire(host, None);
-        let b = mgr.acquire(host, None, false);
+        let b = mgr.acquire(host, None, false, None);
         assert_ne!(a.id, b.id, "retire 后同 host acquire 必须换新身份");
         // 幂等：retire 不存在的身份不 panic
         mgr.retire(host, None);
@@ -604,7 +689,7 @@ mod tests {
     #[test]
     fn capture_and_render_cookie_header() {
         let mgr = make_manager(3.0, 100, 1800, 4096);
-        let id = mgr.acquire("h.example.com", Some("s"), false);
+        let id = mgr.acquire("h.example.com", Some("s"), false, None);
         assert!(
             mgr.cookie_header(&id, "h.example.com").is_none(),
             "未捕获前无 Cookie 头"
@@ -638,7 +723,7 @@ mod tests {
     #[test]
     fn cookies_do_not_leak_across_hosts_under_session_affinity() {
         let mgr = make_manager(3.0, 100, 1800, 4096);
-        let id = mgr.acquire("a.example.com", Some("shared-session"), false);
+        let id = mgr.acquire("a.example.com", Some("shared-session"), false, None);
         let mut h = HashMap::new();
         h.insert(
             "set-cookie".to_string(),
@@ -667,7 +752,7 @@ mod tests {
     #[test]
     fn cookie_cache_truncates_oldest_without_panic() {
         let mgr = make_manager(3.0, 100, 1800, 64); // 64 字节上限（from_settings 下限钳制同值）
-        let id = mgr.acquire("h.example.com", Some("s"), false);
+        let id = mgr.acquire("h.example.com", Some("s"), false, None);
         for i in 0..10 {
             let mut h = HashMap::new();
             h.insert("set-cookie".to_string(), format!("k{i}=value{i}"));
@@ -708,13 +793,13 @@ mod tests {
             Arc::new(UaPool::new()),
             Some(make_provider()),
         );
-        let a = mgr.acquire("a.example.com", None, false);
-        let b = mgr.acquire("b.example.com", None, false);
+        let a = mgr.acquire("a.example.com", None, false, None);
+        let b = mgr.acquire("b.example.com", None, false, None);
         assert_ne!(a.id, b.id);
         assert_eq!(mgr.len(), 1, "超限临时身份不得入池");
         assert!(b.proxy_url.is_some(), "临时身份仍持有代理（完整三件套）");
         assert_eq!(
-            mgr.acquire("a.example.com", None, false).id,
+            mgr.acquire("a.example.com", None, false, None).id,
             a.id,
             "已有绑定不受容量降级影响"
         );
@@ -730,7 +815,7 @@ mod tests {
             let m = Arc::clone(&mgr);
             handles.push(tokio::spawn(async move {
                 for i in 0..50 {
-                    let id = m.acquire("hot.example.com", Some("shared"), false);
+                    let id = m.acquire("hot.example.com", Some("shared"), false, None);
                     if i % 3 == 0 {
                         m.mark_bad(&id);
                     } else {

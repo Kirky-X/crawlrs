@@ -399,6 +399,9 @@ pub fn init_engine_components(
     max_response_body_bytes: usize,
     politeness: &PolitenessSettings,
     session: &SessionSettings,
+    // 出站隔离（T004）：租户代理注册表；`Some` 时 SessionManager 身份代理
+    // 按租户从 dedicated/shared 池选取（空配置注册表等价原全局单池）。
+    proxy_registry: Option<std::sync::Arc<crate::engines::tenant_outbound::TenantProxyRegistry>>,
     observability: &ObservabilitySettings,
     vision_adapter: Option<
         Arc<dyn crate::domain::services::llm::vision_adapter::VisionAdapterTrait>,
@@ -419,9 +422,13 @@ pub fn init_engine_components(
     );
     // F1/F5：host 纪律参数从 [politeness] 配置注入（此前硬编码 with_defaults）
     // F2：SessionManager 注入 [session] 配置与共享代理提供者（UA 池由
-    // router 经 with_discipline_and_session 与 session 共享同一实例）
-    let session_manager =
+    // router 经 with_discipline_and_session 与 session 共享同一实例）；
+    // T004：注入租户代理注册表（配置了专用池的租户身份绑定专用池代理）
+    let mut session_manager =
         SessionManager::from_settings(session, Arc::new(UaPool::new()), session_proxy_provider);
+    if let Some(registry) = proxy_registry {
+        session_manager = session_manager.with_proxy_registry(registry);
+    }
     let mut router = EngineRouter::with_discipline_and_session(
         engines.clone(),
         HostDiscipline::from_politeness(politeness),
@@ -719,6 +726,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            None,
             &ObservabilitySettings::default(),
             None,
         );
@@ -745,6 +753,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            None,
             &ObservabilitySettings::default(),
             None,
         );
@@ -768,6 +777,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            None,
             &ObservabilitySettings::default(),
             None,
         );
@@ -793,6 +803,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            None,
             &ObservabilitySettings::default(),
             None,
         );
@@ -817,6 +828,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            None,
             &ObservabilitySettings::default(),
             None,
         );

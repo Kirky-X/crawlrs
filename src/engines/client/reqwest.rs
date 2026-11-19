@@ -856,6 +856,7 @@ mod tests {
 
     fn create_basic_request(url: &str) -> InternalScrapeRequest {
         InternalScrapeRequest {
+            tenant_id: None,
             url: url.to_string(),
             method: HttpMethod::Get,
             headers: HashMap::new(),
@@ -881,6 +882,7 @@ mod tests {
 
     fn create_request_with_js(url: &str) -> InternalScrapeRequest {
         InternalScrapeRequest {
+            tenant_id: None,
             url: url.to_string(),
             method: HttpMethod::Get,
             headers: HashMap::new(),
@@ -906,6 +908,7 @@ mod tests {
 
     fn create_request_with_screenshot(url: &str) -> InternalScrapeRequest {
         InternalScrapeRequest {
+            tenant_id: None,
             url: url.to_string(),
             method: HttpMethod::Get,
             headers: HashMap::new(),
@@ -1014,6 +1017,7 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         let request = InternalScrapeRequest {
+            tenant_id: None,
             url: "https://example.com".to_string(),
             method: HttpMethod::Post,
             headers: HashMap::new(),
@@ -1061,6 +1065,7 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         let request = InternalScrapeRequest {
+            tenant_id: None,
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             headers: HashMap::new(),
@@ -1090,6 +1095,7 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         let request = InternalScrapeRequest {
+            tenant_id: None,
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             headers: HashMap::new(),
@@ -1137,6 +1143,7 @@ mod tests {
         let engine = ReqwestEngine::new(client);
         // needs_tls_fingerprint=true → reqwest 无法伪装 JA4 指纹 → 10（低分，让位 WreqEngine）
         let request = InternalScrapeRequest {
+            tenant_id: None,
             needs_tls_fingerprint: true,
             ..create_basic_request("https://example.com")
         };
@@ -1248,6 +1255,7 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         let request = InternalScrapeRequest {
+            tenant_id: None,
             url: "http://localhost".to_string(),
             method: HttpMethod::Post,
             headers: HashMap::new(),
@@ -1278,6 +1286,7 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         let request = InternalScrapeRequest {
+            tenant_id: None,
             url: "http://localhost".to_string(),
             method: HttpMethod::Get,
             headers: HashMap::new(),

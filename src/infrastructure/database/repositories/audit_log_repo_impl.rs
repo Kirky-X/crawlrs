@@ -762,7 +762,6 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        use crate::domain::id::Id;
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let since = Utc::now() - chrono::Duration::days(1);
         // 3 escalation events for acme (one high risk), 1 for other tenant.

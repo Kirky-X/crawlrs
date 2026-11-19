@@ -140,6 +140,7 @@ async fn test_aggregate_concurrent_search() {
     let router = EngineRouter::new(vec![Arc::new(engine1), Arc::new(engine2)]);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "http://example.com".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -199,6 +200,7 @@ async fn test_aggregate_partial_failure() {
     let router = EngineRouter::new(vec![Arc::new(engine1), Arc::new(engine2)]);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "http://example.com".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -324,6 +326,7 @@ async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
     router.set_max_retries(2);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/protected".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -461,6 +464,7 @@ async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
     router.set_max_retries(2);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/normal".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -596,6 +600,7 @@ async fn test_t015_spa_shell_triggers_js_upgrade_re_dispatch() {
     router.set_max_retries(2);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/spa-page".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -733,6 +738,7 @@ async fn test_t015_non_spa_response_does_not_trigger_re_dispatch() {
     router.set_max_retries(2);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/static-page".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -878,6 +884,7 @@ async fn test_t028_ua_rotated_across_transient_retries() {
     router.set_max_retries(4);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/test".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -1061,6 +1068,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
     router.set_max_retries(4);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/test".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -1210,6 +1218,7 @@ async fn test_t028_retry_tracker_caps_feature_toggle() {
     router.set_max_retries(5);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/ft-test".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -1323,6 +1332,7 @@ async fn test_race_mode_discards_antibot_challenge_winner() {
     router.set_race_mode_enabled(true);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/protected".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),
@@ -1409,6 +1419,7 @@ async fn test_race_mode_all_challenge_candidates_returns_error() {
     router.set_race_mode_enabled(true);
 
     let request = InternalScrapeRequest {
+        tenant_id: None,
         url: "https://example.com/protected".to_string(),
         method: crate::engines::engine_client::HttpMethod::Get,
         headers: HashMap::new(),

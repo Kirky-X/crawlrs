@@ -173,8 +173,8 @@ impl MllmEngine {
         request: &InternalScrapeRequest,
         start: Instant,
     ) -> Result<InternalScrapeResponse, EngineError> {
-        // Acquire browser page
-        let pooled_page = pool.acquire_page().await?;
+        // Acquire browser page（出站隔离 T006：租户级浏览器配额门）
+        let pooled_page = pool.acquire_page(request.tenant_id.as_deref()).await?;
         let page: chromiumoxide::Page = pooled_page.page().clone();
 
         // 指纹一致性设置与 PlaywrightEngine 同一套（UA/客户端提示/
