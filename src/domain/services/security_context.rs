@@ -50,6 +50,30 @@ pub struct SecurityContext {
     pub pii_minimized: Option<bool>,
 }
 
+impl SanitizationSummary {
+    /// Build a summary from the llm-injection-sanitizer change's report.
+    pub fn from_report(
+        report: &crate::domain::services::llm::sanitizer::SanitizationReport,
+    ) -> Self {
+        Self {
+            hidden_nodes_removed: report.hidden_nodes_removed,
+            suspicious_hits: report.suspicious_hits,
+        }
+    }
+
+    /// Build a summary, returning `None` for an empty (no-op) report so the
+    /// field stays omitted when nothing was sanitized.
+    pub fn from_report_opt(
+        report: &crate::domain::services::llm::sanitizer::SanitizationReport,
+    ) -> Option<Self> {
+        if report.is_empty() {
+            None
+        } else {
+            Some(Self::from_report(report))
+        }
+    }
+}
+
 impl SecurityContext {
     /// True when no field carries a value.
     pub fn is_empty(&self) -> bool {
@@ -73,6 +97,20 @@ mod tests {
         let ctx = SecurityContext::default();
         assert!(ctx.is_empty());
         assert_eq!(serde_json::to_string(&ctx).unwrap(), "{}");
+    }
+
+    #[test]
+    fn sanitization_summary_from_report_transfers_counters() {
+        use crate::domain::services::llm::sanitizer::SanitizationReport;
+        let report = SanitizationReport {
+            hidden_nodes_removed: 7,
+            suspicious_hits: 2,
+            ..Default::default()
+        };
+        let summary = SanitizationSummary::from_report(&report);
+        assert_eq!(summary.hidden_nodes_removed, 7);
+        assert_eq!(summary.suspicious_hits, 2);
+        assert!(SanitizationSummary::from_report_opt(&SanitizationReport::default()).is_none());
     }
 
     #[test]
