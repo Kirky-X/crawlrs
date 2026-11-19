@@ -38,6 +38,15 @@ pub enum AuditRepositoryError {
     NotFound,
 }
 
+/// Aggregated escalation counts for one tenant (compliance report).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EscalationSummary {
+    /// Total `antibot_escalation` events in the window.
+    pub total: u64,
+    /// Escalations where robots verdict was `disallowed` (needs review).
+    pub robots_disallowed_escalated: u64,
+}
+
 /// 审计日志仓储接口
 ///
 /// 定义了审计日志的创建、查询和删除操作。

@@ -88,6 +88,29 @@ fn replay_sql(backend: DatabaseBackend) -> Option<&'static str> {
     }
 }
 
+/// Dialect-specific aggregation SQL for escalation counts by tenant.
+fn escalation_summary_sql(backend: DatabaseBackend) -> Option<&'static str> {
+    match backend {
+        DatabaseBackend::Postgres => Some(
+            "SELECT \
+               COUNT(*) AS total, \
+               COUNT(*) FILTER (WHERE COALESCE(metadata->>'risk_level', metadata->'escalation'->>'risk_level') = 'high') AS high_risk \
+             FROM audit_logs \
+             WHERE requested_action = 'antibot_escalation' AND created_at >= $1 \
+               AND COALESCE(metadata->>'tenant_id', metadata->'escalation'->>'tenant_id') = $2",
+        ),
+        DatabaseBackend::Sqlite | DatabaseBackend::MySql => Some(
+            "SELECT \
+               COUNT(*) AS total, \
+               SUM(CASE WHEN COALESCE(JSON_EXTRACT(metadata, '$.risk_level'), JSON_EXTRACT(metadata, '$.escalation.risk_level')) = 'high' THEN 1 ELSE 0 END) AS high_risk \
+             FROM audit_logs \
+             WHERE requested_action = 'antibot_escalation' AND created_at >= ? \
+               AND COALESCE(JSON_EXTRACT(metadata, '$.tenant_id'), JSON_EXTRACT(metadata, '$.escalation.tenant_id')) = ?",
+        ),
+        _ => None,
+    }
+}
+
 impl AuditLogRepositoryImpl {
     pub fn new(pool: Arc<DbPool>) -> Self {
         Self { pool }
@@ -129,6 +152,39 @@ impl AuditLogRepositoryImpl {
                 Ok(model.into())
             })
             .collect()
+    }
+
+    /// Aggregate escalation counts for a tenant since a point in time.
+    ///
+    /// An empty table (or no matches) returns the zero-value summary, not an error.
+    pub async fn count_escalations_by_tenant(
+        &self,
+        tenant: &str,
+        since: chrono::DateTime<Utc>,
+    ) -> Result<
+        crate::domain::repositories::audit_log_repository::EscalationSummary,
+        AuditRepositoryError,
+    > {
+        use crate::domain::repositories::audit_log_repository::EscalationSummary;
+        let session = self.pool.get_session("admin").await?;
+        let conn = session.connection()?;
+        let backend = conn.get_database_backend();
+        let sql = escalation_summary_sql(backend).ok_or_else(|| {
+            AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                "unsupported backend for escalation summary query"
+            ))
+        })?;
+        let stmt = Statement::from_sql_and_values(backend, sql, [since.into(), tenant.into()]);
+        let rows = conn.query_all_raw(stmt).await?;
+        let Some(row) = rows.first() else {
+            return Ok(EscalationSummary::default());
+        };
+        let total: i64 = row.try_get("", "total").unwrap_or(0);
+        let high_risk: i64 = row.try_get("", "high_risk").unwrap_or(0);
+        Ok(EscalationSummary {
+            total: total.max(0) as u64,
+            robots_disallowed_escalated: high_risk.max(0) as u64,
+        })
     }
 }
 
@@ -683,6 +739,57 @@ mod tests {
         entry.denial_reason = Some("insufficient scope".to_string());
         assert_eq!(entry.decision.to_string(), "DENY");
         assert!(entry.denial_reason.is_some());
+    }
+
+    #[test]
+    fn test_escalation_summary_sql_dialects() {
+        let pg = super::escalation_summary_sql(dbnexus::sea_orm::DatabaseBackend::Postgres)
+            .expect("postgres summary sql");
+        assert!(pg.contains("COUNT(*) FILTER"));
+        assert!(pg.contains("'antibot_escalation'"));
+        for backend in [
+            dbnexus::sea_orm::DatabaseBackend::Sqlite,
+            dbnexus::sea_orm::DatabaseBackend::MySql,
+        ] {
+            let sql = super::escalation_summary_sql(backend).expect("summary sql");
+            assert!(sql.contains("JSON_EXTRACT"));
+            assert!(sql.contains("CASE WHEN"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_count_escalations_by_tenant() {
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
+        use crate::domain::id::Id;
+        let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
+        let since = Utc::now() - chrono::Duration::days(1);
+        // 3 escalation events for acme (one high risk), 1 for other tenant.
+        for (i, risk) in ["normal", "high", "normal"].iter().enumerate() {
+            let mut e = sample_audit_log_entry();
+            e.requested_action = "antibot_escalation".to_string();
+            e.metadata = serde_json::json!({"escalation": {"tenant_id": "acme", "risk_level": risk, "hop": i}});
+            repo.create(&e).await.expect("create escalation");
+        }
+        let mut other = sample_audit_log_entry();
+        other.requested_action = "antibot_escalation".to_string();
+        other.metadata =
+            serde_json::json!({"escalation": {"tenant_id": "other", "risk_level": "high"}});
+        repo.create(&other).await.expect("create other");
+
+        let summary = repo
+            .count_escalations_by_tenant("acme", since)
+            .await
+            .expect("count");
+        assert_eq!(summary.total, 3);
+        assert_eq!(summary.robots_disallowed_escalated, 1);
+
+        let empty = repo
+            .count_escalations_by_tenant("nobody", since)
+            .await
+            .expect("count empty");
+        assert_eq!(empty.total, 0);
     }
 
     #[test]
