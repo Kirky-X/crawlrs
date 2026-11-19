@@ -7,6 +7,7 @@
 //! 配置结构体按功能分组到子模块中：
 
 pub mod app;
+pub mod compliance;
 pub mod engines;
 pub mod fluxweir;
 pub mod llm;

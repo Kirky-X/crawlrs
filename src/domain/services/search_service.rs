@@ -2399,6 +2399,7 @@ mod tests {
             content_extraction: ContentExtractionSettings::default(),
             id: IdSettings::default(),
             outbound_isolation: std::collections::HashMap::new(),
+            compliance: std::collections::HashMap::new(),
         }
     }
 

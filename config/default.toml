@@ -390,6 +390,15 @@ cooldown_seconds = 30
 # max_dns_queries_per_minute = 120
 # overflow_policy = "reject_newest"  # or "queue_with_timeout"
 
+# Per-tenant compliance profiles (empty = no compliance behavior).
+# gdpr implies personal-data minimization even when minimize_personal_data is false.
+# [compliance.acme]
+# gdpr = true
+# respect_ai_txt = true
+# minimize_personal_data = true
+# retention_days = 365
+# dpia_reference = "DPIA-2026-001"
+
 # Session 身份三件套（吸收点 F2；参考 Crawlee SessionPool）
 # 代理 + UA/TLS 档 + Cookie 绑成单一身份按 error_score 记分退休；false 时维持现状盲轮换
 [session]

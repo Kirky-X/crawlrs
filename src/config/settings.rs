@@ -176,6 +176,11 @@ pub struct Settings {
     #[serde(default)]
     pub outbound_isolation:
         std::collections::HashMap<String, crate::config::outbound::TenantOutboundConfig>,
+
+    /// Per-tenant compliance profiles (empty map = all compliance behavior off).
+    #[serde(default)]
+    pub compliance:
+        std::collections::HashMap<String, crate::config::compliance::TenantComplianceConfig>,
 }
 
 // ID 生成配置（NebulaId）
@@ -1252,6 +1257,7 @@ mod tests {
             content_extraction: ContentExtractionSettings::default(),
             id: IdSettings::default(),
             outbound_isolation: std::collections::HashMap::new(),
+            compliance: std::collections::HashMap::new(),
         };
 
         assert_eq!(settings.server.port, 8899);
