@@ -14,6 +14,7 @@ pub mod proxy_pool; // 代理轮换池
 pub mod router;
 pub mod router_metrics; // ARC-003: 路由指标收集器
 pub mod session; // Session 身份三件套（F2）：代理 + UA/TLS 档 + Cookie 绑定与记分退休
+pub mod tenant_outbound; // per-tenant proxy/browser/DNS resource isolation
 pub mod upgrade_probe; // 流式 HTTP→Chrome 升级探测
 pub mod validators;
 
