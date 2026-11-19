@@ -142,6 +142,33 @@ pub fn build_extract_request(url: &str, timeout_seconds: u64) -> ScrapeRequest {
     })
 }
 
+/// Assemble a `SecurityContext` from the signals gathered during a scrape.
+///
+/// Every input is optional so minimal/embedded builds produce an empty (and
+/// therefore omitted) context. This is a pure function for testability; the
+/// worker calls it with the values available on its request/result path.
+pub fn assemble_security_context(
+    tenant: Option<String>,
+    engine_path: Vec<String>,
+    robots_txt: Option<&str>,
+    ai_txt: Option<&str>,
+    extraction_confidence: Option<f64>,
+    compliance_profile: Option<String>,
+    pii_minimized: Option<bool>,
+) -> crate::domain::services::security_context::SecurityContext {
+    use crate::domain::services::security_context::SecurityContext;
+    SecurityContext {
+        tenant,
+        engine_path,
+        robots_txt: robots_txt.map(str::to_string),
+        ai_txt: ai_txt.map(str::to_string),
+        sanitization: None,
+        extraction_confidence,
+        compliance_profile,
+        pii_minimized,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,5 +354,30 @@ mod tests {
             Some("ok"),
             "other headers are preserved"
         );
+    }
+
+    #[test]
+    fn test_assemble_security_context_minimal() {
+        let ctx = assemble_security_context(None, vec![], None, None, None, None, None);
+        assert!(ctx.is_empty());
+    }
+
+    #[test]
+    fn test_assemble_security_context_with_tenant_engine_robots() {
+        let ctx = assemble_security_context(
+            Some("acme".to_string()),
+            vec!["http".to_string(), "playwright".to_string()],
+            Some("allowed"),
+            None,
+            Some(0.85),
+            Some("gdpr".to_string()),
+            Some(true),
+        );
+        assert_eq!(ctx.tenant.as_deref(), Some("acme"));
+        assert_eq!(ctx.engine_path.len(), 2);
+        assert_eq!(ctx.robots_txt.as_deref(), Some("allowed"));
+        assert_eq!(ctx.extraction_confidence, Some(0.85));
+        assert_eq!(ctx.compliance_profile.as_deref(), Some("gdpr"));
+        assert_eq!(ctx.pii_minimized, Some(true));
     }
 }
