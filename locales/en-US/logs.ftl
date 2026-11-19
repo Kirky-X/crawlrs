@@ -143,3 +143,7 @@ doctor-security-ssrf = SSRF dual validation active
 doctor-security-rate-limit-config = rate limiting on
 doctor-security-proxy-egress = proxy URL(s) configured
 doctor-security-llm-sanitization = LLM injection sanitization on
+
+# Route decision replay CLI
+route-replay-not-found = no escalation records found for task { $task_id }
+route-replay-summary = { $count } escalation hops

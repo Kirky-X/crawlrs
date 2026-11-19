@@ -11,6 +11,10 @@ enum ServiceType {
     Doctor {
         security: bool,
     },
+    /// Route-decision replay for a task (`route-replay <task-id>`).
+    RouteReplay {
+        task_id: String,
+    },
 }
 
 /// Detect the `--security` flag in a command line argument list.
@@ -35,8 +39,11 @@ fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
         "bootstrap" => Ok(ServiceType::Bootstrap),
         "migrate" => Ok(ServiceType::Migrate),
         "doctor" => Ok(ServiceType::Doctor { security: false }),
+        "route-replay" => Ok(ServiceType::RouteReplay {
+            task_id: String::new(),
+        }),
         other => Err(format!(
-            "Invalid service type: '{}'. Use 'api', 'worker', 'bootstrap', 'migrate', or 'doctor'.",
+            "Invalid service type: '{}'. Use 'api', 'worker', 'bootstrap', 'migrate', 'doctor', or 'route-replay'.",
             other
         )),
     }
@@ -66,6 +73,9 @@ impl ServiceType {
         match parse_service_type(arg) {
             Ok(ServiceType::Doctor { .. }) => ServiceType::Doctor {
                 security: has_security_flag(&args),
+            },
+            Ok(ServiceType::RouteReplay { .. }) => ServiceType::RouteReplay {
+                task_id: args.get(2).cloned().unwrap_or_default(),
             },
             Ok(st) => st,
             Err(msg) => {
@@ -512,6 +522,14 @@ mod app {
         // 1. Load and configure settings
         let settings = load_runtime_settings()?;
 
+        // `route-replay <task-id>`: read audit rows and render the escalation
+        // chain. Uses a direct DB pool (no full DI graph needed) and exits 0
+        // even when no records exist.
+        if let ServiceType::RouteReplay { task_id } = &command {
+            run_route_replay(&settings, task_id).await?;
+            return Ok(());
+        }
+
         // 2. Initialize telemetry and metrics (inklog LoggerManager must be held alive)
         let _logger_manager = crawlrs::bootstrap::telemetry::init_all(&settings.logging)
             .await
@@ -591,6 +609,38 @@ mod app {
         Ok(())
     }
 
+    /// Replay the anti-bot escalation chain recorded for a task id.
+    async fn run_route_replay(
+        settings: &crawlrs::config::settings::Settings,
+        task_id: &str,
+    ) -> anyhow::Result<()> {
+        use std::str::FromStr;
+
+        let id = match crawlrs::domain::id::Id::from_str(task_id) {
+            Ok(id) => id,
+            Err(_) => {
+                println!("未找到 task_id={task_id} 的升级记录 / invalid task id");
+                return Ok(());
+            }
+        };
+        let pool =
+            crawlrs::infrastructure::database::dbnexus_connection::create_pool(&settings.database)
+                .await
+                .map_err(|e| anyhow::anyhow!("route-replay: create pool failed: {e}"))?;
+        let repo = crawlrs::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl::new(
+            std::sync::Arc::new(pool),
+        );
+        let entries = repo
+            .find_by_action_and_task_id("antibot_escalation", &id, 100)
+            .await
+            .map_err(|e| anyhow::anyhow!("route-replay: query failed: {e}"))?;
+        println!(
+            "{}",
+            crawlrs::bootstrap::route_replay::render_replay_chain(&entries, task_id)
+        );
+        Ok(())
+    }
+
     /// 按 `argv[1]` 选择执行人格并启动对应服务。
     async fn dispatch_service(
         app_state: &CrawlRsState,
@@ -615,6 +665,11 @@ mod app {
                 // a bare `doctor` reaches here and renders the security posture.
                 let posture = crawlrs::bootstrap::doctor::SecurityPosture::full(&settings);
                 println!("{}", posture.render());
+            }
+            ServiceType::RouteReplay { ref task_id } => {
+                // Normally handled before DI init in `run()`; kept here for
+                // exhaustiveness when dispatch is called directly.
+                run_route_replay(&settings, task_id).await?;
             }
         }
 
@@ -707,6 +762,15 @@ mod tests {
         assert!(matches!(
             result,
             Ok(ServiceType::Doctor { security: false })
+        ));
+    }
+
+    #[test]
+    fn tc_parse_service_type_route_replay() {
+        let result = parse_service_type(Some("route-replay"));
+        assert!(matches!(
+            result,
+            Ok(ServiceType::RouteReplay { ref task_id }) if task_id.is_empty()
         ));
     }
 

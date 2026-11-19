@@ -23,6 +23,7 @@ pub mod error;
 pub mod fluxweir_gateway;
 pub mod infrastructure;
 pub mod route_groups;
+pub mod route_replay; // route-decision replay rendering
 pub mod routes;
 pub mod services;
 pub mod telemetry;
