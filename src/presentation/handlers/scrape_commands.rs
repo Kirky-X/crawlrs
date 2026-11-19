@@ -326,6 +326,7 @@ async fn respond_scrape_enqueued(
         credits_used: 1,
         // 入队响应不携带捕获数据（任务尚未执行）
         captured_responses: None,
+        security_context: None,
     };
 
     let status_code = sync_wait_status_code(sync_wait_ms, wait_result.is_timeout);

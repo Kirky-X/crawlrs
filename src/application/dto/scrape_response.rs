@@ -36,6 +36,9 @@ pub struct ScrapeResponseDto {
     /// `None` 不出现在 JSON。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub captured_responses: Option<Vec<CapturedResponseDto>>,
+    /// Security/compliance passport (empty → key omitted; old clients see no change).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security_context: Option<crate::domain::services::security_context::SecurityContext>,
 }
 
 /// Playwright 捕获的 XHR/Fetch 后台响应条目 DTO（F6）

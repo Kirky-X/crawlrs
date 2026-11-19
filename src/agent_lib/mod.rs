@@ -14,6 +14,7 @@
 //!
 //! 该模块仅在 `agent-lib` feature 启用时编译，不依赖 dbnexus/axum 等平台依赖。
 
+pub use crate::domain::services::security_context::{SanitizationSummary, SecurityContext};
 pub use error::AgentLibError;
 pub use fetch::{fetch, FetchOptions, FetchedContent};
 pub use search::{search, SearchProvider, SearchResult};

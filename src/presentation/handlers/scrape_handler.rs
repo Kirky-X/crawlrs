@@ -144,6 +144,7 @@ mod tests {
             url: "https://example.com".to_string(),
             credits_used: 1,
             captured_responses: None,
+            security_context: None,
         };
         let json = serde_json::to_string(&dto).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -160,6 +161,7 @@ mod tests {
             url: "https://example.com".to_string(),
             credits_used: 1,
             captured_responses: None,
+            security_context: None,
         };
         let json = serde_json::to_string(&dto).unwrap();
         assert!(
@@ -186,6 +188,7 @@ mod tests {
                 mime_type: "application/json".to_string(),
                 body: r#"{"ok":true}"#.to_string(),
             }]),
+            security_context: None,
         };
         let json = serde_json::to_string(&dto).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -891,6 +894,7 @@ mod tests {
             url: "https://roundtrip.com".to_string(),
             credits_used: 3,
             captured_responses: None,
+            security_context: None,
         };
         let json = serde_json::to_string(&dto).unwrap();
         let deserialized: ScrapeResponseDto = serde_json::from_str(&json).unwrap();
