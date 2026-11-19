@@ -57,6 +57,14 @@ pub struct DnsQuotaBucket {
     now: fn() -> Instant,
 }
 
+impl std::fmt::Debug for DnsQuotaBucket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DnsQuotaBucket")
+            .field("tenants", &self.limits.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl DnsQuotaBucket {
     /// Build a bucket from per-tenant per-minute DNS limits.
     pub fn new(limits: impl IntoIterator<Item = (String, u32)>) -> Self {

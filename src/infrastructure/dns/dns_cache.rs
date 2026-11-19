@@ -25,6 +25,9 @@ pub struct DnsCacheService {
     cache: Arc<DnsCache>,
     resolver: Resolver<hickory_resolver::net::runtime::TokioRuntimeProvider>,
     default_ttl: Duration,
+    /// Optional per-tenant DNS quota bucket. `None` keeps the original
+    /// unmetered behavior.
+    quota: Option<Arc<crate::engines::tenant_outbound::DnsQuotaBucket>>,
 }
 
 impl DnsCacheService {
@@ -38,7 +41,17 @@ impl DnsCacheService {
             cache,
             resolver,
             default_ttl: Duration::from_secs(default_ttl_seconds),
+            quota: None,
         })
+    }
+
+    /// Attach a per-tenant DNS quota bucket (called by DI at construction).
+    pub fn with_quota(
+        mut self,
+        quota: Arc<crate::engines::tenant_outbound::DnsQuotaBucket>,
+    ) -> Self {
+        self.quota = Some(quota);
+        self
     }
 
     /// 解析主机名（使用缓存）
@@ -47,10 +60,31 @@ impl DnsCacheService {
         hostname: &str,
         port: u16,
     ) -> Result<Vec<IpAddr>, std::io::Error> {
+        self.lookup_host_for_tenant(hostname, port, None).await
+    }
+
+    /// Resolve a hostname for a tenant, consuming DNS quota only on cache miss.
+    ///
+    /// A cache hit bypasses quota entirely; a miss with an exhausted tenant
+    /// budget returns an `io::Error` that upper layers treat as a retryable
+    /// transient failure.
+    pub async fn lookup_host_for_tenant(
+        &self,
+        hostname: &str,
+        port: u16,
+        tenant: Option<&str>,
+    ) -> Result<Vec<IpAddr>, std::io::Error> {
         let cache_key = generate_dns_key(hostname, port);
 
         if let Some(ips) = self.cache_lookup(&cache_key).await {
             return Ok(ips);
+        }
+
+        // Cache miss: charge the tenant quota before any real network resolution.
+        if let Some(quota) = &self.quota {
+            if let Err(err) = quota.try_consume(tenant) {
+                return Err(std::io::Error::other(err.to_string()));
+            }
         }
 
         // 未命中：single-flight 由 oxcache get_or_with_ttl 内建接管（见 resolve_and_cache）。
@@ -157,6 +191,37 @@ mod tests {
     async fn test_generate_dns_key() {
         let key = generate_dns_key("example.com", 80);
         assert_eq!(key, "dns:example.com:80");
+    }
+
+    #[tokio::test]
+    async fn test_quota_consumed_on_cache_miss() {
+        use crate::engines::tenant_outbound::DnsQuotaBucket;
+        // Limit 0: the first miss must be rejected before any real DNS lookup.
+        let bucket = Arc::new(DnsQuotaBucket::new([("acme".to_string(), 0)]));
+        let svc = make_service(300).await.with_quota(bucket);
+        let result = svc
+            .lookup_host_for_tenant("quota-miss.example", 80, Some("acme"))
+            .await;
+        assert!(
+            result.is_err(),
+            "exhausted tenant DNS budget must reject a miss"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cache_hit_bypasses_quota() {
+        use crate::engines::tenant_outbound::DnsQuotaBucket;
+        let svc = make_service(300).await;
+        let ips = vec!["93.184.216.34".parse::<IpAddr>().unwrap()];
+        svc.set("cached.example", 443, ips.clone(), 300).await;
+        // Attach a zero-quota bucket; a cache hit must still succeed.
+        let bucket = Arc::new(DnsQuotaBucket::new([("acme".to_string(), 0)]));
+        let svc = svc.with_quota(bucket);
+        let result = svc
+            .lookup_host_for_tenant("cached.example", 443, Some("acme"))
+            .await
+            .expect("cache hit must bypass quota");
+        assert_eq!(result, ips);
     }
 
     // 辅助函数：构造真实 oxcache 并包装为 DnsCacheService

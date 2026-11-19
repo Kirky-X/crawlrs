@@ -327,6 +327,22 @@ async fn init_dns_cache_service(settings: &Settings) -> Option<Arc<DnsCacheServi
                     "DNS cache initialized for IPv4 resolver (capacity: {}, ttl: {}s)",
                     settings.cache.memory.capacity, settings.cache.memory.ttl_seconds
                 );
+                // Per-tenant DNS budgets: empty config keeps the service unmetered.
+                let dns_limits: Vec<(String, u32)> = settings
+                    .outbound_isolation
+                    .iter()
+                    .filter_map(|(tenant, cfg)| {
+                        cfg.max_dns_queries_per_minute
+                            .map(|max| (tenant.clone(), max))
+                    })
+                    .collect();
+                let service = if dns_limits.is_empty() {
+                    service
+                } else {
+                    service.with_quota(Arc::new(
+                        crate::engines::tenant_outbound::DnsQuotaBucket::new(dns_limits),
+                    ))
+                };
                 Some(Arc::new(service))
             }
             Err(e) => {
