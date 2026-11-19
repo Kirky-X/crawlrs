@@ -70,7 +70,7 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 <td width="50%" style="vertical-align:top; padding: 12px">🛡️ <b>Anti-Bot Countermeasures</b><br><span style="color:#64748B">Three-tier anti-bot detection, SPA shell probe &amp; upgrade, consistent UA pool masking, smart retry, proxy rotation, request coalescing; session identity trio with score-based retirement, AutoThrottle adaptive rate limiting, 429 exponential backoff</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🏢 <b>Enterprise Platform</b><br><span style="color:#64748B">Multi-tenant isolation, garrison authentication (RBAC + JWT + brute-force protection), limiteron rate limiting &amp; circuit breaking, webhook event notifications</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🏢 <b>Enterprise Platform</b><br><span style="color:#64748B">Multi-tenant isolation (per-tenant proxy pool, browser &amp; DNS budgets), garrison authentication (RBAC + JWT + brute-force protection), limiteron rate limiting &amp; circuit breaking, webhook event notifications</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">📈 <b>Observability</b><br><span style="color:#64748B">Prometheus metrics export (queue depth, engine success rate, cache hits, etc.), inklog structured logging, audit logs, failure snapshots (signature-deduplicated archives)</span></td>
 </tr>
 <tr>

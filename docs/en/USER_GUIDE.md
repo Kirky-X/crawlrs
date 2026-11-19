@@ -371,6 +371,25 @@ burst_size = 20
 # No [webhook] section needed — webhook feature disabled
 ```
 
+### Per-Tenant Outbound Isolation
+
+When running multiple tenants, each can be assigned a dedicated proxy pool and bounded browser/DNS budgets. An empty `[outbound_isolation]` section keeps the default shared-pool, unlimited behavior. Two overflow policies exist: `reject_newest` (return 429 immediately) and `queue_with_timeout` (wait briefly, then degrade to the shared pool).
+
+```toml
+# Dedicated pool definition
+[proxy.pools.acme]
+entries = ["http://acme-proxy-1:8080", { url = "http://acme-proxy-2:8080", category = "html" }]
+
+# Tenant budgets
+[outbound_isolation.acme]
+proxy_pool = "acme"
+max_concurrent_browser_contexts = 8
+max_dns_queries_per_minute = 120
+overflow_policy = "reject_newest"  # or "queue_with_timeout"
+```
+
+`crawlrs doctor --security` reports the outbound-isolation posture (shared pool vs configured tenants).
+
 **Configuration when `auth` is enabled (0.2.0 garrison-auth-migration):**
 
 When the `auth` feature is enabled (the default), `CRAWLRS__AUTH__JWT_SECRET` must be set. Configure it via environment variable or TOML:
