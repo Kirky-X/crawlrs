@@ -79,6 +79,18 @@ impl AiTxtChecker {
         );
     }
 
+    /// Admission helper: when `respect` is false, no ai.txt request is made and
+    /// the URL is admitted. When true, a `Disallowed` verdict rejects it.
+    pub async fn should_allow(&self, respect: bool, url: &Url) -> bool {
+        if !respect {
+            return true;
+        }
+        match self.check(url).await {
+            Ok(AiTxtVerdict::Disallowed) => false,
+            _ => true, // Allowed / NotFetched / error → fail-open
+        }
+    }
+
     /// Check whether ai.txt disallows the target URL for our user agent.
     pub async fn check(&self, url: &Url) -> Result<AiTxtVerdict, AiTxtCheckerError> {
         let host = url
@@ -167,5 +179,26 @@ mod tests {
             .await;
         let url = Url::parse("https://example.com/public").unwrap();
         assert_eq!(c.check(&url).await.unwrap(), AiTxtVerdict::Allowed);
+    }
+
+    #[tokio::test]
+    async fn should_allow_respect_false_never_checks() {
+        let c = checker();
+        // No cache seeded: a real check would attempt a network fetch. With
+        // respect=false the helper must short-circuit to allow.
+        let url = Url::parse("https://unchecked-host.invalid/public").unwrap();
+        assert!(c.should_allow(false, &url).await);
+    }
+
+    #[tokio::test]
+    async fn should_allow_disallowed_rejects_when_respected() {
+        let c = checker();
+        c.seed_cache_for_test(
+            "example.com",
+            "User-agent: crawlrs-bot\nDisallow: /private\n",
+        )
+        .await;
+        let url = Url::parse("https://example.com/private/x").unwrap();
+        assert!(!c.should_allow(true, &url).await);
     }
 }

@@ -387,6 +387,7 @@ impl WorkerManager {
             team_semaphore: self.team_semaphore.clone(),
             coalesce_coordinator: self.coalesce_coordinator.clone(),
             robots_checker: self.robots_checker.clone(),
+            ai_txt_checker: None,
             settings: self.settings.clone(),
             default_concurrency_limit: self.default_concurrency_limit,
             extraction_service: self.extraction_service.clone(),

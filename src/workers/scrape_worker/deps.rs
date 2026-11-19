@@ -40,6 +40,8 @@ pub struct ScrapeWorkerDeps {
     pub team_semaphore: Arc<TeamSemaphore>,
     pub coalesce_coordinator: Arc<CoalesceCoordinator>,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
+    /// Optional ai.txt checker (compliance-plane). `None` = respect_ai_txt off.
+    pub ai_txt_checker: Option<Arc<crate::utils::ai_txt::AiTxtChecker>>,
     pub settings: Arc<Settings>,
     pub default_concurrency_limit: usize,
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,

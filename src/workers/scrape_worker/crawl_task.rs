@@ -219,6 +219,27 @@ impl ScrapeWorker {
             self.finalize_crawl_rejection(task, &reason).await?;
             return Ok(false);
         }
+
+        // ai.txt 准入（compliance）：租户 respect_ai_txt=true 时，Disallowed
+        // 走与 robots 相同的拒绝路径。未配置租户/checker 时零开销旁路。
+        if let Some(checker) = &self.ai_txt_checker {
+            let tenant = task.team_id.to_string();
+            let respect = self
+                .settings
+                .compliance
+                .get(&tenant)
+                .map(|cfg| cfg.respect_ai_txt)
+                .unwrap_or(false);
+            let url = match url::Url::parse(&task.url) {
+                Ok(u) => u,
+                Err(_) => return Ok(true),
+            };
+            if !checker.should_allow(respect, &url).await {
+                let reason = format!("Blocked by ai.txt: URL disallowed for {}", task.url);
+                self.finalize_crawl_rejection(task, &reason).await?;
+                return Ok(false);
+            }
+        }
         Ok(true)
     }
 

@@ -296,6 +296,7 @@ impl ScrapeWorkerBuilder {
             team_semaphore,
             coalesce_coordinator,
             robots_checker,
+            ai_txt_checker: None,
             settings,
             default_concurrency_limit: self.default_concurrency_limit,
             extraction_service,
