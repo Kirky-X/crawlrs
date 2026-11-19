@@ -430,6 +430,23 @@ fn schema_query(schema: &Value) -> String {
 }
 
 impl ExtractionService {
+    /// Minimize PII in an extraction result when the tenant's compliance config
+    /// enforces it. `None` config means no minimization (current behavior).
+    /// Returns the collected stats so callers can mount them into the response.
+    pub fn minimize_for_compliance(
+        &self,
+        value: &mut serde_json::Value,
+        tenant_cfg: Option<&crate::config::compliance::TenantComplianceConfig>,
+    ) -> Option<crate::domain::services::pii_minimizer::PiiStats> {
+        let enforced = tenant_cfg
+            .map(crate::config::compliance::enforced_minimize)
+            .unwrap_or(false);
+        if !enforced {
+            return None;
+        }
+        Some(crate::domain::services::pii_minimizer::PiiMinimizer::new().minimize_value(value))
+    }
+
     /// 使用CSS选择器提取数据（内部静态实现）
     fn extract_with_selectors_internal(
         html_content: &str,
@@ -2470,5 +2487,29 @@ mod tests {
         let _ = service
             .extract_with_schema(html, &json!({"type": "object"}))
             .await;
+    }
+
+    #[test]
+    fn test_minimize_for_compliance_respects_tenant_config() {
+        use crate::config::compliance::TenantComplianceConfig;
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let service = ExtractionService::new(Arc::new(mock));
+
+        let mut gdpr_value = json!({"email": "alice@example.com"});
+        let gdpr_cfg = TenantComplianceConfig {
+            gdpr: true,
+            minimize_personal_data: false,
+            ..Default::default()
+        };
+        let stats = service
+            .minimize_for_compliance(&mut gdpr_value, Some(&gdpr_cfg))
+            .expect("gdpr forces minimization");
+        assert_eq!(gdpr_value["email"], "u***@example.com");
+        assert_eq!(stats.hits_by_kind["email"], 1);
+
+        // No config → no minimization, stats None (current behavior).
+        let mut plain = json!({"email": "alice@example.com"});
+        assert!(service.minimize_for_compliance(&mut plain, None).is_none());
+        assert_eq!(plain["email"], "alice@example.com");
     }
 }
