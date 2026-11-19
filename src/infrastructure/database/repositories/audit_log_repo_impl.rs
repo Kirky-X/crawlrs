@@ -4,7 +4,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use dbnexus::sea_orm::{
-    ColumnTrait, DbErr, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, ConnectionTrait, DatabaseBackend, DbErr, EntityTrait, FromQueryResult, Order,
+    QueryFilter, QueryOrder, QuerySelect, Set, Statement,
 };
 use dbnexus::DbPool;
 use std::sync::Arc;
@@ -61,9 +62,73 @@ pub struct AuditLogRepositoryImpl {
     pool: Arc<DbPool>,
 }
 
+/// Look-back window for replay queries: only audit rows newer than this are
+/// scanned, so the JSON predicate runs on a bounded, `created_at`-indexed slice.
+const REPLAY_LOOKBACK_DAYS: i64 = 90;
+
+/// Render the dialect-specific replay SQL. `task_id` lives under the
+/// `escalation` payload key; `COALESCE` also accepts a flat `task_id` key so
+/// hand-written audit rows stay discoverable.
+fn replay_sql(backend: DatabaseBackend) -> Option<&'static str> {
+    match backend {
+        DatabaseBackend::Postgres => Some(
+            "SELECT * FROM audit_logs \
+             WHERE requested_action = $1 AND created_at >= $2 \
+             AND (COALESCE(metadata->>'task_id', metadata->'escalation'->>'task_id')) = $3 \
+             ORDER BY created_at ASC LIMIT $4",
+        ),
+        DatabaseBackend::Sqlite | DatabaseBackend::MySql => Some(
+            "SELECT * FROM audit_logs \
+             WHERE requested_action = ? AND created_at >= ? \
+             AND (COALESCE(JSON_EXTRACT(metadata, '$.task_id'), \
+                           JSON_EXTRACT(metadata, '$.escalation.task_id'))) = ? \
+             ORDER BY created_at ASC LIMIT ?",
+        ),
+        _ => None,
+    }
+}
+
 impl AuditLogRepositoryImpl {
     pub fn new(pool: Arc<DbPool>) -> Self {
         Self { pool }
+    }
+
+    /// Query audit rows for an action whose JSON metadata carries `task_id`.
+    ///
+    /// The `created_at` time window is applied first (indexed), then the JSON
+    /// predicate; results are ordered ascending by creation time for replay.
+    pub async fn find_by_action_and_task_id(
+        &self,
+        action: &str,
+        task_id: &crate::domain::id::Id,
+        limit: u32,
+    ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+        let session = self.pool.get_session("admin").await?;
+        let conn = session.connection()?;
+        let backend = conn.get_database_backend();
+        let sql = replay_sql(backend).ok_or_else(|| {
+            AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                "unsupported backend for audit replay query"
+            ))
+        })?;
+        let cutoff = Utc::now() - chrono::Duration::days(REPLAY_LOOKBACK_DAYS);
+        let stmt = Statement::from_sql_and_values(
+            backend,
+            sql,
+            [
+                action.into(),
+                cutoff.into(),
+                task_id.to_string().into(),
+                (limit as u64).into(),
+            ],
+        );
+        let rows = conn.query_all_raw(stmt).await?;
+        rows.iter()
+            .map(|row| {
+                let model = crate::infrastructure::database::entities::auth::audit_log::Model::from_query_result(row, "")?;
+                Ok(model.into())
+            })
+            .collect()
     }
 }
 
@@ -618,5 +683,68 @@ mod tests {
         entry.denial_reason = Some("insufficient scope".to_string());
         assert_eq!(entry.decision.to_string(), "DENY");
         assert!(entry.denial_reason.is_some());
+    }
+
+    #[test]
+    fn test_replay_sql_postgres_uses_json_arrow_and_nested_path() {
+        let sql = super::replay_sql(dbnexus::sea_orm::DatabaseBackend::Postgres)
+            .expect("postgres replay sql");
+        assert!(sql.contains("metadata->>'task_id'"));
+        assert!(sql.contains("metadata->'escalation'->>'task_id'"));
+        assert!(sql.contains("created_at >= $2"));
+        assert!(sql.contains("ORDER BY created_at ASC"));
+    }
+
+    #[test]
+    fn test_replay_sql_sqlite_mysql_use_json_extract() {
+        for backend in [
+            dbnexus::sea_orm::DatabaseBackend::Sqlite,
+            dbnexus::sea_orm::DatabaseBackend::MySql,
+        ] {
+            let sql = super::replay_sql(backend).expect("replay sql");
+            assert!(sql.contains("JSON_EXTRACT"));
+            assert!(sql.contains("$.escalation.task_id"));
+            assert!(sql.contains("ORDER BY created_at ASC"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_action_and_task_id_returns_only_matching_action_in_time_order() {
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
+        use crate::domain::id::Id;
+        let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
+        let task_id = Id::generate();
+        let other_task = Id::generate();
+
+        for i in 0..3 {
+            let mut e = sample_audit_log_entry();
+            e.requested_action = "antibot_escalation".to_string();
+            e.metadata =
+                serde_json::json!({"escalation": {"task_id": task_id.to_string(), "hop": i}});
+            e.created_at = Utc::now() - chrono::Duration::seconds(10 - i);
+            repo.create(&e).await.expect("create escalation");
+        }
+        let mut other = sample_audit_log_entry();
+        other.requested_action = "crawl.create".to_string();
+        other.metadata = serde_json::json!({"escalation": {"task_id": task_id.to_string()}});
+        repo.create(&other).await.expect("create other action");
+        let mut other_task_e = sample_audit_log_entry();
+        other_task_e.requested_action = "antibot_escalation".to_string();
+        other_task_e.metadata =
+            serde_json::json!({"escalation": {"task_id": other_task.to_string()}});
+        repo.create(&other_task_e)
+            .await
+            .expect("create other task escalation");
+
+        let found = repo
+            .find_by_action_and_task_id("antibot_escalation", &task_id, 10)
+            .await
+            .expect("find_by_action_and_task_id");
+        assert_eq!(found.len(), 3, "only 3 matching escalations expected");
+        for w in found.windows(2) {
+            assert!(w[0].created_at <= w[1].created_at, "must be time ascending");
+        }
     }
 }
