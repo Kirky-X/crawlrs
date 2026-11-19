@@ -57,6 +57,7 @@ pub mod markdown_service;
 /// 所有方法返回 `Ok()`。
 #[cfg(not(feature = "webhook"))]
 pub mod noop_webhook_service;
+pub mod pii_minimizer;
 /// RAG 增强提取策略
 ///
 /// DOM 语义分块 + 向量嵌入 + 检索增强 LLM 提取。
