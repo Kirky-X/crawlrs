@@ -94,6 +94,23 @@ When `search.searxng.enabled = true` (**off by default**, opt-in):
 - `[cors]` supports an `allowed_origins` allowlist; production should configure concrete origins rather than `*`.
 - Outbound proxies are configured uniformly via `[proxy]`; rate limiting is provided by limiteron with distributed rate limiting, quotas (`quota-control`), and circuit breaking (`circuit-breaker`).
 
+### Security Posture Self-Check
+
+Run `crawlrs doctor --security` before startup to verify the compiled feature matrix, the SSRF kill switch and runtime hardening configuration. Each line carries a three-state prefix (`✓` ok, `!` warning, `✗` fail); any `✗` yields exit code 1. A typical full-feature output:
+
+```
+✓ auth_garrison: Garrison authentication compiled in
+✓ webhook: Webhook delivery compiled in
+✓ rate_limit_limiteron: limiteron rate limiting compiled in
+✓ llm_boundary: LLM extraction boundary compiled in
+✓ ssrf_dual_validation: SSRF dual validation active (handler + engine routing)
+✓ rate_limit_config: rate limiting on (default 60 rpm)
+✓ proxy_egress: 1 proxy URL(s) configured
+✓ llm_sanitization: LLM injection sanitization on ([llm.sanitization])
+```
+
+Anti-bot escalation hops emit structured `antibot_escalation` audit events; replay a task's escalation chain with `crawlrs route-replay <task-id>`.
+
 ---
 
 ## ⛓️ Supply Chain and Gates

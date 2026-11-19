@@ -236,7 +236,7 @@ Performance engineering is built into the architecture: AIMD adaptive concurrenc
 
 ### 🛡️ Security Design
 
-Security covers the entire request path: SSRF is validated twice — pre-check in the handler and again in the engine router; authentication is delegated to garrison (HS256 JWT, RBAC, IP-level brute-force protection, persisted audit); webhooks are verified with Standard Webhooks signatures (subtle constant-time comparison); the JWT secret is zeroized to prevent memory residue; security response headers and trusted-proxy middleware are hardened by default. For each mechanism see the [🔒 Security Document](docs/en/SECURITY.md) and the [🏗️ Architecture Document · Security Model](docs/en/ARCHITECTURE.md).
+Security covers the entire request path: SSRF is validated twice — pre-check in the handler and again in the engine router; authentication is delegated to garrison (HS256 JWT, RBAC, IP-level brute-force protection, persisted audit); webhooks are verified with Standard Webhooks signatures (subtle constant-time comparison); the JWT secret is zeroized to prevent memory residue; security response headers and trusted-proxy middleware are hardened by default. Anti-bot escalation hops emit structured `antibot_escalation` audit events; run `crawlrs doctor --security` for a startup self-check of feature flags, SSRF protection and runtime hardening. For each mechanism see the [🔒 Security Document](docs/en/SECURITY.md) and the [🏗️ Architecture Document · Security Model](docs/en/ARCHITECTURE.md).
 
 ### ⛓️ Supply Chain & Gates
 

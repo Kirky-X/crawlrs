@@ -236,7 +236,7 @@ crawlrs 遵循领域驱动设计（DDD），采用 `presentation → application
 
 ### 🛡️ 安全设计
 
-安全设计覆盖请求全链路：SSRF 在 handler 前置与引擎路由双重校验；认证由 garrison 接管（HS256 JWT、RBAC、IP 级防暴力破解、审计落库）；Webhook 经 Standard Webhooks 签名验证（subtle 恒时比较）；JWT secret 以 zeroize 防内存残留；安全响应头与可信代理中间件默认加固。逐项机制详见 [🔒 安全文档](docs/cn/SECURITY.md) 与 [🏗️ 架构文档 · 安全模型](docs/cn/ARCHITECTURE.md)。
+安全设计覆盖请求全链路：SSRF 在 handler 前置与引擎路由双重校验；认证由 garrison 接管（HS256 JWT、RBAC、IP 级防暴力破解、审计落库）；Webhook 经 Standard Webhooks 签名验证（subtle 恒时比较）；JWT secret 以 zeroize 防内存残留；安全响应头与可信代理中间件默认加固。反爬升级跳次产生结构化 `antibot_escalation` 审计事件；运行 `crawlrs doctor --security` 可对 feature 开关、SSRF 防护与运行时加固做启动自检。逐项机制详见 [🔒 安全文档](docs/cn/SECURITY.md) 与 [🏗️ 架构文档 · 安全模型](docs/cn/ARCHITECTURE.md)。
 
 ### ⛓️ 供应链与门禁
 
