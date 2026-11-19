@@ -87,6 +87,45 @@ impl TenantProxyRegistry {
     pub fn pool_count(&self) -> usize {
         self.dedicated.len()
     }
+
+    /// Build a registry from settings.
+    ///
+    /// The shared pool is built from `[proxy].urls`; each `[proxy.pools.<id>]`
+    /// becomes a dedicated pool; each `[outbound_isolation.<tenant>]` with a
+    /// `proxy_pool` id maps that tenant to it. With an empty config the registry
+    /// holds only the shared pool, so every `select` resolves to it.
+    pub fn from_settings(settings: &crate::config::settings::Settings) -> Self {
+        use crate::config::outbound::ProxyEntryConfig;
+        use crate::engines::proxy_pool::ProxyPool;
+        use std::time::Duration;
+
+        let sticky_ttl = Duration::from_secs(settings.proxy.sticky_ttl_seconds);
+        let cooldown = Duration::from_secs(settings.proxy.cooldown_seconds);
+        let shared = Arc::new(ProxyPool::from_urls(
+            settings.proxy.urls.clone(),
+            sticky_ttl,
+            cooldown,
+        ));
+        let registry = Self::new(shared);
+
+        for (pool_id, entries) in &settings.proxy.pools {
+            let urls: Vec<String> = entries
+                .iter()
+                .map(ProxyEntryConfig::url)
+                .map(str::to_string)
+                .collect();
+            registry.register_pool(
+                pool_id.clone(),
+                Arc::new(ProxyPool::from_urls(urls, sticky_ttl, cooldown)),
+            );
+        }
+        for (tenant, cfg) in &settings.outbound_isolation {
+            if let Some(pool_id) = &cfg.proxy_pool {
+                registry.map_tenant(tenant.clone(), pool_id.clone());
+            }
+        }
+        registry
+    }
 }
 
 #[cfg(test)]
@@ -155,5 +194,39 @@ mod tests {
             tenant: "acme".to_string(),
         };
         assert!(format!("{err}").contains("acme"));
+    }
+
+    #[test]
+    fn from_empty_settings_all_tenants_resolve_to_shared() {
+        let settings = crate::config::settings::Settings::default();
+        let registry = TenantProxyRegistry::from_settings(&settings);
+        let shared = registry.select(None);
+        assert!(Arc::ptr_eq(&shared, &registry.select(Some("any-tenant"))));
+        assert_eq!(registry.pool_count(), 0);
+    }
+
+    #[test]
+    fn from_settings_builds_dedicated_pool_and_tenant_mapping() {
+        use crate::config::outbound::{ProxyEntryConfig, TenantOutboundConfig};
+
+        let mut settings = crate::config::settings::Settings::default();
+        settings.proxy.pools.insert(
+            "acme-pool".to_string(),
+            vec![ProxyEntryConfig::Url("http://acme:8080".to_string())],
+        );
+        let mut acme = TenantOutboundConfig::default();
+        acme.proxy_pool = Some("acme-pool".to_string());
+        settings.outbound_isolation.insert("acme".to_string(), acme);
+
+        let registry = TenantProxyRegistry::from_settings(&settings);
+        assert_eq!(registry.pool_count(), 1);
+        assert!(!Arc::ptr_eq(
+            &registry.select(Some("acme")),
+            &registry.select(None)
+        ));
+        assert!(Arc::ptr_eq(
+            &registry.select(Some("other")),
+            &registry.select(None)
+        ));
     }
 }
