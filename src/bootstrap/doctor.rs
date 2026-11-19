@@ -179,6 +179,31 @@ pub fn config_based(settings: &Settings) -> Vec<DoctorCheck> {
         },
     ];
 
+    // Per-tenant outbound isolation posture.
+    let tenant_count = settings.outbound_isolation.len();
+    checks.push(DoctorCheck {
+        name: "outbound_isolation",
+        status: if tenant_count == 0 {
+            CheckStatus::Warn
+        } else {
+            CheckStatus::Ok
+        },
+        detail: if tenant_count == 0 {
+            "no [outbound_isolation] tenants: all tenants share the proxy pool".to_string()
+        } else {
+            let mut tenants: Vec<&str> = settings
+                .outbound_isolation
+                .keys()
+                .map(String::as_str)
+                .collect();
+            tenants.sort_unstable();
+            format!(
+                "{tenant_count} tenant(s) configured: {}",
+                tenants.join(", ")
+            )
+        },
+    });
+
     // LLM sanitization probe (delivered by the llm-injection-sanitizer change):
     // warn when the LLM boundary is compiled but input sanitization is off.
     if cfg!(feature = "llm") {
@@ -290,5 +315,31 @@ mod tests {
         } else {
             assert!(san.is_none());
         }
+    }
+
+    /// Empty outbound isolation warns; a configured tenant is reported as Ok.
+    #[test]
+    fn config_based_outbound_isolation_check() {
+        let settings = Settings::default();
+        let checks = config_based(&settings);
+        let iso = checks
+            .iter()
+            .find(|c| c.name == "outbound_isolation")
+            .unwrap();
+        assert_eq!(iso.status, CheckStatus::Warn);
+        assert!(iso.detail.contains("share the proxy pool"));
+
+        let mut settings = Settings::default();
+        settings.outbound_isolation.insert(
+            "acme".to_string(),
+            crate::config::outbound::TenantOutboundConfig::default(),
+        );
+        let checks = config_based(&settings);
+        let iso = checks
+            .iter()
+            .find(|c| c.name == "outbound_isolation")
+            .unwrap();
+        assert_eq!(iso.status, CheckStatus::Ok);
+        assert!(iso.detail.contains("acme"));
     }
 }
