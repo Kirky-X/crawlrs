@@ -123,6 +123,49 @@ impl TenantBrowserLimiter {
     }
 }
 
+/// Result of a two-level browser acquire: the tenant-level permit (if any) and
+/// the global instance permit. Both are held for the browser's lifetime; dropping
+/// in reverse field order releases the global permit first, then the tenant one.
+pub struct BrowserPermits {
+    /// Global pool instance permit.
+    pub global: OwnedSemaphorePermit,
+    /// Per-tenant budget permit (`None` for unauthenticated / unconfigured tenants).
+    pub tenant: Option<OwnedSemaphorePermit>,
+}
+
+/// Acquire a browser slot with two-level admission.
+///
+/// The per-tenant permit is taken before the global instance permit so a tenant
+/// at capacity is rejected without competing for a global slot. Rejections are
+/// counted under the `metrics` feature.
+pub async fn acquire_browser_slot(
+    limiter: &TenantBrowserLimiter,
+    global: &Arc<Semaphore>,
+    tenant: Option<&str>,
+    policy: OverflowPolicyConfig,
+) -> Result<BrowserPermits, OutboundQuotaError> {
+    let tenant_permit = match limiter.acquire(tenant, policy).await {
+        Ok(p) => p,
+        Err(err) => {
+            #[cfg(feature = "metrics")]
+            metrics::counter!("tenant_browser_quota_reject_total", "tenant" => tenant.unwrap_or("none").to_string()).increment(1);
+            return Err(err);
+        }
+    };
+    let global_permit =
+        global
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| OutboundQuotaError::QueueTimeout {
+                tenant: tenant.unwrap_or("none").to_string(),
+            })?;
+    Ok(BrowserPermits {
+        global: global_permit,
+        tenant: tenant_permit,
+    })
+}
+
 /// Routes each tenant to a dedicated or shared proxy pool.
 pub struct TenantProxyRegistry {
     shared: Arc<ProxyPool>,
@@ -279,6 +322,60 @@ mod tests {
             tenant: "acme".to_string(),
         };
         assert!(format!("{err}").contains("acme"));
+    }
+
+    #[tokio::test]
+    async fn two_level_gate_rejects_second_tenant_request_despite_free_global_slots() {
+        let limiter = TenantBrowserLimiter::new([("acme".to_string(), 1)]);
+        let global = Arc::new(Semaphore::new(10)); // global has plenty of slots
+        let first = acquire_browser_slot(
+            &limiter,
+            &global,
+            Some("acme"),
+            OverflowPolicyConfig::RejectNewest,
+        )
+        .await
+        .expect("first acquire");
+        let second = acquire_browser_slot(
+            &limiter,
+            &global,
+            Some("acme"),
+            OverflowPolicyConfig::RejectNewest,
+        )
+        .await;
+        assert!(matches!(
+            second,
+            Err(OutboundQuotaError::BrowserQuotaExceeded { .. })
+        ));
+        drop(first);
+        // After release the slot is available again.
+        let third = acquire_browser_slot(
+            &limiter,
+            &global,
+            Some("acme"),
+            OverflowPolicyConfig::RejectNewest,
+        )
+        .await;
+        assert!(third.is_ok());
+    }
+
+    #[tokio::test]
+    async fn two_level_gate_none_tenant_uses_only_global() {
+        let limiter = TenantBrowserLimiter::new([("acme".to_string(), 1)]);
+        let global = Arc::new(Semaphore::new(1));
+        let first =
+            acquire_browser_slot(&limiter, &global, None, OverflowPolicyConfig::RejectNewest)
+                .await
+                .unwrap();
+        assert!(first.tenant.is_none());
+        // The global permit is held, so a second acquire must wait; release it
+        // first to confirm the none-tenant path can re-acquire without a tenant budget.
+        drop(first);
+        let second =
+            acquire_browser_slot(&limiter, &global, None, OverflowPolicyConfig::RejectNewest)
+                .await
+                .unwrap();
+        assert!(second.tenant.is_none());
     }
 
     #[tokio::test]
