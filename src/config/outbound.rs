@@ -20,6 +20,36 @@ pub enum OverflowPolicyConfig {
     QueueWithTimeout,
 }
 
+/// One proxy entry in a named dedicated pool.
+///
+/// Accepts either a bare URL string (`"http://host:port"`) or a detailed table
+/// (`{ url = "...", category = "html" }`), so existing single-pool URL lists
+/// remain valid when moved into a named pool.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ProxyEntryConfig {
+    /// Bare proxy URL (defaults to HTML category).
+    Url(String),
+    /// Detailed entry with an optional proxy category.
+    Detailed {
+        /// Proxy URL (may carry userinfo; redacted in logs).
+        url: String,
+        /// Proxy category (`html` or `media`); defaults to `html`.
+        #[serde(default)]
+        category: Option<String>,
+    },
+}
+
+impl ProxyEntryConfig {
+    /// Return the configured proxy URL regardless of representation.
+    pub fn url(&self) -> &str {
+        match self {
+            ProxyEntryConfig::Url(url) => url,
+            ProxyEntryConfig::Detailed { url, .. } => url,
+        }
+    }
+}
+
 /// Outbound isolation settings for one tenant.
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__OUTBOUND_ISOLATION__")]
@@ -72,5 +102,38 @@ mod tests {
         assert!(cfg.proxy_pool.is_none());
         assert!(cfg.max_concurrent_browser_contexts.is_none());
         assert!(cfg.max_dns_queries_per_minute.is_none());
+    }
+
+    #[test]
+    fn proxy_entry_config_accepts_bare_url_and_detailed_table() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            entry: ProxyEntryConfig,
+        }
+        let bare: Wrapper = toml::from_str("entry = \"http://a:8080\"").expect("bare url");
+        assert_eq!(bare.entry.url(), "http://a:8080");
+        let detailed: Wrapper =
+            toml::from_str("entry = { url = \"http://b:8080\", category = \"media\" }")
+                .expect("detailed");
+        assert_eq!(detailed.entry.url(), "http://b:8080");
+    }
+
+    #[test]
+    fn proxy_pools_parse_two_pools_and_default_empty() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            #[serde(default)]
+            pools: std::collections::HashMap<String, Vec<ProxyEntryConfig>>,
+        }
+        let parsed: Wrapper = toml::from_str(
+            "[pools]\nacme = [\"http://a1\", \"http://a2\"]\nbeta = [\"http://b1\"]",
+        )
+        .expect("pools toml");
+        assert_eq!(parsed.pools.len(), 2);
+        assert_eq!(parsed.pools["acme"].len(), 2);
+        assert_eq!(parsed.pools["beta"][0].url(), "http://b1");
+
+        let empty: Wrapper = toml::from_str("").expect("empty toml");
+        assert!(empty.pools.is_empty());
     }
 }

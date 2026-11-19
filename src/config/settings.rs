@@ -586,6 +586,11 @@ pub struct ProxySettings {
     #[config(default = 30)]
     #[serde(default = "default_cooldown_seconds")]
     pub cooldown_seconds: u64,
+
+    /// Named dedicated proxy pools keyed by pool id (`[proxy.pools.<id>]`).
+    /// Empty by default; old configs without this key stay on the shared pool.
+    #[serde(default)]
+    pub pools: std::collections::HashMap<String, Vec<crate::config::outbound::ProxyEntryConfig>>,
 }
 
 /// serde 默认值：粘性会话 TTL（与 `#[config(default = 60)]` 保持一致）
@@ -1635,6 +1640,7 @@ mod tests {
             enabled: true,
             sticky_ttl_seconds: 120,
             cooldown_seconds: 45,
+            pools: std::collections::HashMap::new(),
         };
         assert_eq!(settings.urls(), &["http://proxy.example.com:8080"]);
         assert_eq!(settings.strategy(), ProxyStrategy::Sticky);
@@ -1649,6 +1655,7 @@ mod tests {
             enabled: true,
             sticky_ttl_seconds: 60,
             cooldown_seconds: 30,
+            pools: std::collections::HashMap::new(),
         };
         let debug_str = format!("{:?}", settings);
         assert!(
@@ -1674,6 +1681,7 @@ mod tests {
             enabled: true,
             sticky_ttl_seconds: 90,
             cooldown_seconds: 20,
+            pools: std::collections::HashMap::new(),
         };
         let cloned = settings.clone();
         assert_eq!(cloned.urls(), &["http://clone-proxy:9090"]);
@@ -1691,6 +1699,7 @@ mod tests {
             enabled: false,
             sticky_ttl_seconds: 100,
             cooldown_seconds: 50,
+            pools: std::collections::HashMap::new(),
         };
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: ProxySettings = serde_json::from_str(&json).expect("deserialize");

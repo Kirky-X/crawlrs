@@ -379,6 +379,17 @@ sticky_ttl_seconds = 60
 # Failed proxy cooldown (seconds): proxies marked failed are not selected during cooldown
 cooldown_seconds = 30
 
+# Named dedicated proxy pools for per-tenant outbound isolation (empty = shared pool only).
+# [proxy.pools.acme]
+# entries = ["http://acme-proxy-1:8080", { url = "http://acme-proxy-2:8080", category = "html" }]
+
+# Per-tenant outbound isolation budgets (empty = unlimited shared behavior).
+# [outbound_isolation.acme]
+# proxy_pool = "acme"
+# max_concurrent_browser_contexts = 8
+# max_dns_queries_per_minute = 120
+# overflow_policy = "reject_newest"  # or "queue_with_timeout"
+
 # Session 身份三件套（吸收点 F2；参考 Crawlee SessionPool）
 # 代理 + UA/TLS 档 + Cookie 绑成单一身份按 error_score 记分退休；false 时维持现状盲轮换
 [session]
