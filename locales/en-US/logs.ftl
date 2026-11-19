@@ -133,3 +133,13 @@ bootstrap-admin-key-uuid-parse-failed = CRAWLRS__BOOTSTRAP_ADMIN_API_KEY is 36 c
 bootstrap-admin-key-invalid-length = CRAWLRS__BOOTSTRAP_ADMIN_API_KEY is non-empty but not a 36-char UUID (length { $length }), falling back to auto-generated team
 memory-watermark-sysinfo-init-failed = sysinfo System init failed, memory watermark sampling disabled: { $error }
 system-metrics-sysinfo-init-failed = sysinfo System init failed, system monitoring fail-closed degraded (reads return 100%, memory admission rejects new tasks): { $error }
+
+# Security posture doctor (T008; check names map 1:1 to doctor.rs checks)
+doctor-security-auth-garrison = Garrison authentication compiled in
+doctor-security-webhook = Webhook delivery compiled in
+doctor-security-rate-limit = limiteron rate limiting compiled in
+doctor-security-llm-boundary = LLM extraction boundary compiled in
+doctor-security-ssrf = SSRF dual validation active
+doctor-security-rate-limit-config = rate limiting on
+doctor-security-proxy-egress = proxy URL(s) configured
+doctor-security-llm-sanitization = LLM injection sanitization on

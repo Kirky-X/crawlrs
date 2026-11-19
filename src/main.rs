@@ -7,6 +7,15 @@ enum ServiceType {
     Worker,
     Bootstrap,
     Migrate,
+    /// Security posture self-check (`doctor --security`).
+    Doctor {
+        security: bool,
+    },
+}
+
+/// Detect the `--security` flag in a command line argument list.
+fn has_security_flag(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--security")
 }
 
 /// Parse service type from an optional argument string.
@@ -16,6 +25,7 @@ enum ServiceType {
 /// - `Some("worker")` → `Ok(ServiceType::Worker)`
 /// - `Some("bootstrap")` → `Ok(ServiceType::Bootstrap)`
 /// - `Some("migrate")` → `Ok(ServiceType::Migrate)`
+/// - `Some("doctor")` → `Ok(ServiceType::Doctor { security: false })`
 /// - Other values → `Err` with descriptive message
 fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
     let service_type = arg.unwrap_or("api");
@@ -24,8 +34,9 @@ fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
         "worker" => Ok(ServiceType::Worker),
         "bootstrap" => Ok(ServiceType::Bootstrap),
         "migrate" => Ok(ServiceType::Migrate),
+        "doctor" => Ok(ServiceType::Doctor { security: false }),
         other => Err(format!(
-            "Invalid service type: '{}'. Use 'api', 'worker', 'bootstrap', or 'migrate'.",
+            "Invalid service type: '{}'. Use 'api', 'worker', 'bootstrap', 'migrate', or 'doctor'.",
             other
         )),
     }
@@ -53,6 +64,9 @@ impl ServiceType {
             .collect();
         let arg = args.get(1).map(String::as_str);
         match parse_service_type(arg) {
+            Ok(ServiceType::Doctor { .. }) => ServiceType::Doctor {
+                security: has_security_flag(&args),
+            },
             Ok(st) => st,
             Err(msg) => {
                 error!("{}", msg);
@@ -483,6 +497,18 @@ mod app {
     }
 
     pub(crate) async fn run() -> anyhow::Result<()> {
+        // 0. Parse command once; `doctor --security` runs on settings alone,
+        //    before telemetry/DI/DB init, so it works on an unbootstrapped host.
+        let command = ServiceType::from_args();
+        if let ServiceType::Doctor { security } = &command {
+            if *security {
+                let settings = load_runtime_settings()?;
+                let posture = crawlrs::bootstrap::doctor::SecurityPosture::full(&settings);
+                println!("{}", posture.render());
+                std::process::exit(posture.exit_code());
+            }
+        }
+
         // 1. Load and configure settings
         let settings = load_runtime_settings()?;
 
@@ -584,6 +610,12 @@ mod app {
             ServiceType::Migrate => {
                 start_migrate_service(app_state).await?;
             }
+            ServiceType::Doctor { .. } => {
+                // `doctor --security` is handled before DI init in `run()`;
+                // a bare `doctor` reaches here and renders the security posture.
+                let posture = crawlrs::bootstrap::doctor::SecurityPosture::full(&settings);
+                println!("{}", posture.render());
+            }
         }
 
         Ok(())
@@ -667,5 +699,27 @@ mod tests {
 
         let result = parse_service_type(Some("Worker"));
         assert!(result.is_err(), "mixed-case Worker should be invalid");
+    }
+
+    #[test]
+    fn tc_parse_service_type_doctor() {
+        let result = parse_service_type(Some("doctor"));
+        assert!(matches!(
+            result,
+            Ok(ServiceType::Doctor { security: false })
+        ));
+    }
+
+    #[test]
+    fn tc_doctor_security_flag_detection() {
+        assert!(has_security_flag(&[
+            "doctor".to_string(),
+            "--security".to_string(),
+        ]));
+        assert!(!has_security_flag(&["doctor".to_string()]));
+        assert!(!has_security_flag(&[
+            "doctor".to_string(),
+            "--other".to_string(),
+        ]));
     }
 }

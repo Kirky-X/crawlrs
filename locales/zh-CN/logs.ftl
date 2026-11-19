@@ -132,3 +132,13 @@ bootstrap-admin-key-uuid-parse-failed = CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 长度 
 bootstrap-admin-key-invalid-length = CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 非空但不是 36 位 UUID（长度 { $length }），回退自动生成 team
 memory-watermark-sysinfo-init-failed = sysinfo System 初始化失败，内存水位采样停用: { $error }
 system-metrics-sysinfo-init-failed = sysinfo System 初始化失败，系统监控 fail-closed 降级（读取返回 100%，内存准入拒绝新任务）: { $error }
+
+# 安全姿态自检（T008；键名与 doctor.rs 检查项一一对应）
+doctor-security-auth-garrison = Garrison 认证已编译
+doctor-security-webhook = Webhook 投递已编译
+doctor-security-rate-limit = limiteron 限流已编译
+doctor-security-llm-boundary = LLM 提取边界已编译
+doctor-security-ssrf = SSRF 双重校验已启用
+doctor-security-rate-limit-config = 限流已开启
+doctor-security-proxy-egress = 已配置代理 URL
+doctor-security-llm-sanitization = LLM 注入净化已开启
