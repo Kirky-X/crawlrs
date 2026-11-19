@@ -17,6 +17,7 @@
 //! - `routes` - Route configuration and application builder
 
 pub mod config;
+pub mod doctor; // security posture self-check (doctor --security)
 pub mod engines;
 pub mod error;
 pub mod fluxweir_gateway;
