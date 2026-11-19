@@ -204,6 +204,22 @@ pub fn config_based(settings: &Settings) -> Vec<DoctorCheck> {
         },
     });
 
+    // Compliance profile posture.
+    let compliance_count = settings.compliance.len();
+    checks.push(DoctorCheck {
+        name: "compliance_profile",
+        status: if compliance_count == 0 {
+            CheckStatus::Warn
+        } else {
+            CheckStatus::Ok
+        },
+        detail: if compliance_count == 0 {
+            "no [compliance] profiles configured".to_string()
+        } else {
+            format!("{compliance_count} compliance profile(s) configured")
+        },
+    });
+
     // LLM sanitization probe (delivered by the llm-injection-sanitizer change):
     // warn when the LLM boundary is compiled but input sanitization is off.
     if cfg!(feature = "llm") {
@@ -341,5 +357,29 @@ mod tests {
             .unwrap();
         assert_eq!(iso.status, CheckStatus::Ok);
         assert!(iso.detail.contains("acme"));
+    }
+
+    #[test]
+    fn config_based_compliance_profile_check() {
+        let settings = Settings::default();
+        let checks = config_based(&settings);
+        let cp = checks
+            .iter()
+            .find(|c| c.name == "compliance_profile")
+            .unwrap();
+        assert_eq!(cp.status, CheckStatus::Warn);
+
+        let mut settings = Settings::default();
+        settings.compliance.insert(
+            "acme".to_string(),
+            crate::config::compliance::TenantComplianceConfig::default(),
+        );
+        let checks = config_based(&settings);
+        let cp = checks
+            .iter()
+            .find(|c| c.name == "compliance_profile")
+            .unwrap();
+        assert_eq!(cp.status, CheckStatus::Ok);
+        assert!(cp.detail.contains("1"));
     }
 }

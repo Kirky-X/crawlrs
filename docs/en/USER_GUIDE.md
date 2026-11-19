@@ -390,6 +390,21 @@ overflow_policy = "reject_newest"  # or "queue_with_timeout"
 
 `crawlrs doctor --security` reports the outbound-isolation posture (shared pool vs configured tenants).
 
+### Per-Tenant Compliance Profiles
+
+Compliance profiles gate `ai.txt` admission, PII minimization and data-retention checks per tenant. GDPR forces minimization regardless of the explicit flag. An empty `[compliance]` section disables all compliance behavior.
+
+```toml
+[compliance.acme]
+gdpr = true
+respect_ai_txt = true
+minimize_personal_data = true
+retention_days = 365
+dpia_reference = "DPIA-2026-001"
+```
+
+Run `crawlrs compliance-report acme 30d` for a five-line compliance report (compliance rejects, items needing review, ai.txt violations, PII minimized, retention-overdue count). When a profile is active, scrape responses may include an optional `security_context` object.
+
 **Configuration when `auth` is enabled (0.2.0 garrison-auth-migration):**
 
 When the `auth` feature is enabled (the default), `CRAWLRS__AUTH__JWT_SECRET` must be set. Configure it via environment variable or TOML:

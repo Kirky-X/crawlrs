@@ -268,6 +268,21 @@ Per-tenant outbound quota overflows (`OutboundQuotaError`) map onto the existing
 
 > `CONFLICT` / `PRECONDITION_FAILED` / `FEATURE_DISABLED` have constants defined in the `error_codes` module but no production emission points; when a feature is not compiled, its routes are not registered at all, so requests get a plain 404 (`NOT_FOUND`).
 
+### Response `security_context`
+
+When a tenant has a compliance profile, scrape responses may carry an optional `security_context` object. It is omitted entirely when empty, so existing clients see no schema change. All fields are optional.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tenant` | string? | Authenticated tenant id |
+| `engine_path` | string[] | Engine chain actually used (initial → escalation targets) |
+| `robots_txt` | string? | `allowed` / `disallowed` / `not_fetched` |
+| `ai_txt` | string? | `allowed` / `disallowed` / `not_fetched` (when respected) |
+| `sanitization` | object? | Injection-sanitization summary (`hidden_nodes_removed`, `suspicious_hits`) |
+| `extraction_confidence` | number? | Extraction quality confidence |
+| `compliance_profile` | string? | Active profile name (e.g. `gdpr`) |
+| `pii_minimized` | boolean? | Whether PII minimization was applied |
+
 > `/metrics`: a public Prometheus text endpoint (no auth, no rate limiting) that exposes runtime metrics only,
 > with no sensitive labels such as tenant IDs, webhook URLs, or credentials. In production, enforce a network allowlist at the reverse proxy;
 > metric transport is now an in-process recorder (no listener on 9100).
