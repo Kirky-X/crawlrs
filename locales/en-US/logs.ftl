@@ -147,3 +147,7 @@ doctor-security-llm-sanitization = LLM injection sanitization on
 # Route decision replay CLI
 route-replay-not-found = no escalation records found for task { $task_id }
 route-replay-summary = { $count } escalation hops
+
+# Compliance report CLI
+compliance-report-header = tenant { $tenant } since { $since }
+compliance-report-not-configured = not configured

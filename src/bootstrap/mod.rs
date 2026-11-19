@@ -16,6 +16,7 @@
 //! - `services` - Application services
 //! - `routes` - Route configuration and application builder
 
+pub mod compliance_report; // compliance report aggregation and rendering
 pub mod config;
 pub mod doctor; // security posture self-check (doctor --security)
 pub mod engines;

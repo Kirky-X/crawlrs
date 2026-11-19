@@ -146,3 +146,7 @@ doctor-security-llm-sanitization = LLM 注入净化已开启
 # 路由决策回放 CLI
 route-replay-not-found = 未找到 task { $task_id } 的升级记录
 route-replay-summary = 共 { $count } 跳升级
+
+# 合规报告 CLI
+compliance-report-header = 租户 { $tenant } 自 { $since }
+compliance-report-not-configured = 未配置

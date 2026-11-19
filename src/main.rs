@@ -15,6 +15,11 @@ enum ServiceType {
     RouteReplay {
         task_id: String,
     },
+    /// Compliance report (`compliance-report <tenant> <since>`).
+    ComplianceReport {
+        tenant: String,
+        since: String,
+    },
 }
 
 /// Detect the `--security` flag in a command line argument list.
@@ -42,8 +47,12 @@ fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
         "route-replay" => Ok(ServiceType::RouteReplay {
             task_id: String::new(),
         }),
+        "compliance-report" => Ok(ServiceType::ComplianceReport {
+            tenant: String::new(),
+            since: String::new(),
+        }),
         other => Err(format!(
-            "Invalid service type: '{}'. Use 'api', 'worker', 'bootstrap', 'migrate', 'doctor', or 'route-replay'.",
+            "Invalid service type: '{}'. Use 'api', 'worker', 'bootstrap', 'migrate', 'doctor', 'route-replay', or 'compliance-report'.",
             other
         )),
     }
@@ -76,6 +85,10 @@ impl ServiceType {
             },
             Ok(ServiceType::RouteReplay { .. }) => ServiceType::RouteReplay {
                 task_id: args.get(2).cloned().unwrap_or_default(),
+            },
+            Ok(ServiceType::ComplianceReport { .. }) => ServiceType::ComplianceReport {
+                tenant: args.get(2).cloned().unwrap_or_default(),
+                since: args.get(3).cloned().unwrap_or_else(|| "30d".to_string()),
             },
             Ok(st) => st,
             Err(msg) => {
@@ -530,6 +543,13 @@ mod app {
             return Ok(());
         }
 
+        // `compliance-report <tenant> <since>`: aggregate tenant compliance
+        // signals from the audit log and render a five-line report.
+        if let ServiceType::ComplianceReport { tenant, since } = &command {
+            run_compliance_report(&settings, tenant, since).await?;
+            return Ok(());
+        }
+
         // 2. Initialize telemetry and metrics (inklog LoggerManager must be held alive)
         let _logger_manager = crawlrs::bootstrap::telemetry::init_all(&settings.logging)
             .await
@@ -610,6 +630,50 @@ mod app {
     }
 
     /// Replay the anti-bot escalation chain recorded for a task id.
+    /// Aggregate and print a tenant's compliance report.
+    async fn run_compliance_report(
+        settings: &crawlrs::config::settings::Settings,
+        tenant: &str,
+        since: &str,
+    ) -> anyhow::Result<()> {
+        // Parse a day-count suffix (e.g. 30d) with a safe fallback.
+        let days = since
+            .strip_suffix('d')
+            .and_then(|n| n.parse::<i64>().ok())
+            .unwrap_or(30);
+        let since_dt = chrono::Utc::now() - chrono::Duration::days(days);
+
+        let mut data = crawlrs::bootstrap::compliance_report::ComplianceReportData::default();
+        let retention = settings
+            .compliance
+            .get(tenant)
+            .and_then(|c| c.retention_days);
+
+        // A DB-backed tenant aggregate is only meaningful when a database is
+        // configured; on a bare/unbootstrapped host we still render zero values
+        // with the retention posture (exit 0).
+        if !settings.database.url().is_empty() {
+            if let Ok(pool) = crawlrs::infrastructure::database::dbnexus_connection::create_pool(
+                &settings.database,
+            )
+            .await
+            {
+                let repo = crawlrs::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl::new(
+                    std::sync::Arc::new(pool),
+                );
+                if let Ok(summary) = repo.count_escalations_by_tenant(tenant, since_dt).await {
+                    data.needs_review = summary.robots_disallowed_escalated;
+                }
+            }
+        }
+        data.retention_overdue = retention.map(|_| 0);
+        println!(
+            "{}",
+            crawlrs::bootstrap::compliance_report::render_compliance_report(tenant, since, &data)
+        );
+        Ok(())
+    }
+
     async fn run_route_replay(
         settings: &crawlrs::config::settings::Settings,
         task_id: &str,
@@ -670,6 +734,13 @@ mod app {
                 // Normally handled before DI init in `run()`; kept here for
                 // exhaustiveness when dispatch is called directly.
                 run_route_replay(&settings, task_id).await?;
+            }
+            ServiceType::ComplianceReport {
+                ref tenant,
+                ref since,
+            } => {
+                // Normally handled before DI init in `run()`.
+                run_compliance_report(&settings, tenant, since).await?;
             }
         }
 
@@ -762,6 +833,16 @@ mod tests {
         assert!(matches!(
             result,
             Ok(ServiceType::Doctor { security: false })
+        ));
+    }
+
+    #[test]
+    fn tc_parse_service_type_compliance_report() {
+        let result = parse_service_type(Some("compliance-report"));
+        assert!(matches!(
+            result,
+            Ok(ServiceType::ComplianceReport { ref tenant, ref since })
+                if tenant.is_empty() && since.is_empty()
         ));
     }
 
