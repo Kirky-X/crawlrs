@@ -690,6 +690,20 @@ impl From<crate::utils::robots::RobotsCheckerError> for CrawlRsError {
     }
 }
 
+impl From<crate::engines::tenant_outbound::OutboundQuotaError> for CrawlRsError {
+    fn from(err: crate::engines::tenant_outbound::OutboundQuotaError) -> Self {
+        use crate::engines::tenant_outbound::OutboundQuotaError;
+        let message = err.to_string();
+        match err {
+            // Browser/DNS quota exhaustion is a retryable rate condition (429).
+            OutboundQuotaError::BrowserQuotaExceeded { .. }
+            | OutboundQuotaError::DnsQuotaExceeded { .. } => CrawlRsError::RateLimit(message),
+            // A queue wait that elapsed is an upstream timeout (504).
+            OutboundQuotaError::QueueTimeout { .. } => CrawlRsError::Timeout(message),
+        }
+    }
+}
+
 // 为 CrawlRsError 生成 From<String> / From<&str> / From<anyhow::Error>（映射到 Other 变体）
 impl_basic_error_conversions!(CrawlRsError, Other);
 
@@ -1750,5 +1764,29 @@ mod tests {
             rendered.contains("email format invalid"),
             "arg interpolation lost: {rendered}"
         );
+    }
+
+    #[test]
+    fn test_outbound_quota_error_maps_to_api_codes() {
+        use crate::engines::tenant_outbound::OutboundQuotaError;
+        let browser: CrawlRsError = OutboundQuotaError::BrowserQuotaExceeded {
+            tenant: "acme".to_string(),
+        }
+        .into();
+        assert_eq!(browser.error_code(), "RATE_LIMITED");
+        assert_eq!(browser.status_code(), StatusCode::TOO_MANY_REQUESTS);
+
+        let dns: CrawlRsError = OutboundQuotaError::DnsQuotaExceeded {
+            tenant: "acme".to_string(),
+        }
+        .into();
+        assert_eq!(dns.error_code(), "RATE_LIMITED");
+
+        let timeout: CrawlRsError = OutboundQuotaError::QueueTimeout {
+            tenant: "acme".to_string(),
+        }
+        .into();
+        assert_eq!(timeout.error_code(), "TIMEOUT");
+        assert_eq!(timeout.status_code(), StatusCode::GATEWAY_TIMEOUT);
     }
 }

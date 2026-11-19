@@ -264,6 +264,8 @@ Production error code list (`src/common/error.rs::CrawlRsError::error_code` and 
 | `EXTERNAL_SERVICE_ERROR` | 502 | External service error (produced indirectly via `CrawlRsError::Network`) |
 | `TIMEOUT` | 504 | Request timeout (produced indirectly via `CrawlRsError::Timeout`) |
 
+Per-tenant outbound quota overflows (`OutboundQuotaError`) map onto the existing codes: `BrowserQuotaExceeded` and `DnsQuotaExceeded` become `RATE_LIMITED` (429, retryable), while `QueueTimeout` becomes `TIMEOUT` (504). These fire when `[outbound_isolation.<tenant>]` budgets are exhausted.
+
 > `CONFLICT` / `PRECONDITION_FAILED` / `FEATURE_DISABLED` have constants defined in the `error_codes` module but no production emission points; when a feature is not compiled, its routes are not registered at all, so requests get a plain 404 (`NOT_FOUND`).
 
 > `/metrics`: a public Prometheus text endpoint (no auth, no rate limiting) that exposes runtime metrics only,
