@@ -5,6 +5,7 @@
 ///
 /// Additive Increase / Multiplicative Decrease 拥塞控制算法，动态调整并发上限。
 pub mod adaptive_concurrency;
+pub mod ai_txt;
 pub mod backoff;
 /// 请求合并 Coalesce
 ///
